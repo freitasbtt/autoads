@@ -1,4 +1,4 @@
-import { Home, Settings, FileText, LayoutDashboard } from "lucide-react";
+import { Home, Settings, FileText, LayoutDashboard, Users } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -14,6 +14,7 @@ import { useLocation } from "wouter";
 const items = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Campanhas", url: "/campaigns", icon: FileText },
+  { title: "Públicos", url: "/audiences", icon: Users },
   { title: "Recursos", url: "/resources", icon: Settings },
 ];
 

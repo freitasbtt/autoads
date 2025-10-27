@@ -8,6 +8,9 @@ import { AppSidebar } from "@/components/AppSidebar";
 import Dashboard from "@/pages/Dashboard";
 import Resources from "@/pages/Resources";
 import CampaignForm from "@/pages/CampaignForm";
+import ExistingCampaignForm from "@/pages/ExistingCampaignForm";
+import Campaigns from "@/pages/Campaigns";
+import Audiences from "@/pages/Audiences";
 import Onboarding from "@/pages/Onboarding";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
@@ -17,8 +20,11 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
-      <Route path="/resources" component={Resources} />
+      <Route path="/campaigns" component={Campaigns} />
       <Route path="/campaigns/new" component={CampaignForm} />
+      <Route path="/campaigns/existing" component={ExistingCampaignForm} />
+      <Route path="/audiences" component={Audiences} />
+      <Route path="/resources" component={Resources} />
       <Route path="/onboarding" component={Onboarding} />
       <Route component={NotFound} />
     </Switch>
