@@ -87,7 +87,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Register
   app.post("/api/auth/register", async (req, res, next) => {
     try {
-      const registerSchema = insertUserSchema.extend({
+      const registerSchema = z.object({
+        email: z.string().email(),
+        password: z.string().min(6),
         tenantName: z.string().min(1),
       });
 
@@ -195,14 +197,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Update resource
   app.patch("/api/resources/:id", isAuthenticated, async (req, res, next) => {
     try {
+      const user = req.user as User;
       const id = parseInt(req.params.id);
-      const data = insertResourceSchema.partial().parse(req.body);
       
-      const resource = await storage.updateResource(id, data);
-      if (!resource) {
+      // Verify resource belongs to user's tenant
+      const existing = await storage.getResource(id);
+      if (!existing || existing.tenantId !== user.tenantId) {
         return res.status(404).json({ message: "Resource not found" });
       }
 
+      // Prevent tenantId override
+      const { tenantId, ...data } = insertResourceSchema.partial().parse(req.body);
+      
+      const resource = await storage.updateResource(id, data);
       res.json(resource);
     } catch (err) {
       next(err);
@@ -212,13 +219,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Delete resource
   app.delete("/api/resources/:id", isAuthenticated, async (req, res, next) => {
     try {
+      const user = req.user as User;
       const id = parseInt(req.params.id);
-      const success = await storage.deleteResource(id);
       
-      if (!success) {
+      // Verify resource belongs to user's tenant
+      const existing = await storage.getResource(id);
+      if (!existing || existing.tenantId !== user.tenantId) {
         return res.status(404).json({ message: "Resource not found" });
       }
 
+      await storage.deleteResource(id);
       res.json({ message: "Resource deleted successfully" });
     } catch (err) {
       next(err);
@@ -241,10 +251,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get single audience
   app.get("/api/audiences/:id", isAuthenticated, async (req, res, next) => {
     try {
+      const user = req.user as User;
       const id = parseInt(req.params.id);
       const audience = await storage.getAudience(id);
       
-      if (!audience) {
+      if (!audience || audience.tenantId !== user.tenantId) {
         return res.status(404).json({ message: "Audience not found" });
       }
 
@@ -274,14 +285,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Update audience
   app.patch("/api/audiences/:id", isAuthenticated, async (req, res, next) => {
     try {
+      const user = req.user as User;
       const id = parseInt(req.params.id);
-      const data = insertAudienceSchema.partial().parse(req.body);
       
-      const audience = await storage.updateAudience(id, data);
-      if (!audience) {
+      // Verify audience belongs to user's tenant
+      const existing = await storage.getAudience(id);
+      if (!existing || existing.tenantId !== user.tenantId) {
         return res.status(404).json({ message: "Audience not found" });
       }
 
+      // Prevent tenantId override
+      const { tenantId, ...data } = insertAudienceSchema.partial().parse(req.body);
+      
+      const audience = await storage.updateAudience(id, data);
       res.json(audience);
     } catch (err) {
       next(err);
@@ -291,13 +307,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Delete audience
   app.delete("/api/audiences/:id", isAuthenticated, async (req, res, next) => {
     try {
+      const user = req.user as User;
       const id = parseInt(req.params.id);
-      const success = await storage.deleteAudience(id);
       
-      if (!success) {
+      // Verify audience belongs to user's tenant
+      const existing = await storage.getAudience(id);
+      if (!existing || existing.tenantId !== user.tenantId) {
         return res.status(404).json({ message: "Audience not found" });
       }
 
+      await storage.deleteAudience(id);
       res.json({ message: "Audience deleted successfully" });
     } catch (err) {
       next(err);
@@ -320,10 +339,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get single campaign
   app.get("/api/campaigns/:id", isAuthenticated, async (req, res, next) => {
     try {
+      const user = req.user as User;
       const id = parseInt(req.params.id);
       const campaign = await storage.getCampaign(id);
       
-      if (!campaign) {
+      if (!campaign || campaign.tenantId !== user.tenantId) {
         return res.status(404).json({ message: "Campaign not found" });
       }
 
@@ -353,14 +373,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Update campaign
   app.patch("/api/campaigns/:id", isAuthenticated, async (req, res, next) => {
     try {
+      const user = req.user as User;
       const id = parseInt(req.params.id);
-      const data = insertCampaignSchema.partial().parse(req.body);
       
-      const campaign = await storage.updateCampaign(id, data);
-      if (!campaign) {
+      // Verify campaign belongs to user's tenant
+      const existing = await storage.getCampaign(id);
+      if (!existing || existing.tenantId !== user.tenantId) {
         return res.status(404).json({ message: "Campaign not found" });
       }
 
+      // Prevent tenantId override
+      const { tenantId, ...data } = insertCampaignSchema.partial().parse(req.body);
+      
+      const campaign = await storage.updateCampaign(id, data);
       res.json(campaign);
     } catch (err) {
       next(err);
@@ -370,13 +395,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Delete campaign
   app.delete("/api/campaigns/:id", isAuthenticated, async (req, res, next) => {
     try {
+      const user = req.user as User;
       const id = parseInt(req.params.id);
-      const success = await storage.deleteCampaign(id);
       
-      if (!success) {
+      // Verify campaign belongs to user's tenant
+      const existing = await storage.getCampaign(id);
+      if (!existing || existing.tenantId !== user.tenantId) {
         return res.status(404).json({ message: "Campaign not found" });
       }
 
+      await storage.deleteCampaign(id);
       res.json({ message: "Campaign deleted successfully" });
     } catch (err) {
       next(err);
@@ -402,7 +430,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.user as User;
       const integration = await storage.getIntegrationByProvider(user.tenantId, req.params.provider);
       
-      if (!integration) {
+      if (!integration || integration.tenantId !== user.tenantId) {
         return res.status(404).json({ message: "Integration not found" });
       }
 
@@ -416,20 +444,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/integrations", isAuthenticated, async (req, res, next) => {
     try {
       const user = req.user as User;
-      const data = insertIntegrationSchema.parse(req.body);
+      
+      // Prevent tenantId override in create/update
+      const { tenantId, ...bodyData } = insertIntegrationSchema.parse(req.body);
       
       // Check if integration already exists
-      const existing = await storage.getIntegrationByProvider(user.tenantId, data.provider);
+      const existing = await storage.getIntegrationByProvider(user.tenantId, bodyData.provider);
       
       if (existing) {
         // Update existing
-        const updated = await storage.updateIntegration(existing.id, data);
+        const updated = await storage.updateIntegration(existing.id, bodyData);
         return res.json(updated);
       }
 
       // Create new
       const integration = await storage.createIntegration({
-        ...data,
+        ...bodyData,
         tenantId: user.tenantId,
       });
 
@@ -442,13 +472,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Delete integration
   app.delete("/api/integrations/:id", isAuthenticated, async (req, res, next) => {
     try {
+      const user = req.user as User;
       const id = parseInt(req.params.id);
-      const success = await storage.deleteIntegration(id);
       
-      if (!success) {
+      // Verify integration belongs to user's tenant
+      const existing = await storage.getIntegration(id);
+      if (!existing || existing.tenantId !== user.tenantId) {
         return res.status(404).json({ message: "Integration not found" });
       }
 
+      await storage.deleteIntegration(id);
       res.json({ message: "Integration deleted successfully" });
     } catch (err) {
       next(err);
