@@ -46,6 +46,7 @@ export const resources = pgTable("resources", {
 
 export const insertResourceSchema = createInsertSchema(resources).omit({
   id: true,
+  tenantId: true,
   createdAt: true,
 });
 export type InsertResource = z.infer<typeof insertResourceSchema>;
@@ -69,6 +70,7 @@ export const audiences = pgTable("audiences", {
 
 export const insertAudienceSchema = createInsertSchema(audiences).omit({
   id: true,
+  tenantId: true,
   createdAt: true,
 });
 export type InsertAudience = z.infer<typeof insertAudienceSchema>;
@@ -100,6 +102,7 @@ export const campaigns = pgTable("campaigns", {
 
 export const insertCampaignSchema = createInsertSchema(campaigns).omit({
   id: true,
+  tenantId: true,
   createdAt: true,
   updatedAt: true,
 });
@@ -120,6 +123,7 @@ export const integrations = pgTable("integrations", {
 
 export const insertIntegrationSchema = createInsertSchema(integrations).omit({
   id: true,
+  tenantId: true,
   createdAt: true,
   updatedAt: true,
 });
