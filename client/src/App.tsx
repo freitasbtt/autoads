@@ -1,0 +1,70 @@
+import { Switch, Route } from "wouter";
+import { queryClient } from "./lib/queryClient";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { Toaster } from "@/components/ui/toaster";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { AppSidebar } from "@/components/AppSidebar";
+import Dashboard from "@/pages/Dashboard";
+import Resources from "@/pages/Resources";
+import CampaignForm from "@/pages/CampaignForm";
+import Onboarding from "@/pages/Onboarding";
+import Login from "@/pages/Login";
+import NotFound from "@/pages/not-found";
+import { useState } from "react";
+
+function Router() {
+  return (
+    <Switch>
+      <Route path="/" component={Dashboard} />
+      <Route path="/resources" component={Resources} />
+      <Route path="/campaigns/new" component={CampaignForm} />
+      <Route path="/onboarding" component={Onboarding} />
+      <Route component={NotFound} />
+    </Switch>
+  );
+}
+
+function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  if (!isLoggedIn) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <Login onLogin={() => setIsLoggedIn(true)} />
+          <Toaster />
+        </TooltipProvider>
+      </QueryClientProvider>
+    );
+  }
+
+  const style = {
+    "--sidebar-width": "16rem",
+    "--sidebar-width-icon": "3rem",
+  };
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider>
+        <SidebarProvider style={style as React.CSSProperties}>
+          <div className="flex h-screen w-full">
+            <AppSidebar />
+            <div className="flex flex-col flex-1">
+              <header className="flex items-center justify-between p-4 border-b">
+                <SidebarTrigger data-testid="button-sidebar-toggle" />
+                <h2 className="text-lg font-semibold">Meta Ads Campaign Manager</h2>
+              </header>
+              <main className="flex-1 overflow-auto">
+                <Router />
+              </main>
+            </div>
+          </div>
+        </SidebarProvider>
+        <Toaster />
+      </TooltipProvider>
+    </QueryClientProvider>
+  );
+}
+
+export default App;
