@@ -11,6 +11,7 @@ import CampaignForm from "@/pages/CampaignForm";
 import ExistingCampaignForm from "@/pages/ExistingCampaignForm";
 import Campaigns from "@/pages/Campaigns";
 import Audiences from "@/pages/Audiences";
+import Integrations from "@/pages/Integrations";
 import Onboarding from "@/pages/Onboarding";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
@@ -25,6 +26,7 @@ function Router() {
       <Route path="/campaigns/existing" component={ExistingCampaignForm} />
       <Route path="/audiences" component={Audiences} />
       <Route path="/resources" component={Resources} />
+      <Route path="/integrations" component={Integrations} />
       <Route path="/onboarding" component={Onboarding} />
       <Route component={NotFound} />
     </Switch>

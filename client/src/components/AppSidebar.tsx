@@ -1,4 +1,4 @@
-import { Home, Settings, FileText, LayoutDashboard, Users } from "lucide-react";
+import { Home, Settings, FileText, LayoutDashboard, Users, Plug } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -16,6 +16,7 @@ const items = [
   { title: "Campanhas", url: "/campaigns", icon: FileText },
   { title: "Públicos", url: "/audiences", icon: Users },
   { title: "Recursos", url: "/resources", icon: Settings },
+  { title: "Integrações", url: "/integrations", icon: Plug },
 ];
 
 export function AppSidebar() {
