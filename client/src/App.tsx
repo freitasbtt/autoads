@@ -14,6 +14,7 @@ import Audiences from "@/pages/Audiences";
 import Integrations from "@/pages/Integrations";
 import Onboarding from "@/pages/Onboarding";
 import Login from "@/pages/Login";
+import Register from "@/pages/Register";
 import NotFound from "@/pages/not-found";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 
@@ -33,6 +34,16 @@ function Router() {
   );
 }
 
+function PublicRouter() {
+  return (
+    <Switch>
+      <Route path="/register" component={Register} />
+      <Route path="/login" component={Login} />
+      <Route path="/" component={Login} />
+    </Switch>
+  );
+}
+
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
 
@@ -48,7 +59,7 @@ function AppContent() {
   }
 
   if (!isAuthenticated) {
-    return <Login />;
+    return <PublicRouter />;
   }
 
   const style = {
