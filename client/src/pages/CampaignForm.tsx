@@ -26,12 +26,14 @@ export default function CampaignForm() {
       ageMin: 25,
       ageMax: 45,
       interests: ["Marketing Digital", "Empreendedorismo"],
+      locations: ["São Paulo, Brasil", "Rio de Janeiro, Brasil"],
       size: "~500K",
       type: "Interesse",
     },
     {
       id: 2,
       name: "Clientes Existentes - Upload CSV",
+      locations: ["Brasil"],
       size: "12.5K",
       type: "Custom List",
       uploadDate: "15/10/2024",
@@ -42,6 +44,7 @@ export default function CampaignForm() {
       ageMin: 18,
       ageMax: 65,
       interests: ["Todos"],
+      locations: ["Brasil", "Portugal"],
       size: "~2M",
       type: "Interesse",
     },
@@ -234,6 +237,13 @@ export default function CampaignForm() {
                             <div className="mt-2">
                               <p className="text-sm text-muted-foreground">
                                 Interesses: {audience.interests.join(", ")}
+                              </p>
+                            </div>
+                          )}
+                          {audience.locations && (
+                            <div className="mt-2">
+                              <p className="text-sm text-muted-foreground">
+                                Localizações: {audience.locations.join(", ")}
                               </p>
                             </div>
                           )}

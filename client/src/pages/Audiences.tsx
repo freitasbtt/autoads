@@ -27,12 +27,14 @@ export default function Audiences() {
       ageMin: 25,
       ageMax: 45,
       interests: ["Marketing Digital", "Empreendedorismo"],
+      locations: ["São Paulo, Brasil", "Rio de Janeiro, Brasil"],
       size: "~500K",
       type: "Interesse",
     },
     {
       id: 2,
       name: "Clientes Existentes - Upload CSV",
+      locations: ["Brasil"],
       size: "12.5K",
       type: "Custom List",
       uploadDate: "15/10/2024",
@@ -43,6 +45,7 @@ export default function Audiences() {
       ageMin: 18,
       ageMax: 65,
       interests: ["Todos"],
+      locations: ["Brasil", "Portugal"],
       size: "~2M",
       type: "Interesse",
     },
@@ -92,6 +95,18 @@ export default function Audiences() {
                     {audience.interests.map((interest, i) => (
                       <Badge key={i} variant="secondary" className="text-xs">
                         {interest}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {audience.locations && (
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Localizações:</span>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {audience.locations.map((location, i) => (
+                      <Badge key={i} variant="outline" className="text-xs">
+                        {location}
                       </Badge>
                     ))}
                   </div>
@@ -174,6 +189,18 @@ export default function Audiences() {
                 rows={3}
                 data-testid="input-behaviors"
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="locations">Localizações (separadas por vírgula) *</Label>
+              <Textarea
+                id="locations"
+                placeholder="São Paulo, Brasil, Rio de Janeiro, Brasil"
+                rows={3}
+                data-testid="input-locations"
+              />
+              <p className="text-xs text-muted-foreground">
+                Digite cidades, estados ou países separados por vírgula
+              </p>
             </div>
           </div>
           <DialogFooter>
