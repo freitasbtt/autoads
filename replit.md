@@ -231,3 +231,58 @@ Preferred communication style: Simple, everyday language.
 - ✅ End-to-end API tests passing for all CRUD operations
 - ✅ Multi-tenant isolation verified (401 unauthorized after logout)
 - ✅ Registration and authentication flow tested successfully
+
+### Frontend-Backend Integration (October 27, 2025)
+
+**Complete CRUD Implementation**:
+- All frontend pages now fully connected to backend API
+- React Query (TanStack Query) used for data fetching and mutations
+- All insert schemas correctly omit tenantId (server-side injection)
+- Field naming consistency between frontend forms and backend validation
+
+**Schema Corrections**:
+- Resources: Field `value` (not platformId) for storing platform-specific IDs
+- Audiences: Fields `type` and `locations` (not geolocations) - locations as string array
+- Integrations: Field `config` (not credentialsJson) for credential storage
+- All schemas use correct field names matching database columns
+
+**Frontend Pages Implementation**:
+1. **Resources Page** (client/src/pages/Resources.tsx):
+   - Create, list, and delete resources by type
+   - Tab-based filtering by resource type
+   - Dialog form for resource creation
+   - Success toasts and optimistic UI updates
+
+2. **Audiences Page** (client/src/pages/Audiences.tsx):
+   - Create, list, and delete audiences
+   - Age range, interests, behaviors, and location targeting
+   - Card-based layout with badge displays
+   - Multi-line location input (newline-separated)
+
+3. **Campaigns Page** (client/src/pages/Campaigns.tsx):
+   - List campaigns with status toggle
+   - Pause/activate campaign functionality
+   - Delete campaigns
+   - Status indicators and objective badges
+
+4. **Integrations Page** (client/src/pages/Integrations.tsx):
+   - Configure Meta Ads API credentials
+   - Configure Google Drive API credentials
+   - Status badges showing connection state
+   - Dialog forms for credential entry
+   - Masked credential display for security
+
+**Data Flow**:
+- Frontend forms → apiRequest helper → Backend routes → Zod validation → Storage layer → Database
+- tenantId injected server-side from authenticated session
+- Multi-tenant isolation enforced at every layer
+- Cache invalidation via queryClient after mutations
+
+**End-to-End Testing**:
+- ✅ Full CRUD workflow tested for all entities
+- ✅ Registration and login flow working
+- ✅ Resources create/delete verified
+- ✅ Audiences create/delete verified
+- ✅ Integrations create verified
+- ✅ UI state updates confirmed (toasts, badges, lists)
+- ✅ API responses validated
