@@ -1,4 +1,4 @@
-import { Home, Settings, FileText, LayoutDashboard, Users, Plug } from "lucide-react";
+import { Home, Settings, FileText, LayoutDashboard, Users, Plug, LogOut } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -8,8 +8,11 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarFooter,
 } from "@/components/ui/sidebar";
 import { useLocation } from "wouter";
+import { useAuth } from "@/contexts/AuthContext";
+import { Button } from "@/components/ui/button";
 
 const items = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
@@ -21,6 +24,7 @@ const items = [
 
 export function AppSidebar() {
   const [location] = useLocation();
+  const { logout, user } = useAuth();
 
   return (
     <Sidebar>
@@ -43,6 +47,23 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      <SidebarFooter className="p-4 border-t">
+        <div className="flex flex-col gap-2">
+          <div className="text-sm text-muted-foreground truncate">
+            {user?.email}
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={logout}
+            data-testid="button-logout"
+            className="w-full"
+          >
+            <LogOut className="mr-2 h-4 w-4" />
+            Sair
+          </Button>
+        </div>
+      </SidebarFooter>
     </Sidebar>
   );
 }

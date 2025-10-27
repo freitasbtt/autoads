@@ -3,19 +3,48 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 
-interface LoginProps {
-  onLogin?: () => void;
-}
-
-export default function Login({ onLogin }: LoginProps) {
+export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const { login } = useAuth();
+  const { toast } = useToast();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Login submitted", { email, password });
-    onLogin?.();
+    setIsLoading(true);
+
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || "Falha no login");
+      }
+
+      const data = await res.json();
+      login(data.user);
+      toast({
+        title: "Login realizado com sucesso!",
+        description: `Bem-vindo, ${data.user.email}`,
+      });
+    } catch (error) {
+      toast({
+        title: "Erro no login",
+        description: error instanceof Error ? error.message : "Credenciais inválidas",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -37,6 +66,7 @@ export default function Login({ onLogin }: LoginProps) {
                 onChange={(e) => setEmail(e.target.value)}
                 data-testid="input-email"
                 required
+                disabled={isLoading}
               />
             </div>
             <div className="space-y-2">
@@ -49,10 +79,11 @@ export default function Login({ onLogin }: LoginProps) {
                 onChange={(e) => setPassword(e.target.value)}
                 data-testid="input-password"
                 required
+                disabled={isLoading}
               />
             </div>
-            <Button type="submit" className="w-full" data-testid="button-login">
-              Entrar
+            <Button type="submit" className="w-full" data-testid="button-login" disabled={isLoading}>
+              {isLoading ? "Entrando..." : "Entrar"}
             </Button>
           </form>
         </CardContent>

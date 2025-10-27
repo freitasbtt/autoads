@@ -15,7 +15,7 @@ import Integrations from "@/pages/Integrations";
 import Onboarding from "@/pages/Onboarding";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
-import { useState } from "react";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 
 function Router() {
   return (
@@ -33,18 +33,22 @@ function Router() {
   );
 }
 
-function App() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+function AppContent() {
+  const { isAuthenticated, isLoading } = useAuth();
 
-  if (!isLoggedIn) {
+  if (isLoading) {
     return (
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <Login onLogin={() => setIsLoggedIn(true)} />
-          <Toaster />
-        </TooltipProvider>
-      </QueryClientProvider>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Carregando...</p>
+        </div>
+      </div>
     );
+  }
+
+  if (!isAuthenticated) {
+    return <Login />;
   }
 
   const style = {
@@ -53,23 +57,31 @@ function App() {
   };
 
   return (
+    <SidebarProvider style={style as React.CSSProperties}>
+      <div className="flex h-screen w-full">
+        <AppSidebar />
+        <div className="flex flex-col flex-1">
+          <header className="flex items-center justify-between p-4 border-b">
+            <SidebarTrigger data-testid="button-sidebar-toggle" />
+            <h2 className="text-lg font-semibold">Meta Ads Campaign Manager</h2>
+          </header>
+          <main className="flex-1 overflow-auto">
+            <Router />
+          </main>
+        </div>
+      </div>
+    </SidebarProvider>
+  );
+}
+
+function App() {
+  return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <SidebarProvider style={style as React.CSSProperties}>
-          <div className="flex h-screen w-full">
-            <AppSidebar />
-            <div className="flex flex-col flex-1">
-              <header className="flex items-center justify-between p-4 border-b">
-                <SidebarTrigger data-testid="button-sidebar-toggle" />
-                <h2 className="text-lg font-semibold">Meta Ads Campaign Manager</h2>
-              </header>
-              <main className="flex-1 overflow-auto">
-                <Router />
-              </main>
-            </div>
-          </div>
-        </SidebarProvider>
-        <Toaster />
+        <AuthProvider>
+          <AppContent />
+          <Toaster />
+        </AuthProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );
