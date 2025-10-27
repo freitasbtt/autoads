@@ -341,4 +341,267 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+import { db } from "./db";
+import { eq, and } from "drizzle-orm";
+import * as schema from "@shared/schema";
+
+export class DbStorage implements IStorage {
+  // Tenant operations
+  async getTenant(id: number): Promise<Tenant | undefined> {
+    const result = await db.query.tenants.findFirst({
+      where: eq(schema.tenants.id, id),
+    });
+    return result;
+  }
+
+  async createTenant(insertTenant: InsertTenant): Promise<Tenant> {
+    const [tenant] = await db.insert(schema.tenants).values(insertTenant).returning();
+    return tenant;
+  }
+
+  // User operations
+  async getUser(id: number): Promise<User | undefined> {
+    const result = await db.query.users.findFirst({
+      where: eq(schema.users.id, id),
+    });
+    return result;
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const result = await db.query.users.findFirst({
+      where: eq(schema.users.email, email),
+    });
+    return result;
+  }
+
+  async getUsersByTenant(tenantId: number): Promise<User[]> {
+    return db.query.users.findMany({
+      where: eq(schema.users.tenantId, tenantId),
+    });
+  }
+
+  async createUser(insertUser: InsertUser): Promise<User> {
+    const [user] = await db.insert(schema.users).values(insertUser).returning();
+    return user;
+  }
+
+  async updateUser(id: number, updates: Partial<InsertUser>): Promise<User | undefined> {
+    const [user] = await db
+      .update(schema.users)
+      .set(updates)
+      .where(eq(schema.users.id, id))
+      .returning();
+    return user;
+  }
+
+  // Resource operations
+  async getResource(id: number): Promise<Resource | undefined> {
+    const result = await db.query.resources.findFirst({
+      where: eq(schema.resources.id, id),
+    });
+    return result;
+  }
+
+  async getResourcesByTenant(tenantId: number): Promise<Resource[]> {
+    return db.query.resources.findMany({
+      where: eq(schema.resources.tenantId, tenantId),
+    });
+  }
+
+  async getResourcesByType(tenantId: number, type: string): Promise<Resource[]> {
+    return db.query.resources.findMany({
+      where: and(eq(schema.resources.tenantId, tenantId), eq(schema.resources.type, type)),
+    });
+  }
+
+  async createResource(insertResource: InsertResource): Promise<Resource> {
+    const [resource] = await db.insert(schema.resources).values(insertResource).returning();
+    return resource;
+  }
+
+  async updateResource(
+    id: number,
+    updates: Partial<InsertResource>
+  ): Promise<Resource | undefined> {
+    const [resource] = await db
+      .update(schema.resources)
+      .set(updates)
+      .where(eq(schema.resources.id, id))
+      .returning();
+    return resource;
+  }
+
+  async deleteResource(id: number): Promise<boolean> {
+    const result = await db.delete(schema.resources).where(eq(schema.resources.id, id));
+    return result.rowCount !== null && result.rowCount > 0;
+  }
+
+  // Audience operations
+  async getAudience(id: number): Promise<Audience | undefined> {
+    const result = await db.query.audiences.findFirst({
+      where: eq(schema.audiences.id, id),
+    });
+    return result;
+  }
+
+  async getAudiencesByTenant(tenantId: number): Promise<Audience[]> {
+    return db.query.audiences.findMany({
+      where: eq(schema.audiences.tenantId, tenantId),
+    });
+  }
+
+  async createAudience(insertAudience: InsertAudience): Promise<Audience> {
+    const [audience] = await db.insert(schema.audiences).values(insertAudience).returning();
+    return audience;
+  }
+
+  async updateAudience(
+    id: number,
+    updates: Partial<InsertAudience>
+  ): Promise<Audience | undefined> {
+    const [audience] = await db
+      .update(schema.audiences)
+      .set(updates)
+      .where(eq(schema.audiences.id, id))
+      .returning();
+    return audience;
+  }
+
+  async deleteAudience(id: number): Promise<boolean> {
+    const result = await db.delete(schema.audiences).where(eq(schema.audiences.id, id));
+    return result.rowCount !== null && result.rowCount > 0;
+  }
+
+  // Campaign operations
+  async getCampaign(id: number): Promise<Campaign | undefined> {
+    const result = await db.query.campaigns.findFirst({
+      where: eq(schema.campaigns.id, id),
+    });
+    return result;
+  }
+
+  async getCampaignsByTenant(tenantId: number): Promise<Campaign[]> {
+    return db.query.campaigns.findMany({
+      where: eq(schema.campaigns.tenantId, tenantId),
+    });
+  }
+
+  async createCampaign(insertCampaign: InsertCampaign): Promise<Campaign> {
+    const [campaign] = await db.insert(schema.campaigns).values(insertCampaign).returning();
+    return campaign;
+  }
+
+  async updateCampaign(
+    id: number,
+    updates: Partial<InsertCampaign>
+  ): Promise<Campaign | undefined> {
+    const updateData = { ...updates, updatedAt: new Date() };
+    const [campaign] = await db
+      .update(schema.campaigns)
+      .set(updateData)
+      .where(eq(schema.campaigns.id, id))
+      .returning();
+    return campaign;
+  }
+
+  async deleteCampaign(id: number): Promise<boolean> {
+    const result = await db.delete(schema.campaigns).where(eq(schema.campaigns.id, id));
+    return result.rowCount !== null && result.rowCount > 0;
+  }
+
+  // Integration operations
+  async getIntegration(id: number): Promise<Integration | undefined> {
+    const result = await db.query.integrations.findFirst({
+      where: eq(schema.integrations.id, id),
+    });
+    return result;
+  }
+
+  async getIntegrationsByTenant(tenantId: number): Promise<Integration[]> {
+    return db.query.integrations.findMany({
+      where: eq(schema.integrations.tenantId, tenantId),
+    });
+  }
+
+  async getIntegrationByProvider(
+    tenantId: number,
+    provider: string
+  ): Promise<Integration | undefined> {
+    const result = await db.query.integrations.findFirst({
+      where: and(
+        eq(schema.integrations.tenantId, tenantId),
+        eq(schema.integrations.provider, provider)
+      ),
+    });
+    return result;
+  }
+
+  async createIntegration(insertIntegration: InsertIntegration): Promise<Integration> {
+    const [integration] = await db
+      .insert(schema.integrations)
+      .values(insertIntegration)
+      .returning();
+    return integration;
+  }
+
+  async updateIntegration(
+    id: number,
+    updates: Partial<InsertIntegration>
+  ): Promise<Integration | undefined> {
+    const updateData = { ...updates, updatedAt: new Date() };
+    const [integration] = await db
+      .update(schema.integrations)
+      .set(updateData)
+      .where(eq(schema.integrations.id, id))
+      .returning();
+    return integration;
+  }
+
+  async deleteIntegration(id: number): Promise<boolean> {
+    const result = await db.delete(schema.integrations).where(eq(schema.integrations.id, id));
+    return result.rowCount !== null && result.rowCount > 0;
+  }
+
+  // Automation operations
+  async getAutomation(id: number): Promise<Automation | undefined> {
+    const result = await db.query.automations.findFirst({
+      where: eq(schema.automations.id, id),
+    });
+    return result;
+  }
+
+  async getAutomationsByTenant(tenantId: number): Promise<Automation[]> {
+    return db.query.automations.findMany({
+      where: eq(schema.automations.tenantId, tenantId),
+    });
+  }
+
+  async getAutomationsByCampaign(campaignId: number): Promise<Automation[]> {
+    return db.query.automations.findMany({
+      where: eq(schema.automations.campaignId, campaignId),
+    });
+  }
+
+  async createAutomation(insertAutomation: InsertAutomation): Promise<Automation> {
+    const [automation] = await db
+      .insert(schema.automations)
+      .values(insertAutomation)
+      .returning();
+    return automation;
+  }
+
+  async updateAutomation(
+    id: number,
+    updates: Partial<InsertAutomation>
+  ): Promise<Automation | undefined> {
+    const [automation] = await db
+      .update(schema.automations)
+      .set(updates)
+      .where(eq(schema.automations.id, id))
+      .returning();
+    return automation;
+  }
+}
+
+// Use DbStorage for production, MemStorage for testing
+export const storage = process.env.NODE_ENV === "test" ? new MemStorage() : new DbStorage();
