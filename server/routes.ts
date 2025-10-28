@@ -335,92 +335,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Create campaign
+  // Create campaign (always as draft)
   app.post("/api/campaigns", isAuthenticated, async (req, res, next) => {
     try {
       const user = req.user as User;
       const data = insertCampaignSchema.parse(req.body);
       
+      // Always create campaigns as draft - webhook will be sent manually via send-webhook endpoint
       const campaign = await storage.createCampaign({
         ...data,
         tenantId: user.tenantId,
+        status: "draft", // Explicitly set to draft
       });
 
-      // Send webhook to n8n if configured
-      try {
-        const settings = await storage.getAppSettings();
-        if (settings?.n8nWebhookUrl) {
-          // Fetch resource details
-          const accountResource = campaign.accountId ? await storage.getResource(campaign.accountId) : null;
-          const pageResource = campaign.pageId ? await storage.getResource(campaign.pageId) : null;
-          const instagramResource = campaign.instagramId ? await storage.getResource(campaign.instagramId) : null;
-          const whatsappResource = campaign.whatsappId ? await storage.getResource(campaign.whatsappId) : null;
-          const leadformResource = campaign.leadformId ? await storage.getResource(campaign.leadformId) : null;
-
-          // Prepare webhook payload matching the provided example
-          const webhookPayload = [{
-            headers: {
-              "content-type": "application/json",
-              "user-agent": "Meta-Ads-Platform/1.0"
-            },
-            params: {},
-            query: {},
-            body: {
-              rowIndex: campaign.id,
-              sheet: accountResource ? `ACC:${accountResource.value}` : "Unknown",
-              data: {
-                submit: "ON",
-                campaign_id: String(campaign.id),
-                campaign_name: campaign.name,
-                objective: campaign.objective,
-                budget_type: "DAILY",
-                daily_budget: campaign.budget,
-                page_id: pageResource ? pageResource.value : "",
-                instagram_user_id: instagramResource ? instagramResource.value : "",
-                whatsapp_number_id: whatsappResource ? whatsappResource.value : "",
-                drive_folder_id: campaign.driveFolderId || "",
-                message_text: campaign.message || "",
-                title_text: campaign.title || "",
-                leadgen_form_id: leadformResource ? leadformResource.value : "",
-                website_url: campaign.websiteUrl || "",
-                status: "PENDING",
-                status_detail: "Enviado ao n8n",
-                ad_account_id: accountResource ? accountResource.value : "",
-                client: `Tenant-${user.tenantId}`
-              },
-              ts: new Date().toISOString()
-            },
-            webhookUrl: settings.n8nWebhookUrl,
-            executionMode: "production"
-          }];
-
-          // Send webhook
-          const webhookResponse = await fetch(settings.n8nWebhookUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(webhookPayload),
-          });
-
-          if (webhookResponse.ok) {
-            // Update campaign status to pending when webhook is sent successfully
-            await storage.updateCampaign(campaign.id, {
-              status: "pending",
-              statusDetail: "Aguardando processamento do n8n",
-            });
-          } else {
-            console.error("Failed to send webhook to n8n:", await webhookResponse.text());
-          }
-        }
-      } catch (webhookError) {
-        // Log webhook error but don't fail the campaign creation
-        console.error("Error sending webhook to n8n:", webhookError);
-      }
-
-      // Fetch updated campaign to return latest status
-      const updatedCampaign = await storage.getCampaign(campaign.id);
-      res.status(201).json(updatedCampaign);
+      res.status(201).json(campaign);
     } catch (err) {
       next(err);
     }

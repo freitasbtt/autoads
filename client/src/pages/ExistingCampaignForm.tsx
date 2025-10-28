@@ -67,39 +67,21 @@ export default function ExistingCampaignForm() {
   const leadForms = resources.filter((r) => r.type === "leadform");
   const driveFolders = resources.filter((r) => r.type === "drive_folder");
 
-  const sendWebhookMutation = useMutation({
+  const createDraftMutation = useMutation({
     mutationFn: async (payload: any) => {
-      return await apiRequest("POST", "/api/webhooks/n8n", payload);
+      return await apiRequest("POST", "/api/campaigns", payload);
     },
     onSuccess: () => {
       toast({
-        title: "Enviado com sucesso!",
-        description: "Os dados foram enviados para o n8n",
+        title: "Rascunho criado!",
+        description: "A campanha foi salva como rascunho com sucesso.",
       });
       setLocation("/campaigns");
     },
     onError: (error: any) => {
-      // Extract message from error
-      let errorMessage = "Não foi possível enviar os dados";
-      
-      if (error.message) {
-        // Error format: "500: {\"message\":\"...\"}"
-        try {
-          const match = error.message.match(/\d+:\s*(.+)/);
-          if (match && match[1]) {
-            const jsonPart = match[1];
-            const parsed = JSON.parse(jsonPart);
-            errorMessage = parsed.message || errorMessage;
-          }
-        } catch (e) {
-          // If parsing fails, use the original error message
-          errorMessage = error.message;
-        }
-      }
-      
       toast({
-        title: "Erro ao enviar",
-        description: errorMessage,
+        title: "Erro ao criar rascunho",
+        description: error.message || "Não foi possível criar o rascunho",
         variant: "destructive",
       });
     },
@@ -153,34 +135,29 @@ export default function ExistingCampaignForm() {
       return;
     }
 
-    const selectedPage = pages.find((p) => p.value === pageId);
-    const selectedInstagram = instagramAccounts.find((i) => i.value === instagramId);
-    const selectedWhatsApp = whatsappNumbers.find((w) => w.value === whatsappId);
-    const selectedLeadForm = leadForms.find((lf) => lf.value === leadFormId);
-    const selectedDriveFolder = driveFolders.find((df) => df.value === driveFolderId);
+    const selectedPage = pages.find((p) => p.id === Number(pageId));
+    const selectedInstagram = instagramAccounts.find((i) => i.id === Number(instagramId));
+    const selectedWhatsApp = whatsappNumbers.find((w) => w.id === Number(whatsappId));
+    const selectedLeadForm = leadForms.find((lf) => lf.id === Number(leadFormId));
 
+    // Create campaign as draft
     const payload = {
-      objectives: selectedObjectives,
-      page_id: selectedPage?.value || pageId,
-      page_name: selectedPage?.name || "",
-      instagram_user_id: selectedInstagram?.value || instagramId,
-      instagram_name: selectedInstagram?.name || "",
-      whatsapp_number_id: selectedWhatsApp?.value || whatsappId,
-      whatsapp_name: selectedWhatsApp?.name || "",
-      leadgen_form_id: selectedLeadForm?.value || leadFormId,
-      leadgen_form_name: selectedLeadForm?.name || "",
-      website_url: websiteUrl,
-      drive_folder_id: selectedDriveFolder?.value || driveFolderId,
-      drive_folder_name: selectedDriveFolder?.name || "",
-      title,
-      message,
-      metadata: {
-        form_type: "existing_campaign",
-        timestamp: new Date().toISOString(),
-      },
+      name: `Campanha ${selectedObjectives.join(", ")} - ${new Date().toLocaleDateString()}`,
+      objective: selectedObjectives[0], // Use first objective as primary
+      status: "draft",
+      pageId: selectedPage?.id || null,
+      instagramId: selectedInstagram?.id || null,
+      whatsappId: selectedWhatsApp?.id || null,
+      leadformId: selectedLeadForm?.id || null,
+      websiteUrl: websiteUrl || null,
+      creatives: [{
+        title,
+        text: message,
+        driveFolderId: driveFolderId,
+      }],
     };
 
-    sendWebhookMutation.mutate(payload);
+    createDraftMutation.mutate(payload);
   };
 
   if (loadingResources) {
@@ -403,16 +380,16 @@ export default function ExistingCampaignForm() {
           </Button>
           <Button
             type="submit"
-            disabled={sendWebhookMutation.isPending}
+            disabled={createDraftMutation.isPending}
             data-testid="button-submit"
           >
-            {sendWebhookMutation.isPending ? (
+            {createDraftMutation.isPending ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Enviando...
+                Criando...
               </>
             ) : (
-              "Enviar para n8n"
+              "Criar Rascunho"
             )}
           </Button>
         </div>

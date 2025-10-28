@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,32 +7,26 @@ import { Plus, Edit, Pause, Play, Trash2, Send, Loader2, CheckCircle, XCircle } 
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-
-interface Campaign {
-  id: number;
-  tenantId: number;
-  name: string;
-  objective: string;
-  status: string;
-  statusDetail: string | null;
-  budget: string;
-  accountId: number | null;
-  pageId: number | null;
-  instagramId: number | null;
-  whatsappId: number | null;
-  leadformId: number | null;
-  websiteUrl: string | null;
-  audienceIds: number[];
-  title: string | null;
-  message: string | null;
-}
+import { CampaignDetailsModal } from "@/components/CampaignDetailsModal";
+import { Campaign, Resource, Audience } from "@shared/schema";
 
 export default function Campaigns() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [showSendButton, setShowSendButton] = useState(false);
 
   const { data: campaigns = [], isLoading } = useQuery<Campaign[]>({
     queryKey: ["/api/campaigns"],
+  });
+
+  const { data: resources = [] } = useQuery<Resource[]>({
+    queryKey: ["/api/resources"],
+  });
+
+  const { data: audiences = [] } = useQuery<Audience[]>({
+    queryKey: ["/api/audiences"],
   });
 
   const toggleStatusMutation = useMutation({
@@ -71,43 +66,28 @@ export default function Campaigns() {
     },
   });
 
-  const sendWebhookMutation = useMutation({
-    mutationFn: (id: number) => apiRequest("POST", `/api/campaigns/${id}/send-webhook`, {}),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/campaigns"] });
-      toast({
-        title: "Webhook enviado",
-        description: "Campanha enviada para n8n. Aguardando processamento...",
-      });
-    },
-    onError: (error: any) => {
-      // Extract message from error
-      let errorMessage = "Não foi possível enviar os dados";
-      
-      if (error.message) {
-        try {
-          const match = error.message.match(/\d+:\s*(.+)/);
-          if (match && match[1]) {
-            const jsonPart = match[1];
-            const parsed = JSON.parse(jsonPart);
-            errorMessage = parsed.message || errorMessage;
-          }
-        } catch (e) {
-          errorMessage = error.message;
-        }
-      }
-
-      toast({
-        title: "Erro ao enviar webhook",
-        description: errorMessage,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handleToggleStatus = (campaign: Campaign) => {
+  const handleToggleStatus = (campaign: Campaign, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent row click
     const newStatus = campaign.status === "active" ? "paused" : "active";
     toggleStatusMutation.mutate({ id: campaign.id, status: newStatus });
+  };
+
+  const handleOpenSendModal = (campaign: Campaign, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent row click
+    setSelectedCampaign(campaign);
+    setShowSendButton(true);
+    setModalOpen(true);
+  };
+
+  const handleRowClick = (campaign: Campaign) => {
+    setSelectedCampaign(campaign);
+    setShowSendButton(false);
+    setModalOpen(true);
+  };
+
+  const handleDelete = (campaignId: number, e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent row click
+    deleteMutation.mutate(campaignId);
   };
 
   const objectiveLabels: Record<string, string> = {
@@ -223,9 +203,6 @@ export default function Campaigns() {
                     <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
                       Status
                     </th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
-                      Orçamento
-                    </th>
                     <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
                       Ações
                     </th>
@@ -235,8 +212,9 @@ export default function Campaigns() {
                   {campaigns.map((campaign) => (
                     <tr
                       key={campaign.id}
-                      className="border-b hover-elevate"
+                      className="border-b hover-elevate cursor-pointer"
                       data-testid={`row-campaign-${campaign.id}`}
+                      onClick={() => handleRowClick(campaign)}
                     >
                       <td className="py-4 px-4 font-medium">{campaign.name}</td>
                       <td className="py-4 px-4">
@@ -247,14 +225,13 @@ export default function Campaigns() {
                       <td className="py-4 px-4">
                         {getStatusBadge(campaign.status, campaign.statusDetail)}
                       </td>
-                      <td className="py-4 px-4 font-mono text-sm">{campaign.budget}</td>
                       <td className="py-4 px-4">
                         <div className="flex justify-end gap-1">
                           <Button
                             size="icon"
                             variant="ghost"
                             className="h-8 w-8"
-                            onClick={() => sendWebhookMutation.mutate(campaign.id)}
+                            onClick={(e) => handleOpenSendModal(campaign, e)}
                             data-testid={`button-send-webhook-${campaign.id}`}
                             title="Enviar para n8n"
                           >
@@ -264,7 +241,8 @@ export default function Campaigns() {
                             size="icon"
                             variant="ghost"
                             className="h-8 w-8"
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               toast({
                                 title: "Em desenvolvimento",
                                 description: "Edição de campanha em breve",
@@ -278,7 +256,7 @@ export default function Campaigns() {
                             size="icon"
                             variant="ghost"
                             className="h-8 w-8"
-                            onClick={() => handleToggleStatus(campaign)}
+                            onClick={(e) => handleToggleStatus(campaign, e)}
                             data-testid={`button-toggle-campaign-${campaign.id}`}
                           >
                             {campaign.status === "active" ? (
@@ -290,8 +268,8 @@ export default function Campaigns() {
                           <Button
                             size="icon"
                             variant="ghost"
-                            className="h-8 w-8"
-                            onClick={() => deleteMutation.mutate(campaign.id)}
+                            className="h-8 w-4 8"
+                            onClick={(e) => handleDelete(campaign.id, e)}
                             data-testid={`button-delete-campaign-${campaign.id}`}
                           >
                             <Trash2 className="h-4 w-4" />
@@ -306,6 +284,16 @@ export default function Campaigns() {
           </CardContent>
         </Card>
       )}
+
+      {/* Campaign Details Modal */}
+      <CampaignDetailsModal
+        campaign={selectedCampaign}
+        open={modalOpen}
+        onOpenChange={setModalOpen}
+        resources={resources}
+        audiences={audiences}
+        showSendButton={showSendButton}
+      />
     </div>
   );
 }
