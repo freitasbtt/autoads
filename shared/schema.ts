@@ -82,7 +82,8 @@ export const campaigns = pgTable("campaigns", {
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
   name: text("name").notNull(),
   objective: text("objective").notNull(), // LEAD, TRAFFIC, WHATSAPP, CONVERSIONS, REACH
-  status: text("status").notNull().default("draft"), // draft, active, paused, completed
+  status: text("status").notNull().default("draft"), // draft, pending (sent to n8n), active (confirmed by n8n), error (n8n error), paused, completed
+  statusDetail: text("status_detail"), // Additional status info from n8n
   budget: text("budget").notNull(),
   accountId: integer("account_id").references(() => resources.id),
   pageId: integer("page_id").references(() => resources.id),
