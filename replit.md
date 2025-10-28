@@ -63,11 +63,16 @@ Preferred communication style: Simple, everyday language.
 - **Security**: appsecret_proof for Meta API calls, CSRF protection, multi-tenant isolation
 
 ### n8n Webhook Integration
-- **Auto-send on Campaign Creation**: Webhook automatically triggered when creating new campaigns
-- **Manual Resend**: "Send to n8n" button in campaigns list for reprocessing
+- **Auto-send on Campaign Creation**: Webhook automatically triggered when creating new campaigns (via POST `/api/campaigns`)
+- **Manual Resend**: "Send to n8n" button in campaigns list for reprocessing (via POST `/api/campaigns/:id/send-webhook`)
+- **Direct Send (Existing Campaign Form)**: POST `/api/webhooks/n8n` endpoint for sending data directly without creating a campaign
 - **Payload Format**: Matches n8n expected schema with all resource IDs (campaign_id, page_id, instagram_user_id, whatsapp_number_id, drive_folder_id, leadgen_form_id, etc.)
-- **Error Handling**: Webhook failures logged but don't block campaign creation
+- **Error Handling**: 
+  - Webhook failures logged but don't block campaign creation
+  - Returns user-friendly error if n8n webhook is not configured
+  - Returns specific message if n8n webhook is in test mode and not active: "Webhook n8n não está ativo. No n8n, clique em 'Execute workflow' e tente novamente."
 - **Configuration**: Webhook URL set via Admin > Configurações
+- **Test Mode**: n8n test webhooks require manual activation - click "Execute workflow" button in n8n before testing
 
 ### Campaign Form Enhancements
 - **Resource Selectors**: Dynamic dropdowns populated from OAuth-imported resources
