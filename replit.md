@@ -62,10 +62,37 @@ Preferred communication style: Simple, everyday language.
 - **Resource Auto-Import**: Resources automatically populated after OAuth login
 - **Security**: appsecret_proof for Meta API calls, CSRF protection, multi-tenant isolation
 
-### n8n Webhook Integration
+### n8n Webhook Integration & Campaign Status System
 - **Auto-send on Campaign Creation**: Webhook automatically triggered when creating new campaigns (via POST `/api/campaigns`)
+  - Campaign status set to `pending` when webhook sent successfully
+  - Status shown as "Processando" with loading spinner in UI
 - **Manual Resend**: "Send to n8n" button in campaigns list for reprocessing (via POST `/api/campaigns/:id/send-webhook`)
+  - Updates campaign status to `pending` when sent
+  - Allows re-processing of campaigns
 - **Direct Send (Existing Campaign Form)**: POST `/api/webhooks/n8n` endpoint for sending data directly without creating a campaign
+- **Status Callback from n8n**: POST `/api/webhooks/n8n/status` endpoint receives status updates from n8n
+  - **Endpoint**: `POST https://YOUR-APP-URL/api/webhooks/n8n/status`
+  - **Required Payload**:
+    ```json
+    {
+      "campaign_id": "1",
+      "status": "active",
+      "status_detail": "Campanha criada com sucesso no Meta Ads"
+    }
+    ```
+  - **Valid Status Values**: `active`, `error`, `paused`, `completed`
+  - **Response**: `200 OK` with updated campaign data
+  - **Usage in n8n**: Add HTTP Request node at end of workflow to send status update back to platform
+- **Campaign Status Flow**:
+  1. `draft` → Campaign created but not sent to n8n (gray)
+  2. `pending` → Sent to n8n, awaiting processing (yellow, loading spinner)
+  3. `active` → Confirmed active by n8n (green, checkmark icon)
+  4. `error` → n8n reported an error (red, X icon)
+  5. `paused` / `completed` → Final states
+- **UI Features**:
+  - Real-time status badges with icons
+  - Status detail text shown below badge
+  - Auto-refresh after webhook send
 - **Payload Format**: Matches n8n expected schema with all resource IDs (campaign_id, page_id, instagram_user_id, whatsapp_number_id, drive_folder_id, leadgen_form_id, etc.)
 - **Error Handling**: 
   - Webhook failures logged but don't block campaign creation
