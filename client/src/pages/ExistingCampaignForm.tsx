@@ -61,11 +61,11 @@ export default function ExistingCampaignForm() {
   const needsWebsite = selectedObjectives.includes("TRAFFIC");
   const needsWhatsApp = selectedObjectives.includes("WHATSAPP");
 
-  const pages = resources.filter((r) => r.type === "Page");
-  const instagramAccounts = resources.filter((r) => r.type === "Instagram");
-  const whatsappNumbers = resources.filter((r) => r.type === "WhatsApp");
-  const leadForms = resources.filter((r) => r.type === "LeadForm");
-  const driveFolders = resources.filter((r) => r.type === "DriveFolder");
+  const pages = resources.filter((r) => r.type === "page");
+  const instagramAccounts = resources.filter((r) => r.type === "instagram");
+  const whatsappNumbers = resources.filter((r) => r.type === "whatsapp");
+  const leadForms = resources.filter((r) => r.type === "leadform");
+  const driveFolders = resources.filter((r) => r.type === "drive_folder");
 
   const sendWebhookMutation = useMutation({
     mutationFn: async (payload: any) => {
