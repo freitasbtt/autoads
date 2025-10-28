@@ -2,7 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Edit, Pause, Play, Trash2, Send } from "lucide-react";
+import { Plus, Edit, Pause, Play, Trash2, Send, Loader2, CheckCircle, XCircle } from "lucide-react";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -13,6 +13,7 @@ interface Campaign {
   name: string;
   objective: string;
   status: string;
+  statusDetail: string | null;
   budget: string;
   accountId: number | null;
   pageId: number | null;
@@ -73,15 +74,32 @@ export default function Campaigns() {
   const sendWebhookMutation = useMutation({
     mutationFn: (id: number) => apiRequest("POST", `/api/campaigns/${id}/send-webhook`, {}),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/campaigns"] });
       toast({
         title: "Webhook enviado",
-        description: "Campanha enviada para n8n com sucesso",
+        description: "Campanha enviada para n8n. Aguardando processamento...",
       });
     },
-    onError: (error: Error) => {
+    onError: (error: any) => {
+      // Extract message from error
+      let errorMessage = "Não foi possível enviar os dados";
+      
+      if (error.message) {
+        try {
+          const match = error.message.match(/\d+:\s*(.+)/);
+          if (match && match[1]) {
+            const jsonPart = match[1];
+            const parsed = JSON.parse(jsonPart);
+            errorMessage = parsed.message || errorMessage;
+          }
+        } catch (e) {
+          errorMessage = error.message;
+        }
+      }
+
       toast({
         title: "Erro ao enviar webhook",
-        description: error.message,
+        description: errorMessage,
         variant: "destructive",
       });
     },
@@ -102,9 +120,52 @@ export default function Campaigns() {
 
   const statusLabels: Record<string, string> = {
     draft: "Rascunho",
+    pending: "Processando",
     active: "Ativa",
+    error: "Erro",
     paused: "Pausada",
     completed: "Concluída",
+  };
+
+  const getStatusBadge = (status: string, statusDetail: string | null) => {
+    let variant: "default" | "secondary" | "destructive" | "outline" = "outline";
+    let icon = null;
+
+    switch (status) {
+      case "active":
+        variant = "default";
+        icon = <CheckCircle className="h-3 w-3 mr-1" />;
+        break;
+      case "pending":
+        variant = "secondary";
+        icon = <Loader2 className="h-3 w-3 mr-1 animate-spin" />;
+        break;
+      case "error":
+        variant = "destructive";
+        icon = <XCircle className="h-3 w-3 mr-1" />;
+        break;
+      case "draft":
+        variant = "secondary";
+        break;
+      case "paused":
+        variant = "outline";
+        break;
+      case "completed":
+        variant = "outline";
+        break;
+    }
+
+    return (
+      <div className="flex flex-col gap-1">
+        <Badge variant={variant} className="w-fit">
+          {icon}
+          {statusLabels[status] || status}
+        </Badge>
+        {statusDetail && (
+          <span className="text-xs text-muted-foreground">{statusDetail}</span>
+        )}
+      </div>
+    );
   };
 
   return (
@@ -184,17 +245,7 @@ export default function Campaigns() {
                         </Badge>
                       </td>
                       <td className="py-4 px-4">
-                        <Badge
-                          variant={
-                            campaign.status === "active"
-                              ? "default"
-                              : campaign.status === "draft"
-                              ? "secondary"
-                              : "outline"
-                          }
-                        >
-                          {statusLabels[campaign.status] || campaign.status}
-                        </Badge>
+                        {getStatusBadge(campaign.status, campaign.statusDetail)}
                       </td>
                       <td className="py-4 px-4 font-mono text-sm">{campaign.budget}</td>
                       <td className="py-4 px-4">
