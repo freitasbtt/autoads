@@ -14,7 +14,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -71,12 +71,16 @@ export default function ExistingCampaignForm() {
     mutationFn: async (payload: any) => {
       return await apiRequest("POST", "/api/campaigns", payload);
     },
-    onSuccess: () => {
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/campaigns"] });
       toast({
         title: "Rascunho criado!",
         description: "A campanha foi salva como rascunho com sucesso.",
       });
-      setLocation("/campaigns");
+      // Small delay to allow toast to appear before navigation
+      setTimeout(() => {
+        setLocation("/campaigns");
+      }, 100);
     },
     onError: (error: any) => {
       toast({
@@ -136,8 +140,9 @@ export default function ExistingCampaignForm() {
     }
 
     // Create campaign as draft matching InsertCampaignSchema
+    // Use the title as campaign name for better visibility
     const payload = {
-      name: `Campanha ${selectedObjectives.join(", ")} - ${new Date().toLocaleDateString()}`,
+      name: title, // Use creative title as campaign name
       objective: selectedObjectives[0], // Use first objective as primary
       status: "draft",
       pageId: pageId ? Number(pageId) : undefined,
@@ -219,7 +224,7 @@ export default function ExistingCampaignForm() {
                       </SelectItem>
                     ) : (
                       pages.map((page) => (
-                        <SelectItem key={page.id} value={page.value}>
+                        <SelectItem key={page.id} value={String(page.id)}>
                           {page.name}
                         </SelectItem>
                       ))
@@ -241,7 +246,7 @@ export default function ExistingCampaignForm() {
                       </SelectItem>
                     ) : (
                       instagramAccounts.map((instagram) => (
-                        <SelectItem key={instagram.id} value={instagram.value}>
+                        <SelectItem key={instagram.id} value={String(instagram.id)}>
                           {instagram.name}
                         </SelectItem>
                       ))
@@ -265,7 +270,7 @@ export default function ExistingCampaignForm() {
                       </SelectItem>
                     ) : (
                       whatsappNumbers.map((whatsapp) => (
-                        <SelectItem key={whatsapp.id} value={whatsapp.value}>
+                        <SelectItem key={whatsapp.id} value={String(whatsapp.id)}>
                           {whatsapp.name}
                         </SelectItem>
                       ))
@@ -289,7 +294,7 @@ export default function ExistingCampaignForm() {
                       </SelectItem>
                     ) : (
                       leadForms.map((form) => (
-                        <SelectItem key={form.id} value={form.value}>
+                        <SelectItem key={form.id} value={String(form.id)}>
                           {form.name}
                         </SelectItem>
                       ))
