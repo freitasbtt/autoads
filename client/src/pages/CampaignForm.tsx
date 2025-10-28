@@ -330,7 +330,9 @@ export default function CampaignForm() {
                           </Label>
                           <div className="mt-2 flex flex-wrap gap-2">
                             <Badge variant="outline">{audience.type}</Badge>
-                            <Badge variant="secondary">{audience.size}</Badge>
+                            {audience.estimatedSize && (
+                              <Badge variant="secondary">{audience.estimatedSize}</Badge>
+                            )}
                           </div>
                           {audience.ageMin && audience.ageMax && (
                             <p className="text-sm text-muted-foreground mt-2">

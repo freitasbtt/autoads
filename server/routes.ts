@@ -376,6 +376,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
         tenantId: user.tenantId,
       });
 
+      // Send webhook to n8n if configured
+      try {
+        const settings = await storage.getAppSettings();
+        if (settings?.n8nWebhookUrl) {
+          // Fetch resource details
+          const accountResource = campaign.accountId ? await storage.getResource(campaign.accountId) : null;
+          const pageResource = campaign.pageId ? await storage.getResource(campaign.pageId) : null;
+          const instagramResource = campaign.instagramId ? await storage.getResource(campaign.instagramId) : null;
+          const whatsappResource = campaign.whatsappId ? await storage.getResource(campaign.whatsappId) : null;
+          const leadformResource = campaign.leadformId ? await storage.getResource(campaign.leadformId) : null;
+
+          // Prepare webhook payload matching the provided example
+          const webhookPayload = [{
+            headers: {
+              "content-type": "application/json",
+              "user-agent": "Meta-Ads-Platform/1.0"
+            },
+            params: {},
+            query: {},
+            body: {
+              rowIndex: campaign.id,
+              sheet: accountResource ? `ACC:${accountResource.value}` : "Unknown",
+              data: {
+                submit: "ON",
+                campaign_id: String(campaign.id),
+                campaign_name: campaign.name,
+                objective: campaign.objective,
+                budget_type: "DAILY",
+                daily_budget: campaign.budget,
+                page_id: pageResource ? pageResource.value : "",
+                instagram_user_id: instagramResource ? instagramResource.value : "",
+                whatsapp_number_id: whatsappResource ? whatsappResource.value : "",
+                drive_folder_id: campaign.driveFolderId || "",
+                message_text: campaign.message || "",
+                title_text: campaign.title || "",
+                leadgen_form_id: leadformResource ? leadformResource.value : "",
+                website_url: campaign.websiteUrl || "",
+                status: "PENDING",
+                status_detail: "Enviado ao n8n",
+                ad_account_id: accountResource ? accountResource.value : "",
+                client: `Tenant-${user.tenantId}`
+              },
+              ts: new Date().toISOString()
+            },
+            webhookUrl: settings.n8nWebhookUrl,
+            executionMode: "production"
+          }];
+
+          // Send webhook
+          const webhookResponse = await fetch(settings.n8nWebhookUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(webhookPayload),
+          });
+
+          if (!webhookResponse.ok) {
+            console.error("Failed to send webhook to n8n:", await webhookResponse.text());
+          }
+        }
+      } catch (webhookError) {
+        // Log webhook error but don't fail the campaign creation
+        console.error("Error sending webhook to n8n:", webhookError);
+      }
+
       res.status(201).json(campaign);
     } catch (err) {
       next(err);
@@ -418,6 +484,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       await storage.deleteCampaign(id);
       res.json({ message: "Campaign deleted successfully" });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Send campaign to n8n webhook
+  app.post("/api/campaigns/:id/send-webhook", isAuthenticated, async (req, res, next) => {
+    try {
+      const user = req.user as User;
+      const id = parseInt(req.params.id);
+      
+      // Verify campaign belongs to user's tenant
+      const campaign = await storage.getCampaign(id);
+      if (!campaign || campaign.tenantId !== user.tenantId) {
+        return res.status(404).json({ message: "Campaign not found" });
+      }
+
+      // Get webhook URL
+      const settings = await storage.getAppSettings();
+      if (!settings?.n8nWebhookUrl) {
+        return res.status(400).json({ message: "Webhook n8n não configurado. Configure em Admin > Configurações" });
+      }
+
+      // Fetch resource details
+      const accountResource = campaign.accountId ? await storage.getResource(campaign.accountId) : null;
+      const pageResource = campaign.pageId ? await storage.getResource(campaign.pageId) : null;
+      const instagramResource = campaign.instagramId ? await storage.getResource(campaign.instagramId) : null;
+      const whatsappResource = campaign.whatsappId ? await storage.getResource(campaign.whatsappId) : null;
+      const leadformResource = campaign.leadformId ? await storage.getResource(campaign.leadformId) : null;
+
+      // Prepare webhook payload
+      const webhookPayload = [{
+        headers: {
+          "content-type": "application/json",
+          "user-agent": "Meta-Ads-Platform/1.0"
+        },
+        params: {},
+        query: {},
+        body: {
+          rowIndex: campaign.id,
+          sheet: accountResource ? `ACC:${accountResource.value}` : "Unknown",
+          data: {
+            submit: "ON",
+            campaign_id: String(campaign.id),
+            campaign_name: campaign.name,
+            objective: campaign.objective,
+            budget_type: "DAILY",
+            daily_budget: campaign.budget,
+            page_id: pageResource ? pageResource.value : "",
+            instagram_user_id: instagramResource ? instagramResource.value : "",
+            whatsapp_number_id: whatsappResource ? whatsappResource.value : "",
+            drive_folder_id: campaign.driveFolderId || "",
+            message_text: campaign.message || "",
+            title_text: campaign.title || "",
+            leadgen_form_id: leadformResource ? leadformResource.value : "",
+            website_url: campaign.websiteUrl || "",
+            status: campaign.status.toUpperCase(),
+            status_detail: "Reenviado ao n8n",
+            ad_account_id: accountResource ? accountResource.value : "",
+            client: `Tenant-${user.tenantId}`
+          },
+          ts: new Date().toISOString()
+        },
+        webhookUrl: settings.n8nWebhookUrl,
+        executionMode: "production"
+      }];
+
+      // Send webhook
+      const webhookResponse = await fetch(settings.n8nWebhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(webhookPayload),
+      });
+
+      if (!webhookResponse.ok) {
+        const errorText = await webhookResponse.text();
+        console.error("Failed to send webhook to n8n:", errorText);
+        return res.status(500).json({ message: "Erro ao enviar webhook para n8n" });
+      }
+
+      res.json({ message: "Campanha enviada para n8n com sucesso" });
     } catch (err) {
       next(err);
     }

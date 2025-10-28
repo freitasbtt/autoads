@@ -2,7 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Edit, Pause, Play, Trash2 } from "lucide-react";
+import { Plus, Edit, Pause, Play, Trash2, Send } from "lucide-react";
 import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -64,6 +64,23 @@ export default function Campaigns() {
     onError: (error: Error) => {
       toast({
         title: "Erro ao excluir campanha",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const sendWebhookMutation = useMutation({
+    mutationFn: (id: number) => apiRequest("POST", `/api/campaigns/${id}/send-webhook`, {}),
+    onSuccess: () => {
+      toast({
+        title: "Webhook enviado",
+        description: "Campanha enviada para n8n com sucesso",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro ao enviar webhook",
         description: error.message,
         variant: "destructive",
       });
@@ -182,6 +199,16 @@ export default function Campaigns() {
                       <td className="py-4 px-4 font-mono text-sm">{campaign.budget}</td>
                       <td className="py-4 px-4">
                         <div className="flex justify-end gap-1">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            onClick={() => sendWebhookMutation.mutate(campaign.id)}
+                            data-testid={`button-send-webhook-${campaign.id}`}
+                            title="Enviar para n8n"
+                          >
+                            <Send className="h-4 w-4" />
+                          </Button>
                           <Button
                             size="icon"
                             variant="ghost"
