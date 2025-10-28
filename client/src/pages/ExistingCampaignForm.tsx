@@ -69,10 +69,7 @@ export default function ExistingCampaignForm() {
 
   const sendWebhookMutation = useMutation({
     mutationFn: async (payload: any) => {
-      return await apiRequest("/api/webhooks/n8n", {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
+      return await apiRequest("POST", "/api/webhooks/n8n", payload);
     },
     onSuccess: () => {
       toast({
