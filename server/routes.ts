@@ -441,7 +441,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             body: JSON.stringify(webhookPayload),
           });
 
-          if (!webhookResponse.ok) {
+          if (webhookResponse.ok) {
+            // Update campaign status to pending when webhook is sent successfully
+            await storage.updateCampaign(campaign.id, {
+              status: "pending",
+              statusDetail: "Aguardando processamento do n8n",
+            });
+          } else {
             console.error("Failed to send webhook to n8n:", await webhookResponse.text());
           }
         }
@@ -450,7 +456,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("Error sending webhook to n8n:", webhookError);
       }
 
-      res.status(201).json(campaign);
+      // Fetch updated campaign to return latest status
+      const updatedCampaign = await storage.getCampaign(campaign.id);
+      res.status(201).json(updatedCampaign);
     } catch (err) {
       next(err);
     }
@@ -586,6 +594,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ message: userMessage });
       }
 
+      // Update campaign status to pending when webhook is sent successfully
+      await storage.updateCampaign(id, {
+        status: "pending",
+        statusDetail: "Aguardando processamento do n8n (reenviado)",
+      });
+
       res.json({ message: "Campanha enviada para n8n com sucesso" });
     } catch (err) {
       next(err);
@@ -690,6 +704,51 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ message: "Dados enviados para n8n com sucesso" });
     } catch (err) {
+      next(err);
+    }
+  });
+
+  // Receive status update from n8n
+  app.post("/api/webhooks/n8n/status", async (req, res, next) => {
+    try {
+      const { campaign_id, status, status_detail } = req.body;
+
+      if (!campaign_id) {
+        return res.status(400).json({ message: "campaign_id is required" });
+      }
+
+      if (!status) {
+        return res.status(400).json({ message: "status is required" });
+      }
+
+      // Validate status values
+      const validStatuses = ["active", "error", "paused", "completed"];
+      if (!validStatuses.includes(status.toLowerCase())) {
+        return res.status(400).json({ 
+          message: `Invalid status. Must be one of: ${validStatuses.join(", ")}` 
+        });
+      }
+
+      // Get campaign to verify it exists
+      const campaign = await storage.getCampaign(parseInt(campaign_id));
+      if (!campaign) {
+        return res.status(404).json({ message: "Campaign not found" });
+      }
+
+      // Update campaign status
+      const updated = await storage.updateCampaign(parseInt(campaign_id), {
+        status: status.toLowerCase(),
+        statusDetail: status_detail || null,
+      });
+
+      console.log(`[n8n-status] Campaign ${campaign_id} status updated to: ${status}`, status_detail || '');
+
+      res.json({ 
+        message: "Status updated successfully",
+        campaign: updated 
+      });
+    } catch (err) {
+      console.error("[n8n-status] Error updating campaign status:", err);
       next(err);
     }
   });
