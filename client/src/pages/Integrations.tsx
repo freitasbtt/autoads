@@ -1,21 +1,11 @@
 import { useState, useEffect } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import StatusBadge from "@/components/StatusBadge";
-import { Loader2, RefreshCw, Settings, Link as LinkIcon } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Loader2, Link as LinkIcon, CheckCircle2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { queryClient } from "@/lib/queryClient";
 
 interface Integration {
   id: number;
@@ -27,62 +17,14 @@ interface Integration {
 
 export default function Integrations() {
   const [isTesting, setIsTesting] = useState(false);
-  const [isMetaDialogOpen, setIsMetaDialogOpen] = useState(false);
-  const [isDriveDialogOpen, setIsDriveDialogOpen] = useState(false);
-  const [metaConfig, setMetaConfig] = useState({
-    accessToken: "",
-    appId: "",
-    appSecret: "",
-  });
-  const [driveConfig, setDriveConfig] = useState({
-    clientId: "",
-    clientSecret: "",
-    refreshToken: "",
-    driveFolderId: "",
-  });
   const { toast } = useToast();
 
   const { data: integrations = [] } = useQuery<Integration[]>({
     queryKey: ["/api/integrations"],
   });
 
-  const saveMutation = useMutation({
-    mutationFn: (data: { provider: string; config: any }) =>
-      apiRequest("POST", "/api/integrations", data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/integrations"] });
-      setIsMetaDialogOpen(false);
-      setIsDriveDialogOpen(false);
-      toast({
-        title: "Integração salva",
-        description: "As credenciais foram armazenadas com sucesso",
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Erro ao salvar integração",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-
   const metaIntegration = integrations.find((i) => i.provider === "Meta");
-  const driveIntegration = integrations.find((i) => i.provider === "GoogleDrive");
-
-  const handleSaveMeta = () => {
-    saveMutation.mutate({
-      provider: "Meta",
-      config: metaConfig,
-    });
-  };
-
-  const handleSaveDrive = () => {
-    saveMutation.mutate({
-      provider: "GoogleDrive",
-      config: driveConfig,
-    });
-  };
+  const driveIntegration = integrations.find((i) => i.provider === "Google Drive");
 
   const handleTestConnection = (provider: string) => {
     setIsTesting(true);
@@ -95,6 +37,10 @@ export default function Integrations() {
     }, 1500);
   };
 
+  const handleMetaOAuth = () => {
+    window.location.href = "/auth/meta";
+  };
+
   const handleGoogleOAuth = () => {
     window.location.href = "/auth/google";
   };
@@ -105,7 +51,7 @@ export default function Integrations() {
     if (params.get('oauth') === 'success') {
       toast({
         title: "Conectado com sucesso!",
-        description: "Sua integração Google Drive foi configurada.",
+        description: "Sua integração foi configurada.",
       });
       // Clean URL
       window.history.replaceState({}, '', '/integrations');
@@ -118,7 +64,7 @@ export default function Integrations() {
     <div className="p-6 space-y-6">
       <div>
         <h1 className="text-3xl font-semibold">Integrações</h1>
-        <p className="text-muted-foreground">Gerencie suas conexões com APIs externas</p>
+        <p className="text-muted-foreground">Conecte sua conta com APIs externas usando OAuth</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -131,33 +77,27 @@ export default function Integrations() {
                   <StatusBadge status={metaIntegration ? "connected" : "pending"} />
                 </CardTitle>
                 <CardDescription className="mt-2">
-                  Conecte sua conta Meta Ads para gerenciar campanhas
+                  Conecte sua conta Meta para importar recursos automaticamente
                 </CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             {metaIntegration && (
-              <div className="space-y-2">
-                <div className="text-sm">
-                  <span className="text-muted-foreground">Access Token:</span>
-                  <span className="ml-2 font-mono text-xs">
-                    {metaIntegration.config?.accessToken
-                      ? `${metaIntegration.config.accessToken.substring(0, 8)}•••••`
-                      : "Não configurado"}
-                  </span>
-                </div>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                <span>Conectado com sucesso</span>
               </div>
             )}
             <div className="flex gap-2">
               <Button
-                variant="outline"
+                variant="default"
                 size="sm"
-                onClick={() => setIsMetaDialogOpen(true)}
-                data-testid="button-config-meta"
+                onClick={handleMetaOAuth}
+                data-testid="button-connect-meta"
               >
-                <Settings className="h-4 w-4 mr-2" />
-                Configurar
+                <LinkIcon className="h-4 w-4 mr-2" />
+                {metaIntegration ? "Reconectar OAuth" : "Conectar OAuth"}
               </Button>
               {metaIntegration && (
                 <Button
@@ -170,7 +110,7 @@ export default function Integrations() {
                   {isTesting ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
-                    <RefreshCw className="h-4 w-4 mr-2" />
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
                   )}
                   Testar Conexão
                 </Button>
@@ -188,40 +128,27 @@ export default function Integrations() {
                   <StatusBadge status={driveIntegration ? "connected" : "pending"} />
                 </CardTitle>
                 <CardDescription className="mt-2">
-                  Acesse criativos e mídia armazenados no Drive
+                  Conecte sua conta Google para acessar pastas do Drive
                 </CardDescription>
               </div>
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             {driveIntegration && (
-              <div className="space-y-2">
-                <div className="text-sm">
-                  <span className="text-muted-foreground">Pasta Padrão:</span>
-                  <span className="ml-2 font-mono text-xs">
-                    {driveIntegration.config?.driveFolderId || "Não configurado"}
-                  </span>
-                </div>
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                <span>Conectado com sucesso</span>
               </div>
             )}
             <div className="flex gap-2">
               <Button
-                variant="outline"
+                variant="default"
                 size="sm"
                 onClick={handleGoogleOAuth}
                 data-testid="button-connect-google"
               >
                 <LinkIcon className="h-4 w-4 mr-2" />
-                Conectar OAuth
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setIsDriveDialogOpen(true)}
-                data-testid="button-config-drive"
-              >
-                <Settings className="h-4 w-4 mr-2" />
-                Configurar
+                {driveIntegration ? "Reconectar OAuth" : "Conectar OAuth"}
               </Button>
               {driveIntegration && (
                 <Button
@@ -234,7 +161,7 @@ export default function Integrations() {
                   {isTesting ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
-                    <RefreshCw className="h-4 w-4 mr-2" />
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
                   )}
                   Testar Conexão
                 </Button>
@@ -244,149 +171,25 @@ export default function Integrations() {
         </Card>
       </div>
 
-      <Dialog open={isMetaDialogOpen} onOpenChange={setIsMetaDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Configurar Meta Ads API</DialogTitle>
-            <DialogDescription>
-              Atualize suas credenciais de acesso à API do Meta Ads
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleSaveMeta();
-            }}
-          >
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="meta-token">Access Token *</Label>
-                <Input
-                  id="meta-token"
-                  type="password"
-                  placeholder="EAAx..."
-                  value={metaConfig.accessToken}
-                  onChange={(e) => setMetaConfig({ ...metaConfig, accessToken: e.target.value })}
-                  data-testid="input-meta-token"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="meta-app-id">App ID</Label>
-                <Input
-                  id="meta-app-id"
-                  placeholder="123456789012345"
-                  value={metaConfig.appId}
-                  onChange={(e) => setMetaConfig({ ...metaConfig, appId: e.target.value })}
-                  data-testid="input-meta-app-id"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="meta-app-secret">App Secret</Label>
-                <Input
-                  id="meta-app-secret"
-                  type="password"
-                  placeholder="••••••••••••••••"
-                  value={metaConfig.appSecret}
-                  onChange={(e) => setMetaConfig({ ...metaConfig, appSecret: e.target.value })}
-                  data-testid="input-meta-app-secret"
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setIsMetaDialogOpen(false)}
-                data-testid="button-cancel"
-              >
-                Cancelar
-              </Button>
-              <Button type="submit" data-testid="button-save-meta" disabled={saveMutation.isPending}>
-                {saveMutation.isPending ? "Salvando..." : "Salvar"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={isDriveDialogOpen} onOpenChange={setIsDriveDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Configurar Google Drive API</DialogTitle>
-            <DialogDescription>
-              Atualize suas credenciais de acesso ao Google Drive
-            </DialogDescription>
-          </DialogHeader>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleSaveDrive();
-            }}
-          >
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="drive-client-id">Client ID *</Label>
-                <Input
-                  id="drive-client-id"
-                  placeholder="123456789-abc.apps.googleusercontent.com"
-                  value={driveConfig.clientId}
-                  onChange={(e) => setDriveConfig({ ...driveConfig, clientId: e.target.value })}
-                  data-testid="input-drive-client-id"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="drive-client-secret">Client Secret *</Label>
-                <Input
-                  id="drive-client-secret"
-                  type="password"
-                  placeholder="••••••••••••••••"
-                  value={driveConfig.clientSecret}
-                  onChange={(e) => setDriveConfig({ ...driveConfig, clientSecret: e.target.value })}
-                  data-testid="input-drive-client-secret"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="drive-refresh-token">Refresh Token *</Label>
-                <Input
-                  id="drive-refresh-token"
-                  type="password"
-                  placeholder="1//0abc..."
-                  value={driveConfig.refreshToken}
-                  onChange={(e) => setDriveConfig({ ...driveConfig, refreshToken: e.target.value })}
-                  data-testid="input-drive-refresh-token"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="drive-folder-id">Pasta Padrão (ID)</Label>
-                <Input
-                  id="drive-folder-id"
-                  placeholder="1aBcDeFgHiJkLmNoPqRsTuV"
-                  value={driveConfig.driveFolderId}
-                  onChange={(e) => setDriveConfig({ ...driveConfig, driveFolderId: e.target.value })}
-                  data-testid="input-drive-folder-id"
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setIsDriveDialogOpen(false)}
-                data-testid="button-cancel-drive"
-              >
-                Cancelar
-              </Button>
-              <Button type="submit" data-testid="button-save-drive" disabled={saveMutation.isPending}>
-                {saveMutation.isPending ? "Salvando..." : "Salvar"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+      <Card className="border-accent/20 bg-accent/5">
+        <CardHeader>
+          <CardTitle className="text-base">Como funciona o OAuth</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-muted-foreground">
+          <p>
+            <strong className="text-foreground">1.</strong> Clique em "Conectar OAuth" para ser redirecionado à página de login do serviço
+          </p>
+          <p>
+            <strong className="text-foreground">2.</strong> Faça login e autorize o acesso às suas informações
+          </p>
+          <p>
+            <strong className="text-foreground">3.</strong> Você será redirecionado de volta e seus recursos serão importados automaticamente
+          </p>
+          <p className="pt-2 text-xs">
+            <strong>Nota:</strong> Certifique-se de que as URLs de callback estão configuradas corretamente no Meta App e Google Cloud Console.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }
