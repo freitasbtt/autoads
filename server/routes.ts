@@ -104,45 +104,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ===== Authentication Routes =====
 
-  // Register
-  app.post("/api/auth/register", async (req, res, next) => {
-    try {
-      const registerSchema = z.object({
-        email: z.string().email(),
-        password: z.string().min(6),
-        tenantName: z.string().min(1),
-      });
-
-      const data = registerSchema.parse(req.body);
-
-      // Check if user already exists
-      const existingUser = await storage.getUserByEmail(data.email);
-      if (existingUser) {
-        return res.status(400).json({ message: "User already exists" });
-      }
-
-      // Create tenant
-      const tenant = await storage.createTenant({ name: data.tenantName });
-
-      // Hash password and create user
-      const hashedPassword = await hashPassword(data.password);
-      const user = await storage.createUser({
-        email: data.email,
-        password: hashedPassword,
-        tenantId: tenant.id,
-        role: "admin", // First user is admin
-      });
-
-      // Login user automatically
-      req.login(user, (err) => {
-        if (err) return next(err);
-        const { password: _, ...userWithoutPassword } = user;
-        res.json({ user: userWithoutPassword });
-      });
-    } catch (err) {
-      next(err);
-    }
-  });
+  // Note: Public registration is disabled. Only admins can create users via /api/admin/users
 
   // Login
   app.post("/api/auth/login", (req, res, next) => {
