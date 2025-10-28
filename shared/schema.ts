@@ -1,7 +1,10 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, jsonb, serial } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, jsonb, serial, pgEnum } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+// Enums
+export const userRoleEnum = pgEnum("user_role", ["admin", "client"]);
 
 // Tenants table for multi-tenancy
 export const tenants = pgTable("tenants", {
@@ -23,7 +26,7 @@ export const users = pgTable("users", {
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
   email: text("email").notNull().unique(),
   password: text("password").notNull(),
-  role: text("role").notNull().default("user"), // admin, manager, user
+  role: userRoleEnum("role").notNull().default("client"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
