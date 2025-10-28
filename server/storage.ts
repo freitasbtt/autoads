@@ -28,6 +28,7 @@ export interface IStorage {
   getUsersByTenant(tenantId: number): Promise<User[]>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: number, user: Partial<InsertUser>): Promise<User | undefined>;
+  deleteUser(id: number): Promise<boolean>;
 
   // Resource operations
   getResource(id: number): Promise<Resource | undefined>;
@@ -140,6 +141,10 @@ export class MemStorage implements IStorage {
     const updated = { ...user, ...updates };
     this.users.set(id, updated);
     return updated;
+  }
+
+  async deleteUser(id: number): Promise<boolean> {
+    return this.users.delete(id);
   }
 
   // Resource operations
@@ -430,6 +435,11 @@ export class DbStorage implements IStorage {
       .where(eq(schema.users.id, id))
       .returning();
     return user;
+  }
+
+  async deleteUser(id: number): Promise<boolean> {
+    const result = await db.delete(schema.users).where(eq(schema.users.id, id));
+    return result.rowCount !== null && result.rowCount > 0;
   }
 
   // Resource operations

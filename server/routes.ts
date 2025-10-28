@@ -879,6 +879,133 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ====== User Management Routes (admin only) ======
+
+  // List all users (admin only)
+  app.get("/api/admin/users", isAdmin, async (req, res, next) => {
+    try {
+      const user = req.user as User;
+      // Get all users from the admin's tenant
+      const users = await storage.getUsersByTenant(user.tenantId);
+      
+      // Remove passwords from response
+      const usersWithoutPasswords = users.map(u => {
+        const { password: _, ...userWithoutPassword } = u;
+        return userWithoutPassword;
+      });
+      
+      res.json(usersWithoutPasswords);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Create new user (admin only)
+  app.post("/api/admin/users", isAdmin, async (req, res, next) => {
+    try {
+      const user = req.user as User;
+      
+      const createUserSchema = z.object({
+        email: z.string().email(),
+        password: z.string().min(6),
+        role: z.enum(["admin", "client"]),
+      });
+
+      const data = createUserSchema.parse(req.body);
+
+      // Check if user already exists
+      const existingUser = await storage.getUserByEmail(data.email);
+      if (existingUser) {
+        return res.status(400).json({ message: "User with this email already exists" });
+      }
+
+      // Hash password and create user in admin's tenant
+      const hashedPassword = await hashPassword(data.password);
+      const newUser = await storage.createUser({
+        email: data.email,
+        password: hashedPassword,
+        tenantId: user.tenantId,
+        role: data.role,
+      });
+
+      // Remove password from response
+      const { password: _, ...userWithoutPassword } = newUser;
+      res.status(201).json(userWithoutPassword);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Update user (admin only)
+  app.patch("/api/admin/users/:id", isAdmin, async (req, res, next) => {
+    try {
+      const user = req.user as User;
+      const userId = parseInt(req.params.id);
+
+      const updateUserSchema = z.object({
+        email: z.string().email().optional(),
+        password: z.string().min(6).optional(),
+        role: z.enum(["admin", "client"]).optional(),
+      });
+
+      const data = updateUserSchema.parse(req.body);
+
+      // Get existing user to verify tenant
+      const existingUser = await storage.getUser(userId);
+      if (!existingUser || existingUser.tenantId !== user.tenantId) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // If email is being changed, check it's not already taken
+      if (data.email && data.email !== existingUser.email) {
+        const emailTaken = await storage.getUserByEmail(data.email);
+        if (emailTaken) {
+          return res.status(400).json({ message: "Email already in use" });
+        }
+      }
+
+      // Hash password if being updated
+      const updateData: any = {};
+      if (data.email) updateData.email = data.email;
+      if (data.role) updateData.role = data.role;
+      if (data.password) {
+        updateData.password = await hashPassword(data.password);
+      }
+
+      const updatedUser = await storage.updateUser(userId, updateData);
+      
+      // Remove password from response
+      const { password: _, ...userWithoutPassword } = updatedUser;
+      res.json(userWithoutPassword);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Delete user (admin only)
+  app.delete("/api/admin/users/:id", isAdmin, async (req, res, next) => {
+    try {
+      const user = req.user as User;
+      const userId = parseInt(req.params.id);
+
+      // Get existing user to verify tenant
+      const existingUser = await storage.getUser(userId);
+      if (!existingUser || existingUser.tenantId !== user.tenantId) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Prevent admin from deleting themselves
+      if (userId === user.id) {
+        return res.status(400).json({ message: "Cannot delete your own account" });
+      }
+
+      await storage.deleteUser(userId);
+      res.json({ message: "User deleted successfully" });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   // ====== Meta OAuth Routes ======
 
   // Generate appsecret_proof for Meta API calls (security)
