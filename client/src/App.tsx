@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/AppSidebar";
+import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Dashboard from "@/pages/Dashboard";
 import Resources from "@/pages/Resources";
 import CampaignForm from "@/pages/CampaignForm";
@@ -30,7 +31,11 @@ function Router() {
       <Route path="/resources" component={Resources} />
       <Route path="/integrations" component={Integrations} />
       <Route path="/onboarding" component={Onboarding} />
-      <Route path="/admin" component={Admin} />
+      <Route path="/admin">
+        <ProtectedRoute requiredRole="admin">
+          <Admin />
+        </ProtectedRoute>
+      </Route>
       <Route component={NotFound} />
     </Switch>
   );
