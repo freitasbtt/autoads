@@ -106,6 +106,40 @@ Preferred communication style: Simple, everyday language.
 - **Complete Payload**: All fields (title, message, driveFolderId) included in submissions
 - **Form State Management**: Controlled inputs with proper state binding
 
+### Role-Based Access Control (RBAC)
+- **User Roles**: Admin and client roles with granular permissions
+  - **Admin**: Full access including user management, system settings, OAuth configuration
+  - **Client**: Access to campaigns, audiences, resources, integrations only
+- **Schema Updates**: `users.role` now uses enum constraint (`admin`, `client`)
+- **Backend Protection**: 
+  - Admin-only endpoints: `/api/admin/*` protected by `isAdmin` middleware
+  - User CRUD: GET, POST, PUT, DELETE `/api/admin/users` endpoints
+  - Public registration disabled - only admins can create users
+- **Frontend Protection**:
+  - `ProtectedRoute` component wraps admin routes
+  - Sidebar hides Admin menu for non-admin users
+  - Auto-redirect on unauthorized access
+- **User Management UI**: Admin panel with tabs (Settings, User Management)
+  - Create/edit/delete users
+  - Assign roles and manage passwords
+  - View all users in tenant
+
+### Docker Containerization
+- **Multi-stage Dockerfile**: Optimized production build
+  - Stage 1: Build frontend and backend
+  - Stage 2: Production image with only runtime dependencies
+  - Health checks included
+- **Docker Compose**: Complete development/deployment stack
+  - PostgreSQL 16 Alpine with persistent volume
+  - Application container with health checks
+  - Network isolation and service dependencies
+- **Documentation**: Complete README.md with:
+  - Quick start with Docker
+  - Local development setup
+  - API endpoint documentation
+  - OAuth configuration guide
+  - Troubleshooting section
+
 ## How to Test OAuth Flow
 
 ### Step 1: Get Your Development URL
