@@ -79,9 +79,27 @@ export default function ExistingCampaignForm() {
       setLocation("/campaigns");
     },
     onError: (error: any) => {
+      // Extract message from error
+      let errorMessage = "Não foi possível enviar os dados";
+      
+      if (error.message) {
+        // Error format: "500: {\"message\":\"...\"}"
+        try {
+          const match = error.message.match(/\d+:\s*(.+)/);
+          if (match && match[1]) {
+            const jsonPart = match[1];
+            const parsed = JSON.parse(jsonPart);
+            errorMessage = parsed.message || errorMessage;
+          }
+        } catch (e) {
+          // If parsing fails, use the original error message
+          errorMessage = error.message;
+        }
+      }
+      
       toast({
         title: "Erro ao enviar",
-        description: error.message || "Não foi possível enviar os dados",
+        description: errorMessage,
         variant: "destructive",
       });
     },
