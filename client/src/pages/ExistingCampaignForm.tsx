@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,9 +13,35 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
+import { Loader2 } from "lucide-react";
+import { useLocation } from "wouter";
+
+interface Resource {
+  id: number;
+  type: string;
+  name: string;
+  value: string;
+}
 
 export default function ExistingCampaignForm() {
   const [selectedObjectives, setSelectedObjectives] = useState<string[]>([]);
+  const [pageId, setPageId] = useState<string>("");
+  const [instagramId, setInstagramId] = useState<string>("");
+  const [whatsappId, setWhatsappId] = useState<string>("");
+  const [leadFormId, setLeadFormId] = useState<string>("");
+  const [websiteUrl, setWebsiteUrl] = useState<string>("");
+  const [driveFolderId, setDriveFolderId] = useState<string>("");
+  const [title, setTitle] = useState<string>("");
+  const [message, setMessage] = useState<string>("");
+  
+  const { toast } = useToast();
+  const [, setLocation] = useLocation();
+
+  const { data: resources = [], isLoading: loadingResources } = useQuery<Resource[]>({
+    queryKey: ["/api/resources"],
+  });
 
   const objectives = [
     { value: "LEAD", label: "Geração de Leads", requiresLeadForm: true },
@@ -34,6 +61,121 @@ export default function ExistingCampaignForm() {
   const needsWebsite = selectedObjectives.includes("TRAFFIC");
   const needsWhatsApp = selectedObjectives.includes("WHATSAPP");
 
+  const pages = resources.filter((r) => r.type === "Page");
+  const instagramAccounts = resources.filter((r) => r.type === "Instagram");
+  const whatsappNumbers = resources.filter((r) => r.type === "WhatsApp");
+  const leadForms = resources.filter((r) => r.type === "LeadForm");
+  const driveFolders = resources.filter((r) => r.type === "DriveFolder");
+
+  const sendWebhookMutation = useMutation({
+    mutationFn: async (payload: any) => {
+      return await apiRequest("/api/webhooks/n8n", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
+    onSuccess: () => {
+      toast({
+        title: "Enviado com sucesso!",
+        description: "Os dados foram enviados para o n8n",
+      });
+      setLocation("/campaigns");
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao enviar",
+        description: error.message || "Não foi possível enviar os dados",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!pageId || !instagramId || !driveFolderId || !title || !message) {
+      toast({
+        title: "Campos obrigatórios",
+        description: "Por favor, preencha todos os campos obrigatórios",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (selectedObjectives.length === 0) {
+      toast({
+        title: "Selecione pelo menos um objetivo",
+        description: "É necessário selecionar ao menos um objetivo para a campanha",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (needsWhatsApp && !whatsappId) {
+      toast({
+        title: "WhatsApp obrigatório",
+        description: "Objetivo WhatsApp requer um número WhatsApp",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (needsLeadForm && !leadFormId) {
+      toast({
+        title: "Formulário obrigatório",
+        description: "Objetivo de Leads requer um formulário de leads",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (needsWebsite && !websiteUrl) {
+      toast({
+        title: "Website obrigatório",
+        description: "Objetivo de Tráfego requer uma URL de website",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const selectedPage = pages.find((p) => p.value === pageId);
+    const selectedInstagram = instagramAccounts.find((i) => i.value === instagramId);
+    const selectedWhatsApp = whatsappNumbers.find((w) => w.value === whatsappId);
+    const selectedLeadForm = leadForms.find((lf) => lf.value === leadFormId);
+    const selectedDriveFolder = driveFolders.find((df) => df.value === driveFolderId);
+
+    const payload = {
+      objectives: selectedObjectives,
+      page_id: selectedPage?.value || pageId,
+      page_name: selectedPage?.name || "",
+      instagram_user_id: selectedInstagram?.value || instagramId,
+      instagram_name: selectedInstagram?.name || "",
+      whatsapp_number_id: selectedWhatsApp?.value || whatsappId,
+      whatsapp_name: selectedWhatsApp?.name || "",
+      leadgen_form_id: selectedLeadForm?.value || leadFormId,
+      leadgen_form_name: selectedLeadForm?.name || "",
+      website_url: websiteUrl,
+      drive_folder_id: selectedDriveFolder?.value || driveFolderId,
+      drive_folder_name: selectedDriveFolder?.name || "",
+      title,
+      message,
+      metadata: {
+        form_type: "existing_campaign",
+        timestamp: new Date().toISOString(),
+      },
+    };
+
+    sendWebhookMutation.mutate(payload);
+  };
+
+  if (loadingResources) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <Loader2 className="h-8 w-8 animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-6">
@@ -43,7 +185,7 @@ export default function ExistingCampaignForm() {
         </p>
       </div>
 
-      <form className="space-y-6">
+      <form onSubmit={handleSubmit} className="space-y-6">
         <Card>
           <CardHeader>
             <CardTitle>Objetivos</CardTitle>
@@ -76,24 +218,44 @@ export default function ExistingCampaignForm() {
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="page">Página Facebook *</Label>
-                <Select>
+                <Select value={pageId} onValueChange={setPageId}>
                   <SelectTrigger id="page" data-testid="select-page">
                     <SelectValue placeholder="Selecione" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="pg_987">Página Facebook</SelectItem>
+                    {pages.length === 0 ? (
+                      <SelectItem value="none" disabled>
+                        Nenhuma página disponível
+                      </SelectItem>
+                    ) : (
+                      pages.map((page) => (
+                        <SelectItem key={page.id} value={page.value}>
+                          {page.name}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="instagram">Instagram User ID *</Label>
-                <Select>
+                <Select value={instagramId} onValueChange={setInstagramId}>
                   <SelectTrigger id="instagram" data-testid="select-instagram">
                     <SelectValue placeholder="Selecione" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="ig_456">Instagram Business</SelectItem>
+                    {instagramAccounts.length === 0 ? (
+                      <SelectItem value="none" disabled>
+                        Nenhuma conta Instagram disponível
+                      </SelectItem>
+                    ) : (
+                      instagramAccounts.map((instagram) => (
+                        <SelectItem key={instagram.id} value={instagram.value}>
+                          {instagram.name}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -102,12 +264,22 @@ export default function ExistingCampaignForm() {
             {needsWhatsApp && (
               <div className="space-y-2">
                 <Label htmlFor="whatsapp">WhatsApp Number ID *</Label>
-                <Select>
+                <Select value={whatsappId} onValueChange={setWhatsappId}>
                   <SelectTrigger id="whatsapp" data-testid="select-whatsapp">
                     <SelectValue placeholder="Selecione" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="wa_789">WhatsApp Business</SelectItem>
+                    {whatsappNumbers.length === 0 ? (
+                      <SelectItem value="none" disabled>
+                        Nenhum número WhatsApp disponível
+                      </SelectItem>
+                    ) : (
+                      whatsappNumbers.map((whatsapp) => (
+                        <SelectItem key={whatsapp.id} value={whatsapp.value}>
+                          {whatsapp.name}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -116,12 +288,22 @@ export default function ExistingCampaignForm() {
             {needsLeadForm && (
               <div className="space-y-2">
                 <Label htmlFor="leadform">Formulário de Leads *</Label>
-                <Select>
+                <Select value={leadFormId} onValueChange={setLeadFormId}>
                   <SelectTrigger id="leadform" data-testid="select-leadform">
                     <SelectValue placeholder="Selecione" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="lf_321">Formulário Principal</SelectItem>
+                    {leadForms.length === 0 ? (
+                      <SelectItem value="none" disabled>
+                        Nenhum formulário disponível
+                      </SelectItem>
+                    ) : (
+                      leadForms.map((form) => (
+                        <SelectItem key={form.id} value={form.value}>
+                          {form.name}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -130,14 +312,14 @@ export default function ExistingCampaignForm() {
             {needsWebsite && (
               <div className="space-y-2">
                 <Label htmlFor="website">Website URL *</Label>
-                <Select>
-                  <SelectTrigger id="website" data-testid="select-website">
-                    <SelectValue placeholder="Selecione" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="https://exemplo.com">Site Principal</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Input
+                  id="website"
+                  type="url"
+                  placeholder="https://exemplo.com"
+                  value={websiteUrl}
+                  onChange={(e) => setWebsiteUrl(e.target.value)}
+                  data-testid="input-website"
+                />
               </div>
             )}
           </CardContent>
@@ -150,7 +332,13 @@ export default function ExistingCampaignForm() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="title">Título *</Label>
-              <Input id="title" placeholder="Título do anúncio" data-testid="input-title" />
+              <Input
+                id="title"
+                placeholder="Título do anúncio"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                data-testid="input-title"
+              />
             </div>
 
             <div className="space-y-2">
@@ -159,19 +347,30 @@ export default function ExistingCampaignForm() {
                 id="message"
                 placeholder="Mensagem do anúncio"
                 rows={4}
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
                 data-testid="input-message"
               />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="drive-folder">Pasta Google Drive *</Label>
-              <Select>
+              <Select value={driveFolderId} onValueChange={setDriveFolderId}>
                 <SelectTrigger id="drive-folder" data-testid="select-drive-folder">
                   <SelectValue placeholder="Selecione a pasta com criativos" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="folder_123">Pasta Principal de Criativos</SelectItem>
-                  <SelectItem value="folder_456">Campanhas Sazonais</SelectItem>
+                  {driveFolders.length === 0 ? (
+                    <SelectItem value="none" disabled>
+                      Nenhuma pasta disponível
+                    </SelectItem>
+                  ) : (
+                    driveFolders.map((folder) => (
+                      <SelectItem key={folder.id} value={folder.value}>
+                        {folder.name}
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
             </div>
@@ -179,11 +378,27 @@ export default function ExistingCampaignForm() {
         </Card>
 
         <div className="flex justify-end gap-4">
-          <Button variant="outline" type="button" data-testid="button-cancel">
+          <Button
+            variant="outline"
+            type="button"
+            onClick={() => setLocation("/campaigns")}
+            data-testid="button-cancel"
+          >
             Cancelar
           </Button>
-          <Button type="submit" data-testid="button-submit">
-            Enviar para n8n
+          <Button
+            type="submit"
+            disabled={sendWebhookMutation.isPending}
+            data-testid="button-submit"
+          >
+            {sendWebhookMutation.isPending ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Enviando...
+              </>
+            ) : (
+              "Enviar para n8n"
+            )}
           </Button>
         </div>
       </form>
