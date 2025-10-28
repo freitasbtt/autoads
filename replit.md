@@ -76,43 +76,136 @@ Preferred communication style: Simple, everyday language.
 
 ## How to Test OAuth Flow
 
-### Prerequisites
-1. Configure OAuth credentials in Admin page (accessible only to admin users)
-2. For Meta: Set Meta App ID and Secret
-3. For Google: Set Google Client ID and Secret
-4. For n8n: Set Webhook URL
+### Step 1: Get Your Development URL
+Before configuring OAuth, you need your Replit development URL:
 
-### Testing Meta OAuth
-1. Navigate to "Recursos" page
-2. Click "Conectar com Meta" button
-3. You'll be redirected to Meta's OAuth login
-4. After authorization, you'll return to the app
-5. Resources will be auto-imported (check Recursos page for new accounts, pages, etc.)
+```bash
+echo https://$REPLIT_DEV_DOMAIN
+```
 
-### Testing Google Drive OAuth
-1. Navigate to "Integrações" page
-2. Click "Conectar OAuth" under Google Drive section
-3. Authorize access to Google Drive
-4. Tokens will be stored securely
+This will output something like: `https://abc123-xyz789.id.replit.dev`
 
-### Testing Campaign Creation with Webhook
-1. Create a new campaign using "Nova Campanha"
-2. Fill in all required fields
-3. Select OAuth-imported resources from dropdowns
-4. Click "Criar Campanha"
-5. Campaign is created AND webhook is sent to n8n automatically
-6. Check n8n for webhook receipt
+**Use this URL for OAuth callback configuration during development.**
 
-### Testing Manual Webhook Resend
-1. Go to "Campanhas" page
+### Step 2: Configure OAuth Providers
+
+#### Meta App Configuration (developers.facebook.com)
+1. Go to [Meta for Developers](https://developers.facebook.com)
+2. Create or select your app
+3. Go to **Settings > Basic**
+4. Add **Valid OAuth Redirect URIs**:
+   - Development: `https://YOUR-DEV-URL.replit.dev/auth/meta/callback`
+   - Production (after publish): `https://YOUR-APP.replit.app/auth/meta/callback`
+5. Add required permissions: `ads_management`, `pages_show_list`, `instagram_basic`, `whatsapp_business_management`, `leads_retrieval`
+6. Copy your **App ID** and **App Secret**
+
+#### Google Cloud Console Configuration (console.cloud.google.com)
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Select or create a project
+3. Enable **Google Drive API**
+4. Go to **APIs & Services > Credentials**
+5. Create or edit OAuth 2.0 Client ID
+6. Add **Authorized redirect URIs**:
+   - Development: `https://YOUR-DEV-URL.replit.dev/auth/google/callback`
+   - Production (after publish): `https://YOUR-APP.replit.app/auth/google/callback`
+7. Add scope: `https://www.googleapis.com/auth/drive.readonly`
+8. Copy your **Client ID** and **Client Secret**
+
+### Step 3: Configure Credentials in App
+1. Login as admin (`admin@test.com` / `password`)
+2. Navigate to **Admin > Configurações**
+3. Enter Meta App ID and Secret
+4. Enter Google Client ID and Secret
+5. Enter n8n Webhook URL (if using n8n)
+6. Click **Save**
+
+### Step 4: Test Meta OAuth
+1. Navigate to **Integrações** page
+2. Click **"Conectar OAuth"** button in Meta Ads API card
+3. You'll be redirected to Facebook login
+4. Login and authorize the requested permissions
+5. You'll be redirected back to the app
+6. Success message appears: "Conectado com sucesso!"
+7. Navigate to **Recursos** page
+8. Verify resources appear in tabs:
+   - Contas de Anúncios
+   - Páginas
+   - Instagram
+   - WhatsApp
+   - Formulários de Leads
+
+### Step 5: Test Google Drive OAuth
+1. Navigate to **Integrações** page
+2. Click **"Conectar OAuth"** button in Google Drive API card
+3. You'll be redirected to Google login
+4. Login and authorize Drive access
+5. You'll be redirected back to the app
+6. Success message appears: "Conectado com sucesso!"
+7. Navigate to **Recursos** page
+8. Check **Drive Folders** tab for imported folders
+
+### Step 6: Test Campaign Creation with OAuth Resources
+1. Navigate to **Campanhas** > **"Nova Campanha"**
+2. Fill in campaign details
+3. **Verify dropdowns are populated**:
+   - Página Facebook (from Meta OAuth)
+   - Instagram User ID (from Meta OAuth)
+   - WhatsApp Number ID (from Meta OAuth)
+   - Formulário de Leads (from Meta OAuth)
+   - Pasta Google Drive (from Google OAuth)
+4. Select resources and fill other fields
+5. Click **"Criar Campanha"**
+6. Verify:
+   - Campaign created successfully
+   - Webhook sent to n8n automatically
+   - Redirected to campaigns list
+
+### Step 7: Test "Adicionar a Campanha Existente"
+1. Navigate to **Campanhas**
+2. Click **"Adicionar a Campanha Existente"**
+3. **Verify all dropdowns populate with OAuth resources**
+4. Select objectives, resources, fill fields
+5. Click **"Enviar para n8n"**
+6. Verify webhook sent successfully
+
+### Step 8: Test Manual Webhook Resend
+1. Go to **Campanhas** page
 2. Find an existing campaign
-3. Click the "Send" icon (paper plane) button
-4. Webhook will be resent to n8n
-5. Toast notification confirms success/failure
+3. Click the **Send icon** (paper plane) button
+4. Verify toast notification confirms success
+5. Check n8n for webhook receipt
+
+## OAuth Troubleshooting
+
+### Issue: "Recusou estabelecer ligação" or 403 Error
+**Cause**: Session not preserved during OAuth redirect
+**Solution**: Already fixed - session saves `userId` and `tenantId` before redirect
+
+### Issue: Dropdowns are empty after OAuth
+**Cause**: Resources not imported or wrong resource type filters
+**Solution**: 
+- Check that resources were imported (go to Recursos page)
+- Verify resource type filters use lowercase: `page`, `instagram`, `whatsapp`, `leadform`, `drive_folder`
+
+### Issue: OAuth callback URL mismatch
+**Cause**: Callback URL in Meta/Google doesn't match actual URL
+**Solution**: 
+- Verify your dev URL with `echo https://$REPLIT_DEV_DOMAIN`
+- Update callback URLs in Meta App and Google Cloud Console
+- Use exact URL format: `https://YOUR-URL/auth/meta/callback`
+
+### Issue: Missing permissions
+**Cause**: Meta App doesn't have required permissions
+**Solution**: Add all required permissions in Meta App settings:
+- `ads_management`
+- `pages_show_list`
+- `instagram_basic`
+- `whatsapp_business_management`
+- `leads_retrieval`
 
 ## Important Notes
-- **OAuth Callback URLs**: Make sure to configure your Meta App and Google Cloud Project with the correct callback URLs:
-  - Meta: `https://your-domain.replit.app/auth/meta/callback`
-  - Google: `https://your-domain.replit.app/auth/google/callback`
-- **Permissions**: Meta App needs permissions for: ads_management, pages_show_list, instagram_basic, whatsapp_business_management, leads_retrieval
-- **Google Scopes**: Drive API requires: https://www.googleapis.com/auth/drive.readonly
+- **Development vs Production**: You need different callback URLs for dev and production
+- **Multiple Callback URLs**: You can configure multiple callback URLs in both Meta and Google
+- **Token Refresh**: OAuth tokens are stored encrypted and managed automatically
+- **Multi-tenant Isolation**: Each tenant has its own OAuth credentials and resources
+- **Session Management**: OAuth flow uses session state to prevent CSRF and preserve authentication
