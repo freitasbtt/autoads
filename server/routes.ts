@@ -10,6 +10,14 @@ import type { User } from "@shared/schema";
 import { insertUserSchema, insertResourceSchema, insertAudienceSchema, insertCampaignSchema, insertIntegrationSchema } from "@shared/schema";
 import crypto from "crypto";
 
+// Extend session data to include OAuth state
+declare module "express-session" {
+  interface SessionData {
+    oauthUserId?: number;
+    oauthTenantId?: number;
+  }
+}
+
 const MemoryStore = memorystore(session);
 
 // Password hashing utilities
