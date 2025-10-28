@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,41 +16,63 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+
+interface Resource {
+  id: number;
+  tenantId: number;
+  type: string;
+  name: string;
+  value: string;
+}
+
+interface Audience {
+  id: number;
+  tenantId: number;
+  name: string;
+  type: string;
+  ageMin: number | null;
+  ageMax: number | null;
+  interests: string[] | null;
+  behaviors: string[] | null;
+  locations: string[] | null;
+}
 
 export default function CampaignForm() {
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
   const [objective, setObjective] = useState("");
   const [selectedAudiences, setSelectedAudiences] = useState<number[]>([]);
+  const [formData, setFormData] = useState({
+    name: "",
+    budget: "",
+    accountId: "",
+    pageId: "",
+    instagramId: "",
+    whatsappId: "",
+    leadformId: "",
+    websiteUrl: "",
+    title: "",
+    message: "",
+    driveFolderId: "",
+  });
 
-  const audiences = [
-    {
-      id: 1,
-      name: "Público Principal - Leads 25-45",
-      ageMin: 25,
-      ageMax: 45,
-      interests: ["Marketing Digital", "Empreendedorismo"],
-      locations: ["São Paulo, Brasil", "Rio de Janeiro, Brasil"],
-      size: "~500K",
-      type: "Interesse",
-    },
-    {
-      id: 2,
-      name: "Clientes Existentes - Upload CSV",
-      locations: ["Brasil"],
-      size: "12.5K",
-      type: "Custom List",
-      uploadDate: "15/10/2024",
-    },
-    {
-      id: 3,
-      name: "Público Broad - 18-65",
-      ageMin: 18,
-      ageMax: 65,
-      interests: ["Todos"],
-      locations: ["Brasil", "Portugal"],
-      size: "~2M",
-      type: "Interesse",
-    },
-  ];
+  // Fetch resources and audiences from API
+  const { data: resources = [] } = useQuery<Resource[]>({
+    queryKey: ["/api/resources"],
+  });
+
+  const { data: audiences = [] } = useQuery<Audience[]>({
+    queryKey: ["/api/audiences"],
+  });
+
+  // Group resources by type
+  const accounts = resources.filter((r) => r.type === "account");
+  const pages = resources.filter((r) => r.type === "page");
+  const instagrams = resources.filter((r) => r.type === "instagram");
+  const whatsapps = resources.filter((r) => r.type === "whatsapp");
+  const leadforms = resources.filter((r) => r.type === "leadform");
 
   const toggleAudience = (audienceId: number) => {
     setSelectedAudiences((prev) =>
@@ -56,6 +80,55 @@ export default function CampaignForm() {
         ? prev.filter((id) => id !== audienceId)
         : [...prev, audienceId]
     );
+  };
+
+  const createMutation = useMutation({
+    mutationFn: (data: any) => apiRequest("POST", "/api/campaigns", data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/campaigns"] });
+      toast({
+        title: "Campanha criada!",
+        description: "A campanha foi criada com sucesso",
+      });
+      setLocation("/campaigns");
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro ao criar campanha",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (selectedAudiences.length === 0) {
+      toast({
+        title: "Erro de validação",
+        description: "Selecione pelo menos um público",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    createMutation.mutate({
+      name: formData.name,
+      objective,
+      status: "draft",
+      budget: formData.budget,
+      accountId: formData.accountId ? Number(formData.accountId) : null,
+      pageId: formData.pageId ? Number(formData.pageId) : null,
+      instagramId: formData.instagramId ? Number(formData.instagramId) : null,
+      whatsappId: formData.whatsappId ? Number(formData.whatsappId) : null,
+      leadformId: formData.leadformId ? Number(formData.leadformId) : null,
+      websiteUrl: formData.websiteUrl || null,
+      audienceIds: selectedAudiences,
+      title: formData.title,
+      message: formData.message,
+      driveFolderId: formData.driveFolderId || null,
+    });
   };
 
   return (
@@ -81,7 +154,7 @@ export default function CampaignForm() {
           </TabsTrigger>
         </TabsList>
 
-        <form className="space-y-6">
+        <form onSubmit={handleSubmit} className="space-y-6">
           <TabsContent value="details" className="space-y-6">
             <Card>
               <CardHeader>
@@ -93,6 +166,8 @@ export default function CampaignForm() {
                   <Input
                     id="campaign-name"
                     placeholder="Ex: Promoção de Verão 2025"
+                    value={formData.name}
+                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     data-testid="input-campaign-name"
                   />
                 </div>
@@ -116,7 +191,14 @@ export default function CampaignForm() {
 
                   <div className="space-y-2">
                     <Label htmlFor="budget">Orçamento Diário *</Label>
-                    <Input id="budget" type="number" placeholder="0.00" data-testid="input-budget" />
+                    <Input 
+                      id="budget" 
+                      type="number" 
+                      placeholder="0.00"
+                      value={formData.budget}
+                      onChange={(e) => setFormData({ ...formData, budget: e.target.value })}
+                      data-testid="input-budget" 
+                    />
                   </div>
                 </div>
               </CardContent>
@@ -130,24 +212,32 @@ export default function CampaignForm() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="account">Conta Meta Ads *</Label>
-                    <Select>
+                    <Select value={formData.accountId} onValueChange={(v) => setFormData({ ...formData, accountId: v })}>
                       <SelectTrigger id="account" data-testid="select-account">
                         <SelectValue placeholder="Selecione" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="act_123">Conta Principal</SelectItem>
+                        {accounts.map((account) => (
+                          <SelectItem key={account.id} value={String(account.id)}>
+                            {account.name}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="page">Página Facebook *</Label>
-                    <Select>
+                    <Select value={formData.pageId} onValueChange={(v) => setFormData({ ...formData, pageId: v })}>
                       <SelectTrigger id="page" data-testid="select-page">
                         <SelectValue placeholder="Selecione" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="pg_987">Página Facebook</SelectItem>
+                        {pages.map((page) => (
+                          <SelectItem key={page.id} value={String(page.id)}>
+                            {page.name}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -156,12 +246,16 @@ export default function CampaignForm() {
                 {objective === "LEAD" && (
                   <div className="space-y-2">
                     <Label htmlFor="leadform">Formulário de Leads *</Label>
-                    <Select>
+                    <Select value={formData.leadformId} onValueChange={(v) => setFormData({ ...formData, leadformId: v })}>
                       <SelectTrigger id="leadform" data-testid="select-leadform">
                         <SelectValue placeholder="Selecione" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="lf_321">Formulário Principal</SelectItem>
+                        {leadforms.map((leadform) => (
+                          <SelectItem key={leadform.id} value={String(leadform.id)}>
+                            {leadform.name}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -170,19 +264,29 @@ export default function CampaignForm() {
                 {objective === "TRAFFIC" && (
                   <div className="space-y-2">
                     <Label htmlFor="website">Website URL *</Label>
-                    <Input id="website" placeholder="https://exemplo.com" data-testid="input-website" />
+                    <Input 
+                      id="website" 
+                      placeholder="https://exemplo.com"
+                      value={formData.websiteUrl}
+                      onChange={(e) => setFormData({ ...formData, websiteUrl: e.target.value })}
+                      data-testid="input-website" 
+                    />
                   </div>
                 )}
 
                 {objective === "WHATSAPP" && (
                   <div className="space-y-2">
                     <Label htmlFor="whatsapp">WhatsApp Number ID *</Label>
-                    <Select>
+                    <Select value={formData.whatsappId} onValueChange={(v) => setFormData({ ...formData, whatsappId: v })}>
                       <SelectTrigger id="whatsapp" data-testid="select-whatsapp">
                         <SelectValue placeholder="Selecione" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="wa_789">WhatsApp Business</SelectItem>
+                        {whatsapps.map((whatsapp) => (
+                          <SelectItem key={whatsapp.id} value={String(whatsapp.id)}>
+                            {whatsapp.name}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
@@ -269,7 +373,13 @@ export default function CampaignForm() {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="title">Título *</Label>
-                  <Input id="title" placeholder="Título do anúncio" data-testid="input-title" />
+                  <Input 
+                    id="title" 
+                    placeholder="Título do anúncio"
+                    value={formData.title}
+                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                    data-testid="input-title" 
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -278,21 +388,22 @@ export default function CampaignForm() {
                     id="message"
                     placeholder="Mensagem do anúncio"
                     rows={4}
+                    value={formData.message}
+                    onChange={(e) => setFormData({ ...formData, message: e.target.value })}
                     data-testid="input-message"
                   />
                 </div>
 
                 <div className="space-y-2">
                   <Label htmlFor="drive-folder">Pasta Google Drive *</Label>
-                  <Select>
-                    <SelectTrigger id="drive-folder" data-testid="select-drive-folder">
-                      <SelectValue placeholder="Selecione a pasta com criativos" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="folder_123">Pasta Principal de Criativos</SelectItem>
-                      <SelectItem value="folder_456">Campanhas Sazonais</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Input 
+                    id="drive-folder"
+                    placeholder="Insira o ID da pasta do Drive"
+                    value={formData.driveFolderId}
+                    onChange={(e) => setFormData({ ...formData, driveFolderId: e.target.value })}
+                    data-testid="input-drive-folder"
+                  />
+                  <p className="text-xs text-muted-foreground">Você pode obter o ID da pasta após conectar OAuth com Google Drive</p>
                 </div>
               </CardContent>
             </Card>

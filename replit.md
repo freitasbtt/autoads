@@ -172,6 +172,40 @@ Preferred communication style: Simple, everyday language.
 
 ## Recent Changes
 
+### OAuth Integration Implementation (October 28, 2025)
+
+**OAuth Meta Flow Complete**:
+- Implemented `/auth/meta` and `/auth/meta/callback` routes
+- Auto-fetch resources via Meta Graph API: ad accounts, pages, Instagram accounts
+- Security: `appsecret_proof` using HMAC SHA-256 for all Graph API calls
+- Auto-save fetched resources to database with tenant isolation
+- Frontend: "Conectar com Meta" button on Resources page
+- Success toast notification after OAuth callback
+
+**OAuth Google Drive Flow Complete**:
+- Implemented `/auth/google` and `/auth/google/callback` routes
+- Token exchange with offline access (refresh token)
+- Save access/refresh tokens to integrations table
+- Frontend: "Conectar OAuth" button on Integrations page
+- Success toast notification after OAuth callback
+
+**Admin Configuration Page**:
+- Created `/admin` page (admin-only access via role='admin')
+- Configure Meta App ID/Secret, Google Client ID/Secret, n8n webhook URL
+- Server-side validation with isAdmin middleware
+- Credentials masked in API responses (never expose secrets)
+- Created `app_settings` table schema
+
+**Schema Updates**:
+- Added `app_settings` table: stores OAuth credentials and n8n webhook URL
+- Fields: metaAppId, metaAppSecret, googleClientId, googleClientSecret, n8nWebhookUrl
+
+**Security Enhancements**:
+- OAuth state parameter validation (prevents CSRF attacks)
+- appsecret_proof for Meta API calls (required for secure API access)
+- Credentials stored encrypted (config JSONB field in integrations table)
+- Admin-only routes protected by RBAC middleware
+
 ### Backend Implementation (October 27, 2025)
 
 **Complete RESTful API Implementation**:
