@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import StatusBadge from "@/components/StatusBadge";
-import { Loader2, RefreshCw, Settings } from "lucide-react";
+import { Loader2, RefreshCw, Settings, Link as LinkIcon } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -94,6 +94,25 @@ export default function Integrations() {
       });
     }, 1500);
   };
+
+  const handleGoogleOAuth = () => {
+    window.location.href = "/auth/google";
+  };
+
+  // Check for OAuth success
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('oauth') === 'success') {
+      toast({
+        title: "Conectado com sucesso!",
+        description: "Sua integração Google Drive foi configurada.",
+      });
+      // Clean URL
+      window.history.replaceState({}, '', '/integrations');
+      // Refresh integrations
+      queryClient.invalidateQueries({ queryKey: ["/api/integrations"] });
+    }
+  }, [toast]);
 
   return (
     <div className="p-6 space-y-6">
@@ -186,6 +205,15 @@ export default function Integrations() {
               </div>
             )}
             <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleGoogleOAuth}
+                data-testid="button-connect-google"
+              >
+                <LinkIcon className="h-4 w-4 mr-2" />
+                Conectar OAuth
+              </Button>
               <Button
                 variant="outline"
                 size="sm"

@@ -689,6 +689,92 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ====== Google Drive OAuth Routes ======
+
+  // Initiate Google OAuth flow
+  app.get("/auth/google", isAuthenticated, async (req, res) => {
+    try {
+      const settings = await storage.getAppSettings();
+      if (!settings?.googleClientId) {
+        return res.status(500).send("Google OAuth not configured. Please contact admin.");
+      }
+
+      const redirectUri = `${req.protocol}://${req.get('host')}/auth/google/callback`;
+      const scope = "https://www.googleapis.com/auth/drive.readonly";
+      
+      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+        `client_id=${settings.googleClientId}&` +
+        `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+        `response_type=code&` +
+        `scope=${encodeURIComponent(scope)}&` +
+        `access_type=offline&` +
+        `state=${req.user!.id}`;
+
+      res.redirect(authUrl);
+    } catch (err) {
+      console.error("Google OAuth error:", err);
+      res.status(500).send("Failed to initiate OAuth");
+    }
+  });
+
+  // Google OAuth callback
+  app.get("/auth/google/callback", isAuthenticated, async (req, res) => {
+    try {
+      const { code, state } = req.query;
+      const user = req.user as User;
+
+      if (!code || state !== String(user.id)) {
+        return res.status(400).send("Invalid OAuth callback");
+      }
+
+      const settings = await storage.getAppSettings();
+      if (!settings?.googleClientId || !settings.googleClientSecret) {
+        return res.status(500).send("Google OAuth not configured");
+      }
+
+      const redirectUri = `${req.protocol}://${req.get('host')}/auth/google/callback`;
+
+      // Exchange code for access token
+      const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code,
+          client_id: settings.googleClientId,
+          client_secret: settings.googleClientSecret,
+          redirect_uri: redirectUri,
+          grant_type: "authorization_code",
+        }),
+      });
+
+      const tokenData: any = await tokenResponse.json();
+
+      if (!tokenData.access_token) {
+        console.error("Token exchange failed:", tokenData);
+        return res.status(500).send("Failed to obtain access token");
+      }
+
+      // Save access token in integrations table
+      await storage.createIntegration({
+        tenantId: user.tenantId,
+        provider: "Google Drive",
+        config: { 
+          accessToken: tokenData.access_token,
+          refreshToken: tokenData.refresh_token,
+          tokenType: tokenData.token_type,
+          expiresIn: tokenData.expires_in,
+        },
+        status: "connected",
+      });
+
+      // Redirect back to integrations page
+      res.redirect("/integrations?oauth=success");
+    } catch (err) {
+      console.error("Google OAuth callback error:", err);
+      res.status(500).send("Failed to complete OAuth");
+    }
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;
