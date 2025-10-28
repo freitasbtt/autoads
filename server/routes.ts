@@ -715,6 +715,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).send("Meta OAuth not configured. Please contact admin.");
       }
 
+      const user = req.user as User;
+      
+      // Save user info in session for callback
+      req.session.oauthUserId = user.id;
+      req.session.oauthTenantId = user.tenantId;
+      
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+
       const redirectUri = `${req.protocol}://${req.get('host')}/auth/meta/callback`;
       const scope = "ads_read,pages_read_engagement,instagram_basic,whatsapp_business_management,leads_retrieval";
       
@@ -722,7 +735,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         `client_id=${settings.metaAppId}&` +
         `redirect_uri=${encodeURIComponent(redirectUri)}&` +
         `scope=${scope}&` +
-        `state=${req.user!.id}`;
+        `state=${user.id}`;
 
       res.redirect(authUrl);
     } catch (err) {
@@ -732,12 +745,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Meta OAuth callback
-  app.get("/auth/meta/callback", isAuthenticated, async (req, res) => {
+  app.get("/auth/meta/callback", async (req, res) => {
     try {
       const { code, state } = req.query;
-      const user = req.user as User;
+      
+      // Get user info from session
+      const userId = req.session.oauthUserId;
+      const tenantId = req.session.oauthTenantId;
 
-      if (!code || state !== String(user.id)) {
+      if (!code || !userId || !tenantId || state !== String(userId)) {
         return res.status(400).send("Invalid OAuth callback");
       }
 
@@ -779,7 +795,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (accountsData.data && accountsData.data.length > 0) {
         for (const account of accountsData.data) {
           await storage.createResource({
-            tenantId: user.tenantId,
+            tenantId,
             type: "account",
             name: account.name || "Ad Account",
             value: account.id,
@@ -801,7 +817,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         for (const page of pagesData.data) {
           // Save page
           await storage.createResource({
-            tenantId: user.tenantId,
+            tenantId,
             type: "page",
             name: page.name || "Facebook Page",
             value: page.id,
@@ -810,7 +826,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // Save Instagram account if connected
           if (page.instagram_business_account?.id) {
             await storage.createResource({
-              tenantId: user.tenantId,
+              tenantId,
               type: "instagram",
               name: `Instagram - ${page.name}`,
               value: page.instagram_business_account.id,
@@ -824,7 +840,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Save access token in integrations table for future use
       await storage.createIntegration({
-        tenantId: user.tenantId,
+        tenantId,
         provider: "Meta",
         config: { accessToken, tokenType: tokenData.token_type },
         status: "connected",
@@ -848,6 +864,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).send("Google OAuth not configured. Please contact admin.");
       }
 
+      const user = req.user as User;
+      
+      // Save user info in session for callback
+      req.session.oauthUserId = user.id;
+      req.session.oauthTenantId = user.tenantId;
+      
+      await new Promise<void>((resolve, reject) => {
+        req.session.save((err) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+
       const redirectUri = `${req.protocol}://${req.get('host')}/auth/google/callback`;
       const scope = "https://www.googleapis.com/auth/drive.readonly";
       
@@ -857,7 +886,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         `response_type=code&` +
         `scope=${encodeURIComponent(scope)}&` +
         `access_type=offline&` +
-        `state=${req.user!.id}`;
+        `state=${user.id}`;
 
       res.redirect(authUrl);
     } catch (err) {
@@ -867,12 +896,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Google OAuth callback
-  app.get("/auth/google/callback", isAuthenticated, async (req, res) => {
+  app.get("/auth/google/callback", async (req, res) => {
     try {
       const { code, state } = req.query;
-      const user = req.user as User;
+      
+      // Get user info from session
+      const userId = req.session.oauthUserId;
+      const tenantId = req.session.oauthTenantId;
 
-      if (!code || state !== String(user.id)) {
+      if (!code || !userId || !tenantId || state !== String(userId)) {
         return res.status(400).send("Invalid OAuth callback");
       }
 
@@ -905,7 +937,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Save access token in integrations table
       await storage.createIntegration({
-        tenantId: user.tenantId,
+        tenantId,
         provider: "Google Drive",
         config: { 
           accessToken: tokenData.access_token,
