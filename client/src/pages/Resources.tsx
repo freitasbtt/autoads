@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Plus } from "lucide-react";
+import { Plus, Link as LinkIcon } from "lucide-react";
 import ResourceCard from "@/components/ResourceCard";
 import {
   Dialog,
@@ -102,6 +102,25 @@ export default function Resources() {
     createMutation.mutate(newResource);
   };
 
+  const handleMetaOAuth = () => {
+    window.location.href = "/auth/meta";
+  };
+
+  // Check for OAuth success
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('oauth') === 'success') {
+      toast({
+        title: "Conectado com sucesso!",
+        description: "Seus recursos Meta foram importados automaticamente.",
+      });
+      // Clean URL
+      window.history.replaceState({}, '', '/resources');
+      // Refresh resources
+      queryClient.invalidateQueries({ queryKey: ["/api/resources"] });
+    }
+  }, [toast]);
+
   const groupedResources = resources.reduce((acc, resource) => {
     if (!acc[resource.type]) {
       acc[resource.type] = [];
@@ -117,10 +136,20 @@ export default function Resources() {
           <h1 className="text-3xl font-semibold">Recursos</h1>
           <p className="text-muted-foreground">Gerencie seus recursos Meta Ads</p>
         </div>
-        <Button onClick={() => setIsDialogOpen(true)} data-testid="button-add-resource">
-          <Plus className="h-4 w-4 mr-2" />
-          Adicionar Recurso
-        </Button>
+        <div className="flex gap-2">
+          <Button 
+            variant="outline" 
+            onClick={handleMetaOAuth} 
+            data-testid="button-connect-meta"
+          >
+            <LinkIcon className="h-4 w-4 mr-2" />
+            Conectar com Meta
+          </Button>
+          <Button onClick={() => setIsDialogOpen(true)} data-testid="button-add-resource">
+            <Plus className="h-4 w-4 mr-2" />
+            Adicionar Recurso
+          </Button>
+        </div>
       </div>
 
       <Tabs value={currentTab} onValueChange={(v) => setCurrentTab(v as ResourceType)}>

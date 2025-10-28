@@ -8,6 +8,7 @@ import memorystore from "memorystore";
 import { z } from "zod";
 import type { User } from "@shared/schema";
 import { insertUserSchema, insertResourceSchema, insertAudienceSchema, insertCampaignSchema, insertIntegrationSchema } from "@shared/schema";
+import crypto from "crypto";
 
 const MemoryStore = memorystore(session);
 
@@ -545,6 +546,146 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (err) {
       next(err);
+    }
+  });
+
+  // ====== Meta OAuth Routes ======
+
+  // Generate appsecret_proof for Meta API calls (security)
+  function generateAppSecretProof(accessToken: string, appSecret: string): string {
+    return crypto.createHmac('sha256', appSecret)
+      .update(accessToken)
+      .digest('hex');
+  }
+
+  // Initiate Meta OAuth flow
+  app.get("/auth/meta", isAuthenticated, async (req, res) => {
+    try {
+      const settings = await storage.getAppSettings();
+      if (!settings?.metaAppId) {
+        return res.status(500).send("Meta OAuth not configured. Please contact admin.");
+      }
+
+      const redirectUri = `${req.protocol}://${req.get('host')}/auth/meta/callback`;
+      const scope = "ads_read,pages_read_engagement,instagram_basic,whatsapp_business_management,leads_retrieval";
+      
+      const authUrl = `https://www.facebook.com/v18.0/dialog/oauth?` +
+        `client_id=${settings.metaAppId}&` +
+        `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+        `scope=${scope}&` +
+        `state=${req.user!.id}`;
+
+      res.redirect(authUrl);
+    } catch (err) {
+      console.error("Meta OAuth error:", err);
+      res.status(500).send("Failed to initiate OAuth");
+    }
+  });
+
+  // Meta OAuth callback
+  app.get("/auth/meta/callback", isAuthenticated, async (req, res) => {
+    try {
+      const { code, state } = req.query;
+      const user = req.user as User;
+
+      if (!code || state !== String(user.id)) {
+        return res.status(400).send("Invalid OAuth callback");
+      }
+
+      const settings = await storage.getAppSettings();
+      if (!settings?.metaAppId || !settings.metaAppSecret) {
+        return res.status(500).send("Meta OAuth not configured");
+      }
+
+      const redirectUri = `${req.protocol}://${req.get('host')}/auth/meta/callback`;
+
+      // Exchange code for access token
+      const tokenUrl = `https://graph.facebook.com/v18.0/oauth/access_token?` +
+        `client_id=${settings.metaAppId}&` +
+        `client_secret=${settings.metaAppSecret}&` +
+        `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+        `code=${code}`;
+
+      const tokenResponse = await fetch(tokenUrl);
+      const tokenData: any = await tokenResponse.json();
+
+      if (!tokenData.access_token) {
+        console.error("Token exchange failed:", tokenData);
+        return res.status(500).send("Failed to obtain access token");
+      }
+
+      const accessToken = tokenData.access_token;
+      const appSecretProof = generateAppSecretProof(accessToken, settings.metaAppSecret);
+
+      // Fetch user's accounts
+      const accountsUrl = `https://graph.facebook.com/v18.0/me/adaccounts?` +
+        `access_token=${accessToken}&` +
+        `appsecret_proof=${appSecretProof}&` +
+        `fields=id,name`;
+        
+      const accountsResponse = await fetch(accountsUrl);
+      const accountsData: any = await accountsResponse.json();
+
+      // Save ad accounts
+      if (accountsData.data && accountsData.data.length > 0) {
+        for (const account of accountsData.data) {
+          await storage.createResource({
+            tenantId: user.tenantId,
+            type: "account",
+            name: account.name || "Ad Account",
+            value: account.id,
+          });
+        }
+      }
+
+      // Fetch pages
+      const pagesUrl = `https://graph.facebook.com/v18.0/me/accounts?` +
+        `access_token=${accessToken}&` +
+        `appsecret_proof=${appSecretProof}&` +
+        `fields=id,name,instagram_business_account`;
+
+      const pagesResponse = await fetch(pagesUrl);
+      const pagesData: any = await pagesResponse.json();
+
+      // Save pages and Instagram accounts
+      if (pagesData.data && pagesData.data.length > 0) {
+        for (const page of pagesData.data) {
+          // Save page
+          await storage.createResource({
+            tenantId: user.tenantId,
+            type: "page",
+            name: page.name || "Facebook Page",
+            value: page.id,
+          });
+
+          // Save Instagram account if connected
+          if (page.instagram_business_account?.id) {
+            await storage.createResource({
+              tenantId: user.tenantId,
+              type: "instagram",
+              name: `Instagram - ${page.name}`,
+              value: page.instagram_business_account.id,
+            });
+          }
+        }
+      }
+
+      // TODO: Fetch WhatsApp numbers and lead forms
+      // This requires additional API calls with specific permissions
+
+      // Save access token in integrations table for future use
+      await storage.createIntegration({
+        tenantId: user.tenantId,
+        provider: "Meta",
+        config: { accessToken, tokenType: tokenData.token_type },
+        status: "connected",
+      });
+
+      // Redirect back to resources page
+      res.redirect("/resources?oauth=success");
+    } catch (err) {
+      console.error("Meta OAuth callback error:", err);
+      res.status(500).send("Failed to complete OAuth");
     }
   });
 
