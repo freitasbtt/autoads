@@ -580,6 +580,96 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Send data directly to n8n webhook (for existing campaign form)
+  app.post("/api/webhooks/n8n", isAuthenticated, async (req, res, next) => {
+    try {
+      const user = req.user as User;
+      
+      // Get webhook URL
+      const settings = await storage.getAppSettings();
+      if (!settings?.n8nWebhookUrl) {
+        return res.status(400).json({ message: "Webhook n8n não configurado. Configure em Admin > Configurações" });
+      }
+
+      // Extract data from request
+      const {
+        objectives,
+        page_id,
+        page_name,
+        instagram_user_id,
+        instagram_name,
+        whatsapp_number_id,
+        whatsapp_name,
+        leadgen_form_id,
+        leadgen_form_name,
+        website_url,
+        drive_folder_id,
+        drive_folder_name,
+        title,
+        message,
+        metadata
+      } = req.body;
+
+      // Prepare webhook payload matching n8n expected format
+      const webhookPayload = [{
+        headers: {
+          "content-type": "application/json",
+          "user-agent": "Meta-Ads-Platform/1.0"
+        },
+        params: {},
+        query: {},
+        body: {
+          rowIndex: Date.now(), // Use timestamp as unique identifier
+          sheet: "EXISTING_CAMPAIGN",
+          data: {
+            submit: "ON",
+            objectives: objectives,
+            page_id: page_id || "",
+            page_name: page_name || "",
+            instagram_user_id: instagram_user_id || "",
+            instagram_name: instagram_name || "",
+            whatsapp_number_id: whatsapp_number_id || "",
+            whatsapp_name: whatsapp_name || "",
+            leadgen_form_id: leadgen_form_id || "",
+            leadgen_form_name: leadgen_form_name || "",
+            website_url: website_url || "",
+            drive_folder_id: drive_folder_id || "",
+            drive_folder_name: drive_folder_name || "",
+            message_text: message || "",
+            title_text: title || "",
+            status: "PENDING",
+            status_detail: "Enviado ao n8n (campanha existente)",
+            client: `Tenant-${user.tenantId}`,
+            form_type: metadata?.form_type || "existing_campaign",
+            timestamp: metadata?.timestamp || new Date().toISOString()
+          },
+          ts: new Date().toISOString()
+        },
+        webhookUrl: settings.n8nWebhookUrl,
+        executionMode: "production"
+      }];
+
+      // Send webhook
+      const webhookResponse = await fetch(settings.n8nWebhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(webhookPayload),
+      });
+
+      if (!webhookResponse.ok) {
+        const errorText = await webhookResponse.text();
+        console.error("Failed to send webhook to n8n:", errorText);
+        return res.status(500).json({ message: "Erro ao enviar webhook para n8n" });
+      }
+
+      res.json({ message: "Dados enviados para n8n com sucesso" });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   // ===== Integration Routes =====
 
   // Get all integrations for tenant
