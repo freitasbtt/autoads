@@ -87,14 +87,19 @@ export const campaigns = pgTable("campaigns", {
   objective: text("objective").notNull(), // LEAD, TRAFFIC, WHATSAPP, CONVERSIONS, REACH
   status: text("status").notNull().default("draft"), // draft, pending (sent to n8n), active (confirmed by n8n), error (n8n error), paused, completed
   statusDetail: text("status_detail"), // Additional status info from n8n
-  budget: text("budget").notNull(),
   accountId: integer("account_id").references(() => resources.id),
   pageId: integer("page_id").references(() => resources.id),
   instagramId: integer("instagram_id").references(() => resources.id),
   whatsappId: integer("whatsapp_id").references(() => resources.id),
   leadformId: integer("leadform_id").references(() => resources.id),
   websiteUrl: text("website_url"),
-  audienceIds: integer("audience_ids").array().notNull(),
+  // Ad Sets - array of ad set configurations
+  adSets: jsonb("ad_sets"), // [{ audienceId, budget, startDate, endDate }]
+  // Creatives - array of creative assets
+  creatives: jsonb("creatives"), // [{ title, text, driveFolderId }]
+  // Legacy fields (kept for backwards compatibility)
+  budget: text("budget"),
+  audienceIds: integer("audience_ids").array(),
   title: text("title"),
   message: text("message"),
   driveFolderId: text("drive_folder_id"),
