@@ -571,7 +571,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!webhookResponse.ok) {
         const errorText = await webhookResponse.text();
         console.error("Failed to send webhook to n8n:", errorText);
-        return res.status(500).json({ message: "Erro ao enviar webhook para n8n" });
+        
+        // Parse error to provide better user feedback
+        let userMessage = "Erro ao enviar webhook para n8n";
+        try {
+          const errorJson = JSON.parse(errorText);
+          if (errorJson.code === 404 || errorJson.message?.includes("not registered")) {
+            userMessage = "Webhook n8n não está ativo. No n8n, clique em 'Execute workflow' e tente novamente.";
+          }
+        } catch (e) {
+          // Keep default message if parsing fails
+        }
+        
+        return res.status(500).json({ message: userMessage });
       }
 
       res.json({ message: "Campanha enviada para n8n com sucesso" });
@@ -661,7 +673,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!webhookResponse.ok) {
         const errorText = await webhookResponse.text();
         console.error("Failed to send webhook to n8n:", errorText);
-        return res.status(500).json({ message: "Erro ao enviar webhook para n8n" });
+        
+        // Parse error to provide better user feedback
+        let userMessage = "Erro ao enviar webhook para n8n";
+        try {
+          const errorJson = JSON.parse(errorText);
+          if (errorJson.code === 404 || errorJson.message?.includes("not registered")) {
+            userMessage = "Webhook n8n não está ativo. No n8n, clique em 'Execute workflow' e tente novamente.";
+          }
+        } catch (e) {
+          // Keep default message if parsing fails
+        }
+        
+        return res.status(500).json({ message: userMessage });
       }
 
       res.json({ message: "Dados enviados para n8n com sucesso" });
