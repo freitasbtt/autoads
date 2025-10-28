@@ -4,7 +4,7 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -13,50 +13,49 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { ChevronRight, ChevronLeft, Plus, Trash2, Check } from "lucide-react";
+import { Resource, Audience } from "@shared/schema";
 
-interface Resource {
-  id: number;
-  tenantId: number;
-  type: string;
-  name: string;
-  value: string;
+interface AdSet {
+  audienceId: string;
+  budget: string;
+  startDate: string;
+  endDate: string;
 }
 
-interface Audience {
-  id: number;
-  tenantId: number;
-  name: string;
-  type: string;
-  ageMin: number | null;
-  ageMax: number | null;
-  interests: string[] | null;
-  behaviors: string[] | null;
-  locations: string[] | null;
+interface Creative {
+  title: string;
+  text: string;
+  driveFolderId: string;
 }
 
 export default function CampaignForm() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const [objective, setObjective] = useState("");
-  const [selectedAudiences, setSelectedAudiences] = useState<number[]>([]);
-  const [formData, setFormData] = useState({
-    name: "",
-    budget: "",
+  const [currentStep, setCurrentStep] = useState(1);
+
+  // Step 1: Campaign Configuration
+  const [config, setConfig] = useState({
     accountId: "",
+    name: "",
+    objective: "",
     pageId: "",
     instagramId: "",
     whatsappId: "",
     leadformId: "",
-    websiteUrl: "",
-    title: "",
-    message: "",
-    driveFolderId: "",
   });
+
+  // Step 2: Ad Sets (can add multiple)
+  const [adSets, setAdSets] = useState<AdSet[]>([
+    { audienceId: "", budget: "", startDate: "", endDate: "" },
+  ]);
+
+  // Step 3: Creatives (can add multiple)
+  const [creatives, setCreatives] = useState<Creative[]>([
+    { title: "", text: "", driveFolderId: "" },
+  ]);
 
   // Fetch resources and audiences from API
   const { data: resources = [] } = useQuery<Resource[]>({
@@ -73,372 +72,530 @@ export default function CampaignForm() {
   const instagrams = resources.filter((r) => r.type === "instagram");
   const whatsapps = resources.filter((r) => r.type === "whatsapp");
   const leadforms = resources.filter((r) => r.type === "leadform");
+  const driveFolders = resources.filter((r) => r.type === "drive_folder");
 
-  const toggleAudience = (audienceId: number) => {
-    setSelectedAudiences((prev) =>
-      prev.includes(audienceId)
-        ? prev.filter((id) => id !== audienceId)
-        : [...prev, audienceId]
-    );
+  // Add/Remove Ad Set
+  const addAdSet = () => {
+    setAdSets([...adSets, { audienceId: "", budget: "", startDate: "", endDate: "" }]);
   };
 
+  const removeAdSet = (index: number) => {
+    if (adSets.length > 1) {
+      setAdSets(adSets.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateAdSet = (index: number, field: keyof AdSet, value: string) => {
+    const updated = [...adSets];
+    updated[index][field] = value;
+    setAdSets(updated);
+  };
+
+  // Add/Remove Creative
+  const addCreative = () => {
+    setCreatives([...creatives, { title: "", text: "", driveFolderId: "" }]);
+  };
+
+  const removeCreative = (index: number) => {
+    if (creatives.length > 1) {
+      setCreatives(creatives.filter((_, i) => i !== index));
+    }
+  };
+
+  const updateCreative = (index: number, field: keyof Creative, value: string) => {
+    const updated = [...creatives];
+    updated[index][field] = value;
+    setCreatives(updated);
+  };
+
+  // Validation for each step
+  const isStep1Valid = () => {
+    return config.accountId && config.name && config.objective;
+  };
+
+  const isStep2Valid = () => {
+    return adSets.every((adSet) => adSet.audienceId && adSet.budget);
+  };
+
+  const isStep3Valid = () => {
+    return creatives.every((creative) => creative.title && creative.text);
+  };
+
+  // Create campaign mutation
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/campaigns", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/campaigns"] });
       toast({
-        title: "Campanha criada!",
-        description: "A campanha foi criada com sucesso",
+        title: "Rascunho criado!",
+        description: "A campanha foi salva como rascunho com sucesso.",
       });
       setLocation("/campaigns");
     },
     onError: (error: Error) => {
       toast({
-        title: "Erro ao criar campanha",
+        title: "Erro ao criar rascunho",
         description: error.message,
         variant: "destructive",
       });
     },
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    if (selectedAudiences.length === 0) {
+  const handleSubmit = () => {
+    if (!isStep3Valid()) {
       toast({
         title: "Erro de validação",
-        description: "Selecione pelo menos um público",
+        description: "Preencha todos os campos obrigatórios dos criativos.",
         variant: "destructive",
       });
       return;
     }
 
-    createMutation.mutate({
-      name: formData.name,
-      objective,
+    const payload = {
+      name: config.name,
+      objective: config.objective,
       status: "draft",
-      budget: formData.budget,
-      accountId: formData.accountId ? Number(formData.accountId) : null,
-      pageId: formData.pageId ? Number(formData.pageId) : null,
-      instagramId: formData.instagramId ? Number(formData.instagramId) : null,
-      whatsappId: formData.whatsappId ? Number(formData.whatsappId) : null,
-      leadformId: formData.leadformId ? Number(formData.leadformId) : null,
-      websiteUrl: formData.websiteUrl || null,
-      audienceIds: selectedAudiences,
-      title: formData.title,
-      message: formData.message,
-      driveFolderId: formData.driveFolderId || null,
-    });
+      accountId: config.accountId ? Number(config.accountId) : null,
+      pageId: config.pageId ? Number(config.pageId) : null,
+      instagramId: config.instagramId ? Number(config.instagramId) : null,
+      whatsappId: config.whatsappId ? Number(config.whatsappId) : null,
+      leadformId: config.leadformId ? Number(config.leadformId) : null,
+      adSets: adSets.map((adSet) => ({
+        audienceId: Number(adSet.audienceId),
+        budget: adSet.budget,
+        startDate: adSet.startDate || null,
+        endDate: adSet.endDate || null,
+      })),
+      creatives: creatives.map((creative) => ({
+        title: creative.title,
+        text: creative.text,
+        driveFolderId: creative.driveFolderId || null,
+      })),
+    };
+
+    createMutation.mutate(payload);
+  };
+
+  const nextStep = () => {
+    if (currentStep === 1 && !isStep1Valid()) {
+      toast({
+        title: "Campos obrigatórios",
+        description: "Preencha Conta Meta Ads, Nome e Objetivo.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (currentStep === 2 && !isStep2Valid()) {
+      toast({
+        title: "Campos obrigatórios",
+        description: "Preencha Público e Orçamento para todos os conjuntos.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setCurrentStep(currentStep + 1);
+  };
+
+  const prevStep = () => {
+    setCurrentStep(currentStep - 1);
   };
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-6 max-w-4xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-3xl font-semibold">Nova Campanha</h1>
-        <p className="text-muted-foreground">Crie uma nova campanha Meta Ads com 3 Ad Sets</p>
+        <h1 className="text-3xl font-bold">Nova Campanha</h1>
+        <p className="text-muted-foreground">
+          Crie uma nova campanha seguindo os passos abaixo
+        </p>
       </div>
 
-      <Tabs defaultValue="details" className="space-y-6">
-        <TabsList>
-          <TabsTrigger value="details" data-testid="tab-details">
-            Detalhes
-          </TabsTrigger>
-          <TabsTrigger value="audiences" data-testid="tab-audiences">
-            Públicos ({selectedAudiences.length})
-          </TabsTrigger>
-          <TabsTrigger value="creatives" data-testid="tab-creatives">
-            Criativos
-          </TabsTrigger>
-          <TabsTrigger value="schedule" data-testid="tab-schedule">
-            Agendamento
-          </TabsTrigger>
-        </TabsList>
-
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <TabsContent value="details" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Detalhes da Campanha</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="campaign-name">Nome da Campanha *</Label>
-                  <Input
-                    id="campaign-name"
-                    placeholder="Ex: Promoção de Verão 2025"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    data-testid="input-campaign-name"
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="objective">Objetivo *</Label>
-                    <Select value={objective} onValueChange={setObjective}>
-                      <SelectTrigger id="objective" data-testid="select-objective">
-                        <SelectValue placeholder="Selecione" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="LEAD">Geração de Leads</SelectItem>
-                        <SelectItem value="TRAFFIC">Tráfego</SelectItem>
-                        <SelectItem value="WHATSAPP">WhatsApp</SelectItem>
-                        <SelectItem value="CONVERSIONS">Conversões</SelectItem>
-                        <SelectItem value="REACH">Alcance</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="budget">Orçamento Diário *</Label>
-                    <Input 
-                      id="budget" 
-                      type="number" 
-                      placeholder="0.00"
-                      value={formData.budget}
-                      onChange={(e) => setFormData({ ...formData, budget: e.target.value })}
-                      data-testid="input-budget" 
-                    />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Recursos</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="account">Conta Meta Ads *</Label>
-                    <Select value={formData.accountId} onValueChange={(v) => setFormData({ ...formData, accountId: v })}>
-                      <SelectTrigger id="account" data-testid="select-account">
-                        <SelectValue placeholder="Selecione" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {accounts.map((account) => (
-                          <SelectItem key={account.id} value={String(account.id)}>
-                            {account.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="page">Página Facebook *</Label>
-                    <Select value={formData.pageId} onValueChange={(v) => setFormData({ ...formData, pageId: v })}>
-                      <SelectTrigger id="page" data-testid="select-page">
-                        <SelectValue placeholder="Selecione" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {pages.map((page) => (
-                          <SelectItem key={page.id} value={String(page.id)}>
-                            {page.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                {objective === "LEAD" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="leadform">Formulário de Leads *</Label>
-                    <Select value={formData.leadformId} onValueChange={(v) => setFormData({ ...formData, leadformId: v })}>
-                      <SelectTrigger id="leadform" data-testid="select-leadform">
-                        <SelectValue placeholder="Selecione" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {leadforms.map((leadform) => (
-                          <SelectItem key={leadform.id} value={String(leadform.id)}>
-                            {leadform.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-
-                {objective === "TRAFFIC" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="website">Website URL *</Label>
-                    <Input 
-                      id="website" 
-                      placeholder="https://exemplo.com"
-                      value={formData.websiteUrl}
-                      onChange={(e) => setFormData({ ...formData, websiteUrl: e.target.value })}
-                      data-testid="input-website" 
-                    />
-                  </div>
-                )}
-
-                {objective === "WHATSAPP" && (
-                  <div className="space-y-2">
-                    <Label htmlFor="whatsapp">WhatsApp Number ID *</Label>
-                    <Select value={formData.whatsappId} onValueChange={(v) => setFormData({ ...formData, whatsappId: v })}>
-                      <SelectTrigger id="whatsapp" data-testid="select-whatsapp">
-                        <SelectValue placeholder="Selecione" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {whatsapps.map((whatsapp) => (
-                          <SelectItem key={whatsapp.id} value={String(whatsapp.id)}>
-                            {whatsapp.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="audiences" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Selecione os Públicos-Alvo</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Escolha um ou mais públicos para segmentar seus anúncios. Cada público será usado para
-                  criar um Ad Set separado.
-                </p>
-                <div className="space-y-4">
-                  {audiences.map((audience) => (
-                    <div
-                      key={audience.id}
-                      className={`border rounded-md p-4 hover-elevate ${
-                        selectedAudiences.includes(audience.id) ? "border-primary" : ""
-                      }`}
-                      data-testid={`audience-option-${audience.id}`}
-                    >
-                      <div className="flex items-start space-x-3">
-                        <Checkbox
-                          id={`audience-${audience.id}`}
-                          checked={selectedAudiences.includes(audience.id)}
-                          onCheckedChange={() => toggleAudience(audience.id)}
-                          data-testid={`checkbox-audience-${audience.id}`}
-                        />
-                        <div className="flex-1">
-                          <Label
-                            htmlFor={`audience-${audience.id}`}
-                            className="cursor-pointer font-medium"
-                          >
-                            {audience.name}
-                          </Label>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            <Badge variant="outline">{audience.type}</Badge>
-                          </div>
-                          {audience.ageMin && audience.ageMax && (
-                            <p className="text-sm text-muted-foreground mt-2">
-                              Idade: {audience.ageMin} - {audience.ageMax} anos
-                            </p>
-                          )}
-                          {audience.interests && (
-                            <div className="mt-2">
-                              <p className="text-sm text-muted-foreground">
-                                Interesses: {audience.interests.join(", ")}
-                              </p>
-                            </div>
-                          )}
-                          {audience.locations && (
-                            <div className="mt-2">
-                              <p className="text-sm text-muted-foreground">
-                                Localizações: {audience.locations.join(", ")}
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {selectedAudiences.length === 0 && (
-                  <p className="text-sm text-muted-foreground mt-4 text-center">
-                    Nenhum público selecionado. Selecione pelo menos um público para continuar.
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="creatives" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Criativos</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="title">Título *</Label>
-                  <Input 
-                    id="title" 
-                    placeholder="Título do anúncio"
-                    value={formData.title}
-                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                    data-testid="input-title" 
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="message">Texto Principal *</Label>
-                  <Textarea
-                    id="message"
-                    placeholder="Mensagem do anúncio"
-                    rows={4}
-                    value={formData.message}
-                    onChange={(e) => setFormData({ ...formData, message: e.target.value })}
-                    data-testid="input-message"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="drive-folder">Pasta Google Drive *</Label>
-                  <Input 
-                    id="drive-folder"
-                    placeholder="Insira o ID da pasta do Drive"
-                    value={formData.driveFolderId}
-                    onChange={(e) => setFormData({ ...formData, driveFolderId: e.target.value })}
-                    data-testid="input-drive-folder"
-                  />
-                  <p className="text-xs text-muted-foreground">Você pode obter o ID da pasta após conectar OAuth com Google Drive</p>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="schedule" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Agendamento</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="start-time">Data/Hora de Início *</Label>
-                    <Input id="start-time" type="datetime-local" data-testid="input-start-time" />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="end-time">Data/Hora de Fim</Label>
-                    <Input id="end-time" type="datetime-local" data-testid="input-end-time" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <div className="flex justify-end gap-4">
-            <Button variant="outline" type="button" data-testid="button-cancel">
-              Cancelar
-            </Button>
-            <Button type="submit" data-testid="button-submit">
-              Criar Campanha
-            </Button>
+      {/* Progress Indicator */}
+      <div className="flex items-center justify-between mb-8">
+        {[1, 2, 3].map((step) => (
+          <div key={step} className="flex items-center">
+            <div
+              className={`flex items-center justify-center w-10 h-10 rounded-full border-2 ${
+                currentStep >= step
+                  ? "bg-primary border-primary text-primary-foreground"
+                  : "border-muted text-muted-foreground"
+              }`}
+              data-testid={`step-indicator-${step}`}
+            >
+              {currentStep > step ? <Check className="h-5 w-5" /> : step}
+            </div>
+            {step < 3 && (
+              <div
+                className={`h-1 w-20 mx-2 ${
+                  currentStep > step ? "bg-primary" : "bg-muted"
+                }`}
+              />
+            )}
           </div>
-        </form>
-      </Tabs>
+        ))}
+      </div>
+
+      {/* Step 1: Campaign Configuration */}
+      {currentStep === 1 && (
+        <Card data-testid="step-1-configuration">
+          <CardHeader>
+            <CardTitle>Configuração da Campanha</CardTitle>
+            <CardDescription>
+              Defina a conta, nome e objetivo da campanha
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="accountId">
+                Conta Meta Ads <span className="text-destructive">*</span>
+              </Label>
+              <Select
+                value={config.accountId}
+                onValueChange={(value) => setConfig({ ...config, accountId: value })}
+              >
+                <SelectTrigger id="accountId" data-testid="select-account">
+                  <SelectValue placeholder="Selecione a conta" />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts.map((account) => (
+                    <SelectItem key={account.id} value={String(account.id)}>
+                      {account.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="name">
+                Nome da Campanha <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="name"
+                data-testid="input-name"
+                placeholder="Ex: Campanha de Lançamento 2025"
+                value={config.name}
+                onChange={(e) => setConfig({ ...config, name: e.target.value })}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="objective">
+                Objetivo <span className="text-destructive">*</span>
+              </Label>
+              <Select
+                value={config.objective}
+                onValueChange={(value) => setConfig({ ...config, objective: value })}
+              >
+                <SelectTrigger id="objective" data-testid="select-objective">
+                  <SelectValue placeholder="Selecione o objetivo" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="LEAD">Geração de Leads</SelectItem>
+                  <SelectItem value="TRAFFIC">Tráfego</SelectItem>
+                  <SelectItem value="WHATSAPP">Mensagens WhatsApp</SelectItem>
+                  <SelectItem value="CONVERSIONS">Conversões</SelectItem>
+                  <SelectItem value="REACH">Alcance</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="pageId">Página Facebook</Label>
+                <Select
+                  value={config.pageId}
+                  onValueChange={(value) => setConfig({ ...config, pageId: value })}
+                >
+                  <SelectTrigger id="pageId" data-testid="select-page">
+                    <SelectValue placeholder="Selecione a página" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {pages.map((page) => (
+                      <SelectItem key={page.id} value={String(page.id)}>
+                        {page.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="instagramId">Instagram</Label>
+                <Select
+                  value={config.instagramId}
+                  onValueChange={(value) => setConfig({ ...config, instagramId: value })}
+                >
+                  <SelectTrigger id="instagramId" data-testid="select-instagram">
+                    <SelectValue placeholder="Selecione o Instagram" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {instagrams.map((instagram) => (
+                      <SelectItem key={instagram.id} value={String(instagram.id)}>
+                        {instagram.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="whatsappId">WhatsApp</Label>
+                <Select
+                  value={config.whatsappId}
+                  onValueChange={(value) => setConfig({ ...config, whatsappId: value })}
+                >
+                  <SelectTrigger id="whatsappId" data-testid="select-whatsapp">
+                    <SelectValue placeholder="Selecione o WhatsApp" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {whatsapps.map((whatsapp) => (
+                      <SelectItem key={whatsapp.id} value={String(whatsapp.id)}>
+                        {whatsapp.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="leadformId">Formulário de Leads</Label>
+                <Select
+                  value={config.leadformId}
+                  onValueChange={(value) => setConfig({ ...config, leadformId: value })}
+                >
+                  <SelectTrigger id="leadformId" data-testid="select-leadform">
+                    <SelectValue placeholder="Selecione o formulário" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {leadforms.map((leadform) => (
+                      <SelectItem key={leadform.id} value={String(leadform.id)}>
+                        {leadform.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Step 2: Ad Sets */}
+      {currentStep === 2 && (
+        <div className="space-y-4" data-testid="step-2-adsets">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Conjuntos de Anúncios</CardTitle>
+                  <CardDescription>
+                    Defina público, orçamento e datas de veiculação
+                  </CardDescription>
+                </div>
+                <Button onClick={addAdSet} variant="outline" size="sm" data-testid="button-add-adset">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Adicionar Conjunto
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {adSets.map((adSet, index) => (
+                <div key={index} className="border rounded-lg p-4 space-y-4" data-testid={`adset-${index}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="font-semibold">Conjunto {index + 1}</h3>
+                    {adSets.length > 1 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeAdSet(index)}
+                        data-testid={`button-remove-adset-${index}`}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor={`audience-${index}`}>
+                        Público <span className="text-destructive">*</span>
+                      </Label>
+                      <Select
+                        value={adSet.audienceId}
+                        onValueChange={(value) => updateAdSet(index, "audienceId", value)}
+                      >
+                        <SelectTrigger id={`audience-${index}`} data-testid={`select-audience-${index}`}>
+                          <SelectValue placeholder="Selecione o público" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {audiences.map((audience) => (
+                            <SelectItem key={audience.id} value={String(audience.id)}>
+                              {audience.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor={`budget-${index}`}>
+                        Orçamento (R$) <span className="text-destructive">*</span>
+                      </Label>
+                      <Input
+                        id={`budget-${index}`}
+                        data-testid={`input-budget-${index}`}
+                        type="number"
+                        placeholder="0.00"
+                        value={adSet.budget}
+                        onChange={(e) => updateAdSet(index, "budget", e.target.value)}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor={`startDate-${index}`}>Data de Início</Label>
+                      <Input
+                        id={`startDate-${index}`}
+                        data-testid={`input-start-date-${index}`}
+                        type="date"
+                        value={adSet.startDate}
+                        onChange={(e) => updateAdSet(index, "startDate", e.target.value)}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor={`endDate-${index}`}>Data de Término</Label>
+                      <Input
+                        id={`endDate-${index}`}
+                        data-testid={`input-end-date-${index}`}
+                        type="date"
+                        value={adSet.endDate}
+                        onChange={(e) => updateAdSet(index, "endDate", e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Step 3: Creatives */}
+      {currentStep === 3 && (
+        <div className="space-y-4" data-testid="step-3-creatives">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Criativos</CardTitle>
+                  <CardDescription>
+                    Defina título, texto e pasta do Google Drive
+                  </CardDescription>
+                </div>
+                <Button onClick={addCreative} variant="outline" size="sm" data-testid="button-add-creative">
+                  <Plus className="h-4 w-4 mr-2" />
+                  Adicionar Criativo
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {creatives.map((creative, index) => (
+                <div key={index} className="border rounded-lg p-4 space-y-4" data-testid={`creative-${index}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="font-semibold">Criativo {index + 1}</h3>
+                    {creatives.length > 1 && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => removeCreative(index)}
+                        data-testid={`button-remove-creative-${index}`}
+                      >
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    )}
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor={`title-${index}`}>
+                        Título <span className="text-destructive">*</span>
+                      </Label>
+                      <Input
+                        id={`title-${index}`}
+                        data-testid={`input-title-${index}`}
+                        placeholder="Digite o título do anúncio"
+                        value={creative.title}
+                        onChange={(e) => updateCreative(index, "title", e.target.value)}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor={`text-${index}`}>
+                        Texto <span className="text-destructive">*</span>
+                      </Label>
+                      <Textarea
+                        id={`text-${index}`}
+                        data-testid={`input-text-${index}`}
+                        placeholder="Digite o texto do anúncio"
+                        value={creative.text}
+                        onChange={(e) => updateCreative(index, "text", e.target.value)}
+                        rows={4}
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor={`driveFolderId-${index}`}>Pasta Google Drive</Label>
+                      <Select
+                        value={creative.driveFolderId}
+                        onValueChange={(value) => updateCreative(index, "driveFolderId", value)}
+                      >
+                        <SelectTrigger id={`driveFolderId-${index}`} data-testid={`select-drive-folder-${index}`}>
+                          <SelectValue placeholder="Selecione a pasta" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {driveFolders.map((folder) => (
+                            <SelectItem key={folder.id} value={folder.value}>
+                              {folder.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Navigation Buttons */}
+      <div className="flex justify-between mt-6">
+        <Button
+          variant="outline"
+          onClick={prevStep}
+          disabled={currentStep === 1}
+          data-testid="button-prev"
+        >
+          <ChevronLeft className="h-4 w-4 mr-2" />
+          Anterior
+        </Button>
+
+        {currentStep < 3 ? (
+          <Button onClick={nextStep} data-testid="button-next">
+            Próximo
+            <ChevronRight className="h-4 w-4 ml-2" />
+          </Button>
+        ) : (
+          <Button
+            onClick={handleSubmit}
+            disabled={createMutation.isPending}
+            data-testid="button-create-draft"
+          >
+            {createMutation.isPending ? "Criando..." : "Criar Rascunho"}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
