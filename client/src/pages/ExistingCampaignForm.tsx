@@ -135,26 +135,24 @@ export default function ExistingCampaignForm() {
       return;
     }
 
-    const selectedPage = pages.find((p) => p.id === Number(pageId));
-    const selectedInstagram = instagramAccounts.find((i) => i.id === Number(instagramId));
-    const selectedWhatsApp = whatsappNumbers.find((w) => w.id === Number(whatsappId));
-    const selectedLeadForm = leadForms.find((lf) => lf.id === Number(leadFormId));
-
-    // Create campaign as draft
+    // Create campaign as draft matching InsertCampaignSchema
     const payload = {
       name: `Campanha ${selectedObjectives.join(", ")} - ${new Date().toLocaleDateString()}`,
       objective: selectedObjectives[0], // Use first objective as primary
       status: "draft",
-      pageId: selectedPage?.id || null,
-      instagramId: selectedInstagram?.id || null,
-      whatsappId: selectedWhatsApp?.id || null,
-      leadformId: selectedLeadForm?.id || null,
-      websiteUrl: websiteUrl || null,
-      creatives: [{
-        title,
-        text: message,
-        driveFolderId: driveFolderId,
-      }],
+      pageId: pageId ? Number(pageId) : undefined,
+      instagramId: instagramId ? Number(instagramId) : undefined,
+      whatsappId: whatsappId ? Number(whatsappId) : undefined,
+      leadformId: leadFormId ? Number(leadFormId) : undefined,
+      websiteUrl: websiteUrl || undefined,
+      adSets: [], // Empty for existing campaign form
+      creatives: [
+        {
+          title,
+          text: message,
+          driveFolderId: driveFolderId,
+        },
+      ],
     };
 
     createDraftMutation.mutate(payload);
