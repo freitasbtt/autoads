@@ -13,6 +13,8 @@ import type {
   InsertIntegration,
   Automation,
   InsertAutomation,
+  AppSettings,
+  InsertAppSettings,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -63,6 +65,11 @@ export interface IStorage {
   getAutomationsByCampaign(campaignId: number): Promise<Automation[]>;
   createAutomation(automation: InsertAutomation): Promise<Automation>;
   updateAutomation(id: number, automation: Partial<InsertAutomation>): Promise<Automation | undefined>;
+
+  // App Settings operations (admin only)
+  getAppSettings(): Promise<AppSettings | undefined>;
+  createAppSettings(settings: InsertAppSettings): Promise<AppSettings>;
+  updateAppSettings(settings: Partial<InsertAppSettings>): Promise<AppSettings | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -339,6 +346,37 @@ export class MemStorage implements IStorage {
     this.automations.set(id, updated);
     return updated;
   }
+
+  // App Settings operations (admin only)
+  private appSettings: AppSettings | undefined;
+
+  async getAppSettings(): Promise<AppSettings | undefined> {
+    return this.appSettings;
+  }
+
+  async createAppSettings(insertSettings: InsertAppSettings): Promise<AppSettings> {
+    const settings: AppSettings = {
+      ...insertSettings,
+      id: 1,
+      metaAppId: insertSettings.metaAppId ?? null,
+      metaAppSecret: insertSettings.metaAppSecret ?? null,
+      googleClientId: insertSettings.googleClientId ?? null,
+      googleClientSecret: insertSettings.googleClientSecret ?? null,
+      n8nWebhookUrl: insertSettings.n8nWebhookUrl ?? null,
+      updatedAt: new Date(),
+    };
+    this.appSettings = settings;
+    return settings;
+  }
+
+  async updateAppSettings(updates: Partial<InsertAppSettings>): Promise<AppSettings | undefined> {
+    if (!this.appSettings) {
+      return this.createAppSettings(updates as InsertAppSettings);
+    }
+    const updated = { ...this.appSettings, ...updates, updatedAt: new Date() };
+    this.appSettings = updated;
+    return updated;
+  }
 }
 
 import { db } from "./db";
@@ -600,6 +638,35 @@ export class DbStorage implements IStorage {
       .where(eq(schema.automations.id, id))
       .returning();
     return automation;
+  }
+
+  // App Settings operations (admin only)
+  async getAppSettings(): Promise<AppSettings | undefined> {
+    const result = await db.query.appSettings.findFirst();
+    return result;
+  }
+
+  async createAppSettings(insertSettings: InsertAppSettings): Promise<AppSettings> {
+    const [settings] = await db
+      .insert(schema.appSettings)
+      .values(insertSettings)
+      .returning();
+    return settings;
+  }
+
+  async updateAppSettings(updates: Partial<InsertAppSettings>): Promise<AppSettings | undefined> {
+    const existing = await this.getAppSettings();
+    if (!existing) {
+      return this.createAppSettings(updates as InsertAppSettings);
+    }
+    
+    const updateData = { ...updates, updatedAt: new Date() };
+    const [settings] = await db
+      .update(schema.appSettings)
+      .set(updateData)
+      .where(eq(schema.appSettings.id, existing.id))
+      .returning();
+    return settings;
   }
 }
 

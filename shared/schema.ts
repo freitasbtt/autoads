@@ -149,3 +149,21 @@ export const insertAutomationSchema = createInsertSchema(automations).omit({
 });
 export type InsertAutomation = z.infer<typeof insertAutomationSchema>;
 export type Automation = typeof automations.$inferSelect;
+
+// App Settings table - global OAuth and webhook configuration (admin only)
+export const appSettings = pgTable("app_settings", {
+  id: serial("id").primaryKey(),
+  metaAppId: text("meta_app_id"),
+  metaAppSecret: text("meta_app_secret"),
+  googleClientId: text("google_client_id"),
+  googleClientSecret: text("google_client_secret"),
+  n8nWebhookUrl: text("n8n_webhook_url"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertAppSettingsSchema = createInsertSchema(appSettings).omit({
+  id: true,
+  updatedAt: true,
+});
+export type InsertAppSettings = z.infer<typeof insertAppSettingsSchema>;
+export type AppSettings = typeof appSettings.$inferSelect;

@@ -67,6 +67,17 @@ function isAuthenticated(req: Express.Request, res: Express.Response, next: Expr
   res.status(401).json({ message: "Unauthorized" });
 }
 
+// Middleware to check if user is admin
+function isAdmin(req: Express.Request, res: Express.Response, next: Express.NextFunction) {
+  if (req.isAuthenticated()) {
+    const user = req.user as User;
+    if (user.role === "admin") {
+      return next();
+    }
+  }
+  res.status(403).json({ message: "Forbidden - Admin access required" });
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Configure session
   app.use(
@@ -483,6 +494,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       await storage.deleteIntegration(id);
       res.json({ message: "Integration deleted successfully" });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // ====== Admin Settings Routes (admin only) ======
+
+  // Get app settings
+  app.get("/api/admin/settings", isAdmin, async (req, res, next) => {
+    try {
+      const settings = await storage.getAppSettings();
+      // Never expose secrets to frontend
+      if (settings) {
+        res.json({
+          id: settings.id,
+          metaAppId: settings.metaAppId,
+          metaAppSecret: settings.metaAppSecret ? '***configured***' : null,
+          googleClientId: settings.googleClientId,
+          googleClientSecret: settings.googleClientSecret ? '***configured***' : null,
+          n8nWebhookUrl: settings.n8nWebhookUrl,
+          updatedAt: settings.updatedAt,
+        });
+      } else {
+        res.json(null);
+      }
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // Update app settings
+  app.put("/api/admin/settings", isAdmin, async (req, res, next) => {
+    try {
+      const settings = await storage.updateAppSettings(req.body);
+      
+      // Never expose secrets to frontend
+      if (settings) {
+        res.json({
+          id: settings.id,
+          metaAppId: settings.metaAppId,
+          metaAppSecret: settings.metaAppSecret ? '***configured***' : null,
+          googleClientId: settings.googleClientId,
+          googleClientSecret: settings.googleClientSecret ? '***configured***' : null,
+          n8nWebhookUrl: settings.n8nWebhookUrl,
+          updatedAt: settings.updatedAt,
+        });
+      } else {
+        res.status(500).json({ message: "Failed to update settings" });
+      }
     } catch (err) {
       next(err);
     }
