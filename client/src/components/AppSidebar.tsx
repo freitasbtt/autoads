@@ -1,4 +1,4 @@
-import { Home, Settings, FileText, LayoutDashboard, Users, Plug, LogOut } from "lucide-react";
+import { Home, Settings, FileText, LayoutDashboard, Users, Plug, LogOut, Shield } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -22,9 +22,15 @@ const items = [
   { title: "Integrações", url: "/integrations", icon: Plug },
 ];
 
+const adminItems = [
+  { title: "Admin", url: "/admin", icon: Shield },
+];
+
 export function AppSidebar() {
   const [location] = useLocation();
   const { logout, user } = useAuth();
+
+  const isAdmin = user?.role === "admin";
 
   return (
     <Sidebar>
@@ -34,6 +40,16 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {items.map((item) => (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton asChild isActive={location === item.url}>
+                    <a href={item.url} data-testid={`link-${item.title.toLowerCase()}`}>
+                      <item.icon />
+                      <span>{item.title}</span>
+                    </a>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+              {isAdmin && adminItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild isActive={location === item.url}>
                     <a href={item.url} data-testid={`link-${item.title.toLowerCase()}`}>

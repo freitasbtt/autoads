@@ -13,6 +13,7 @@ import Campaigns from "@/pages/Campaigns";
 import Audiences from "@/pages/Audiences";
 import Integrations from "@/pages/Integrations";
 import Onboarding from "@/pages/Onboarding";
+import Admin from "@/pages/Admin";
 import Login from "@/pages/Login";
 import Register from "@/pages/Register";
 import NotFound from "@/pages/not-found";
@@ -29,6 +30,7 @@ function Router() {
       <Route path="/resources" component={Resources} />
       <Route path="/integrations" component={Integrations} />
       <Route path="/onboarding" component={Onboarding} />
+      <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
   );
