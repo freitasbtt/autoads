@@ -30,7 +30,7 @@ export function AppSidebar() {
   const [location] = useLocation();
   const { logout, user } = useAuth();
 
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user ? user.role === "system_admin" || user.role === "tenant_admin" : false;
 
   return (
     <Sidebar>

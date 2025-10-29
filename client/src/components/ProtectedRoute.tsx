@@ -1,15 +1,20 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
+import type { User } from "@shared/schema";
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  requiredRole?: "admin" | "client";
+  requiredRoles?: User["role"] | User["role"][];
 }
 
-export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) {
+export function ProtectedRoute({ children, requiredRoles }: ProtectedRouteProps) {
   const { user, isLoading } = useAuth();
   const [, setLocation] = useLocation();
+  const allowedRoles = useMemo<User["role"][] | undefined>(() => {
+    if (requiredRoles === undefined) return undefined;
+    return Array.isArray(requiredRoles) ? requiredRoles : [requiredRoles];
+  }, [requiredRoles]);
 
   useEffect(() => {
     if (!isLoading) {
@@ -18,11 +23,11 @@ export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) 
         return;
       }
 
-      if (requiredRole && user.role !== requiredRole) {
+      if (allowedRoles && !allowedRoles.includes(user.role)) {
         setLocation("/");
       }
     }
-  }, [user, isLoading, requiredRole, setLocation]);
+  }, [user, isLoading, allowedRoles, setLocation]);
 
   if (isLoading) {
     return (
@@ -36,7 +41,7 @@ export function ProtectedRoute({ children, requiredRole }: ProtectedRouteProps) 
     return null;
   }
 
-  if (requiredRole && user.role !== requiredRole) {
+  if (allowedRoles && !allowedRoles.includes(user.role)) {
     return null;
   }
 

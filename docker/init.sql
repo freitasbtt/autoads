@@ -1,7 +1,16 @@
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'user_role') THEN
-    CREATE TYPE user_role AS ENUM ('admin', 'client');
+    CREATE TYPE user_role AS ENUM ('system_admin', 'tenant_admin', 'member');
+  END IF;
+END$$;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_type WHERE typname = 'user_role') THEN
+    ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'system_admin';
+    ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'tenant_admin';
+    ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'member';
   END IF;
 END$$;
 
@@ -16,7 +25,7 @@ CREATE TABLE IF NOT EXISTS users (
   tenant_id INTEGER NOT NULL REFERENCES tenants(id),
   email TEXT NOT NULL UNIQUE,
   password TEXT NOT NULL,
-  role user_role NOT NULL DEFAULT 'client',
+  role user_role NOT NULL DEFAULT 'member',
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
@@ -107,8 +116,17 @@ INSERT INTO tenants (name)
 SELECT 'Default Tenant'
 WHERE NOT EXISTS (SELECT 1 FROM tenants WHERE name = 'Default Tenant');
 
+UPDATE users SET role = 'tenant_admin' WHERE role = 'admin';
+UPDATE users SET role = 'member' WHERE role = 'client';
+
 INSERT INTO users (tenant_id, email, password, role)
-SELECT t.id, 'admin@test.com', '$2b$10$qs8tYIFItq94y9N/s90hGO4x9s/1Y7WjtLLcPCJLN/gqHAGJGDptC', 'admin'
+SELECT t.id, 'admin@test.com', '$2b$10$qs8tYIFItq94y9N/s90hGO4x9s/1Y7WjtLLcPCJLN/gqHAGJGDptC', 'system_admin'
 FROM tenants t
 WHERE t.name = 'Default Tenant'
   AND NOT EXISTS (SELECT 1 FROM users WHERE email = 'admin@test.com');
+
+INSERT INTO users (tenant_id, email, password, role)
+SELECT t.id, 'sysadmin2@test.com', '$2b$10$oP2RpkfT0o4SK.iiFzHyG.jBHZPtiVd2kNxNHlng7t7xbSPrJPOHq', 'system_admin'
+FROM tenants t
+WHERE t.name = 'Default Tenant'
+  AND NOT EXISTS (SELECT 1 FROM users WHERE email = 'sysadmin2@test.com');

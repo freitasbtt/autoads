@@ -16,7 +16,6 @@ import Integrations from "@/pages/Integrations";
 import Onboarding from "@/pages/Onboarding";
 import Admin from "@/pages/Admin";
 import Login from "@/pages/Login";
-import Register from "@/pages/Register";
 import NotFound from "@/pages/not-found";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 
@@ -32,7 +31,7 @@ function Router() {
       <Route path="/integrations" component={Integrations} />
       <Route path="/onboarding" component={Onboarding} />
       <Route path="/admin">
-        <ProtectedRoute requiredRole="admin">
+        <ProtectedRoute requiredRoles={["system_admin", "tenant_admin"]}>
           <Admin />
         </ProtectedRoute>
       </Route>
@@ -44,7 +43,6 @@ function Router() {
 function PublicRouter() {
   return (
     <Switch>
-      <Route path="/register" component={Register} />
       <Route path="/login" component={Login} />
       <Route path="/" component={Login} />
     </Switch>

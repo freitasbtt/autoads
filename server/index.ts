@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { log } from "./logger";
 import { serveStatic } from "./serve-static";
+import type { ListenOptions } from "net";
 
 const app = express();
 
@@ -88,11 +89,17 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5000', 10);
-  server.listen({
+  const listenOptions: ListenOptions & { reusePort?: boolean } = {
     port,
     host: "0.0.0.0",
-    reusePort: true,
-  }, () => {
+  };
+
+  // Windows (>= Node 20) doesn't support SO_REUSEPORT; conditional keeps dev experience working cross-platform.
+  if (process.platform !== "win32") {
+    listenOptions.reusePort = true;
+  }
+
+  server.listen(listenOptions, () => {
     log(`serving on port ${port}`);
   });
 })();

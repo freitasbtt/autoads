@@ -39,7 +39,7 @@ export default function Login() {
     } catch (error) {
       toast({
         title: "Erro no login",
-        description: error instanceof Error ? error.message : "Credenciais inválidas",
+        description: error instanceof Error ? error.message : "Credenciais invalidas",
         variant: "destructive",
       });
     } finally {
@@ -74,7 +74,7 @@ export default function Login() {
               <Input
                 id="password"
                 type="password"
-                placeholder="••••••••"
+                placeholder="********"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 data-testid="input-password"
@@ -85,12 +85,6 @@ export default function Login() {
             <Button type="submit" className="w-full" data-testid="button-login" disabled={isLoading}>
               {isLoading ? "Entrando..." : "Entrar"}
             </Button>
-            <div className="text-center text-sm">
-              <span className="text-muted-foreground">Não tem uma conta? </span>
-              <a href="/register" className="text-primary hover:underline" data-testid="link-register">
-                Cadastre-se
-              </a>
-            </div>
           </form>
         </CardContent>
       </Card>
