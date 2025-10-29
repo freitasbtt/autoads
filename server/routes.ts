@@ -1180,6 +1180,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status: "connected",
       });
 
+      // Synchronize Google Drive folders for the tenant
+      try {
+        const folders: Array<{ id: string; name: string }> = [];
+        let pageToken: string | undefined = undefined;
+
+        do {
+          const params = new URLSearchParams({
+            q: "mimeType='application/vnd.google-apps.folder' and trashed=false",
+            fields: "nextPageToken, files(id, name)",
+            spaces: "drive",
+            pageSize: "100",
+          });
+          if (pageToken) {
+            params.set("pageToken", pageToken);
+          }
+
+          const foldersResponse = await fetch(`https://www.googleapis.com/drive/v3/files?${params.toString()}`, {
+            headers: {
+              Authorization: `Bearer ${tokenData.access_token}`,
+            },
+          });
+
+          if (!foldersResponse.ok) {
+            const errorBody = await foldersResponse.text();
+            console.error("Failed to fetch Google Drive folders:", foldersResponse.status, errorBody);
+            break;
+          }
+
+          const foldersData: any = await foldersResponse.json();
+          if (Array.isArray(foldersData.files)) {
+            folders.push(
+              ...foldersData.files
+                .filter((file: any) => Boolean(file?.id) && Boolean(file?.name))
+                .map((file: any) => ({ id: file.id as string, name: file.name as string })),
+            );
+          }
+
+          pageToken = foldersData.nextPageToken ?? undefined;
+        } while (pageToken);
+
+        // Remove previous folders for this tenant to avoid duplicates
+        const existingFolders = await storage.getResourcesByType(tenantId, "drive_folder");
+        for (const folder of existingFolders) {
+          await storage.deleteResource(folder.id);
+        }
+
+        // Persist fetched folders
+        for (const folder of folders) {
+          await storage.createResource({
+            tenantId,
+            type: "drive_folder",
+            name: folder.name,
+            value: folder.id,
+          });
+        }
+      } catch (folderSyncError) {
+        console.error("Google Drive folder sync error:", folderSyncError);
+      }
+
       // Redirect back to integrations page
       res.redirect("/integrations?oauth=success");
     } catch (err) {
