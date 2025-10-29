@@ -36,12 +36,14 @@ git clone <repository-url>
 cd <repository-name>
 ```
 
-2. Create a `.env` file (optional, for custom configuration):
+2. Create a `.env` file (required, used automatically by Docker Compose):
 ```env
-SESSION_SECRET=your-secure-session-secret
+SESSION_SECRET=generate-a-strong-random-string
 DATABASE_URL=postgresql://metaads:metaads_password@postgres:5432/metaads
 NODE_ENV=production
 PORT=5000
+PUBLIC_APP_URL=https://<your-https-domain>
+FORCE_HTTPS=true
 ```
 
 3. Start the application:
@@ -51,7 +53,7 @@ docker-compose up -d
 
 4. Access the application at `http://localhost:5000`
 
-5. Default admin credentials:
+5. Default admin credentials (seeded automatically on first start):
    - Email: `admin@test.com`
    - Password: `password`
 

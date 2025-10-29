@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { pingDatabase } from "./db";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import session from "express-session";
@@ -29,6 +30,20 @@ async function hashPassword(password: string): Promise<string> {
 
 async function verifyPassword(password: string, hash: string): Promise<boolean> {
   return await bcrypt.compare(password, hash);
+}
+
+function getPublicAppUrl(req: Express.Request): string {
+  const configured = process.env.PUBLIC_APP_URL?.trim();
+  if (configured && configured.length > 0) {
+    return configured.replace(/\/$/, "");
+  }
+
+  const host = req.get("host");
+  if (!host) {
+    throw new Error("Unable to determine host for OAuth redirects");
+  }
+
+  return `${req.protocol}://${host}`;
 }
 
 // Configure passport
@@ -88,10 +103,25 @@ function isAdmin(req: Express.Request, res: Express.Response, next: Express.Next
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  app.get("/api/health", async (_req, res) => {
+    try {
+      await pingDatabase();
+      res.json({ status: "ok" });
+    } catch (err) {
+      console.error("Health check failed", err);
+      res.status(500).json({ status: "error" });
+    }
+  });
+
+  const sessionSecret = process.env.SESSION_SECRET;
+  if (!sessionSecret || sessionSecret === "your-secret-key-change-in-production") {
+    throw new Error("SESSION_SECRET must be set to a secure value before starting the server");
+  }
+
   // Configure session
   app.use(
     session({
-      secret: process.env.SESSION_SECRET || "meta-ads-campaign-manager-secret",
+      secret: sessionSecret,
       resave: false,
       saveUninitialized: false,
       store: new MemoryStore({ checkPeriod: 86400000 }),
@@ -926,7 +956,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       });
 
-      const redirectUri = `${req.protocol}://${req.get('host')}/auth/meta/callback`;
+      const baseUrl = getPublicAppUrl(req);
+      const redirectUri = `${baseUrl}/auth/meta/callback`;
       const scope = "ads_read,pages_read_engagement,instagram_basic,whatsapp_business_management,leads_retrieval";
       
       const authUrl = `https://www.facebook.com/v18.0/dialog/oauth?` +
@@ -960,7 +991,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).send("Meta OAuth not configured");
       }
 
-      const redirectUri = `${req.protocol}://${req.get('host')}/auth/meta/callback`;
+      const baseUrl = getPublicAppUrl(req);
+      const redirectUri = `${baseUrl}/auth/meta/callback`;
 
       // Exchange code for access token
       const tokenUrl = `https://graph.facebook.com/v18.0/oauth/access_token?` +
@@ -1075,7 +1107,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       });
 
-      const redirectUri = `${req.protocol}://${req.get('host')}/auth/google/callback`;
+      const baseUrl = getPublicAppUrl(req);
+      const redirectUri = `${baseUrl}/auth/google/callback`;
       const scope = "https://www.googleapis.com/auth/drive.readonly";
       
       const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
@@ -1111,7 +1144,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).send("Google OAuth not configured");
       }
 
-      const redirectUri = `${req.protocol}://${req.get('host')}/auth/google/callback`;
+      const baseUrl = getPublicAppUrl(req);
+      const redirectUri = `${baseUrl}/auth/google/callback`;
 
       // Exchange code for access token
       const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
