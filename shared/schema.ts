@@ -4,7 +4,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Enums
-export const userRoleEnum = pgEnum("user_role", ["admin", "client"]);
+export const userRoleEnum = pgEnum("user_role", ["system_admin", "tenant_admin", "member"]);
 
 // Tenants table for multi-tenancy
 export const tenants = pgTable("tenants", {
@@ -26,7 +26,7 @@ export const users = pgTable("users", {
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
   email: text("email").notNull().unique(),
   password: text("password").notNull(),
-  role: userRoleEnum("role").notNull().default("client"),
+  role: userRoleEnum("role").notNull().default("member"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

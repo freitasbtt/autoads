@@ -20,12 +20,14 @@ import type {
 export interface IStorage {
   // Tenant operations
   getTenant(id: number): Promise<Tenant | undefined>;
+  getTenants(): Promise<Tenant[]>;
   createTenant(tenant: InsertTenant): Promise<Tenant>;
 
   // User operations
   getUser(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   getUsersByTenant(tenantId: number): Promise<User[]>;
+  getAllUsers(): Promise<User[]>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: number, user: Partial<InsertUser>): Promise<User | undefined>;
   deleteUser(id: number): Promise<boolean>;
@@ -34,21 +36,21 @@ export interface IStorage {
   getResource(id: number): Promise<Resource | undefined>;
   getResourcesByTenant(tenantId: number): Promise<Resource[]>;
   getResourcesByType(tenantId: number, type: string): Promise<Resource[]>;
-  createResource(resource: InsertResource): Promise<Resource>;
+  createResource(resource: InsertResource & { tenantId: number }): Promise<Resource>;
   updateResource(id: number, resource: Partial<InsertResource>): Promise<Resource | undefined>;
   deleteResource(id: number): Promise<boolean>;
 
   // Audience operations
   getAudience(id: number): Promise<Audience | undefined>;
   getAudiencesByTenant(tenantId: number): Promise<Audience[]>;
-  createAudience(audience: InsertAudience): Promise<Audience>;
+  createAudience(audience: InsertAudience & { tenantId: number }): Promise<Audience>;
   updateAudience(id: number, audience: Partial<InsertAudience>): Promise<Audience | undefined>;
   deleteAudience(id: number): Promise<boolean>;
 
   // Campaign operations
   getCampaign(id: number): Promise<Campaign | undefined>;
   getCampaignsByTenant(tenantId: number): Promise<Campaign[]>;
-  createCampaign(campaign: InsertCampaign): Promise<Campaign>;
+  createCampaign(campaign: InsertCampaign & { tenantId: number }): Promise<Campaign>;
   updateCampaign(id: number, campaign: Partial<InsertCampaign>): Promise<Campaign | undefined>;
   deleteCampaign(id: number): Promise<boolean>;
 
@@ -56,7 +58,7 @@ export interface IStorage {
   getIntegration(id: number): Promise<Integration | undefined>;
   getIntegrationsByTenant(tenantId: number): Promise<Integration[]>;
   getIntegrationByProvider(tenantId: number, provider: string): Promise<Integration | undefined>;
-  createIntegration(integration: InsertIntegration): Promise<Integration>;
+  createIntegration(integration: InsertIntegration & { tenantId: number }): Promise<Integration>;
   updateIntegration(id: number, integration: Partial<InsertIntegration>): Promise<Integration | undefined>;
   deleteIntegration(id: number): Promise<boolean>;
 
@@ -64,7 +66,7 @@ export interface IStorage {
   getAutomation(id: number): Promise<Automation | undefined>;
   getAutomationsByTenant(tenantId: number): Promise<Automation[]>;
   getAutomationsByCampaign(campaignId: number): Promise<Automation[]>;
-  createAutomation(automation: InsertAutomation): Promise<Automation>;
+  createAutomation(automation: InsertAutomation & { tenantId: number }): Promise<Automation>;
   updateAutomation(id: number, automation: Partial<InsertAutomation>): Promise<Automation | undefined>;
 
   // App Settings operations (admin only)
@@ -99,6 +101,10 @@ export class MemStorage implements IStorage {
     return this.tenants.get(id);
   }
 
+  async getTenants(): Promise<Tenant[]> {
+    return Array.from(this.tenants.values());
+  }
+
   async createTenant(insertTenant: InsertTenant): Promise<Tenant> {
     const id = this.nextId++;
     const tenant: Tenant = {
@@ -123,10 +129,15 @@ export class MemStorage implements IStorage {
     return Array.from(this.users.values()).filter((user) => user.tenantId === tenantId);
   }
 
+  async getAllUsers(): Promise<User[]> {
+    return Array.from(this.users.values());
+  }
+
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = this.nextId++;
     const user: User = {
       ...insertUser,
+      role: insertUser.role ?? "member",
       id,
       createdAt: new Date(),
     };
@@ -161,7 +172,7 @@ export class MemStorage implements IStorage {
     );
   }
 
-  async createResource(insertResource: InsertResource): Promise<Resource> {
+  async createResource(insertResource: InsertResource & { tenantId: number }): Promise<Resource> {
     const id = this.nextId++;
     const resource: Resource = {
       ...insertResource,
@@ -193,7 +204,7 @@ export class MemStorage implements IStorage {
     return Array.from(this.audiences.values()).filter((a) => a.tenantId === tenantId);
   }
 
-  async createAudience(insertAudience: InsertAudience): Promise<Audience> {
+  async createAudience(insertAudience: InsertAudience & { tenantId: number }): Promise<Audience> {
     const id = this.nextId++;
     const audience: Audience = {
       ...insertAudience,
@@ -231,18 +242,23 @@ export class MemStorage implements IStorage {
     return Array.from(this.campaigns.values()).filter((c) => c.tenantId === tenantId);
   }
 
-  async createCampaign(insertCampaign: InsertCampaign): Promise<Campaign> {
+  async createCampaign(insertCampaign: InsertCampaign & { tenantId: number }): Promise<Campaign> {
     const id = this.nextId++;
     const campaign: Campaign = {
       ...insertCampaign,
       id,
       status: insertCampaign.status || "draft",
+      statusDetail: insertCampaign.statusDetail ?? null,
       accountId: insertCampaign.accountId ?? null,
       pageId: insertCampaign.pageId ?? null,
       instagramId: insertCampaign.instagramId ?? null,
       whatsappId: insertCampaign.whatsappId ?? null,
       leadformId: insertCampaign.leadformId ?? null,
       websiteUrl: insertCampaign.websiteUrl ?? null,
+      adSets: insertCampaign.adSets ?? null,
+      creatives: insertCampaign.creatives ?? null,
+      budget: insertCampaign.budget ?? null,
+      audienceIds: insertCampaign.audienceIds ?? null,
       title: insertCampaign.title ?? null,
       message: insertCampaign.message ?? null,
       driveFolderId: insertCampaign.driveFolderId ?? null,
@@ -282,7 +298,9 @@ export class MemStorage implements IStorage {
     );
   }
 
-  async createIntegration(insertIntegration: InsertIntegration): Promise<Integration> {
+  async createIntegration(
+    insertIntegration: InsertIntegration & { tenantId: number }
+  ): Promise<Integration> {
     const id = this.nextId++;
     const integration: Integration = {
       ...insertIntegration,
@@ -324,7 +342,7 @@ export class MemStorage implements IStorage {
     return Array.from(this.automations.values()).filter((a) => a.campaignId === campaignId);
   }
 
-  async createAutomation(insertAutomation: InsertAutomation): Promise<Automation> {
+  async createAutomation(insertAutomation: InsertAutomation & { tenantId: number }): Promise<Automation> {
     const id = this.nextId++;
     const automation: Automation = {
       ...insertAutomation,
@@ -396,6 +414,10 @@ export class DbStorage implements IStorage {
     return result;
   }
 
+  async getTenants(): Promise<Tenant[]> {
+    return db.query.tenants.findMany();
+  }
+
   async createTenant(insertTenant: InsertTenant): Promise<Tenant> {
     const [tenant] = await db.insert(schema.tenants).values(insertTenant).returning();
     return tenant;
@@ -422,8 +444,13 @@ export class DbStorage implements IStorage {
     });
   }
 
+  async getAllUsers(): Promise<User[]> {
+    return db.query.users.findMany();
+  }
+
   async createUser(insertUser: InsertUser): Promise<User> {
-    const [user] = await db.insert(schema.users).values(insertUser).returning();
+    const values = { ...insertUser, role: insertUser.role ?? "member" };
+    const [user] = await db.insert(schema.users).values(values).returning();
     return user;
   }
 
@@ -461,7 +488,7 @@ export class DbStorage implements IStorage {
     });
   }
 
-  async createResource(insertResource: InsertResource): Promise<Resource> {
+  async createResource(insertResource: InsertResource & { tenantId: number }): Promise<Resource> {
     const [resource] = await db.insert(schema.resources).values(insertResource).returning();
     return resource;
   }
@@ -497,7 +524,9 @@ export class DbStorage implements IStorage {
     });
   }
 
-  async createAudience(insertAudience: InsertAudience): Promise<Audience> {
+  async createAudience(
+    insertAudience: InsertAudience & { tenantId: number }
+  ): Promise<Audience> {
     const [audience] = await db.insert(schema.audiences).values(insertAudience).returning();
     return audience;
   }
@@ -533,8 +562,30 @@ export class DbStorage implements IStorage {
     });
   }
 
-  async createCampaign(insertCampaign: InsertCampaign): Promise<Campaign> {
-    const [campaign] = await db.insert(schema.campaigns).values(insertCampaign).returning();
+  async createCampaign(
+    insertCampaign: InsertCampaign & { tenantId: number }
+  ): Promise<Campaign> {
+    const values = {
+      ...insertCampaign,
+      status: insertCampaign.status ?? "draft",
+      statusDetail: insertCampaign.statusDetail ?? null,
+      accountId: insertCampaign.accountId ?? null,
+      pageId: insertCampaign.pageId ?? null,
+      instagramId: insertCampaign.instagramId ?? null,
+      whatsappId: insertCampaign.whatsappId ?? null,
+      leadformId: insertCampaign.leadformId ?? null,
+      websiteUrl: insertCampaign.websiteUrl ?? null,
+      adSets: insertCampaign.adSets ?? null,
+      creatives: insertCampaign.creatives ?? null,
+      budget: insertCampaign.budget ?? null,
+      audienceIds: insertCampaign.audienceIds ?? null,
+      title: insertCampaign.title ?? null,
+      message: insertCampaign.message ?? null,
+      driveFolderId: insertCampaign.driveFolderId ?? null,
+      startTime: insertCampaign.startTime ?? null,
+      endTime: insertCampaign.endTime ?? null,
+    };
+    const [campaign] = await db.insert(schema.campaigns).values(values).returning();
     return campaign;
   }
 
@@ -583,10 +634,16 @@ export class DbStorage implements IStorage {
     return result;
   }
 
-  async createIntegration(insertIntegration: InsertIntegration): Promise<Integration> {
+  async createIntegration(
+    insertIntegration: InsertIntegration & { tenantId: number }
+  ): Promise<Integration> {
+    const values = {
+      ...insertIntegration,
+      status: insertIntegration.status ?? "pending",
+    };
     const [integration] = await db
       .insert(schema.integrations)
-      .values(insertIntegration)
+      .values(values)
       .returning();
     return integration;
   }
@@ -629,10 +686,16 @@ export class DbStorage implements IStorage {
     });
   }
 
-  async createAutomation(insertAutomation: InsertAutomation): Promise<Automation> {
+  async createAutomation(
+    insertAutomation: InsertAutomation & { tenantId: number }
+  ): Promise<Automation> {
+    const values = {
+      ...insertAutomation,
+      status: insertAutomation.status ?? "pending",
+    };
     const [automation] = await db
       .insert(schema.automations)
-      .values(insertAutomation)
+      .values(values)
       .returning();
     return automation;
   }

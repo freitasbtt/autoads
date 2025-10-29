@@ -1,4 +1,3 @@
-import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { pingDatabase } from "./db";
@@ -7,8 +6,23 @@ import { Strategy as LocalStrategy } from "passport-local";
 import session from "express-session";
 import memorystore from "memorystore";
 import { z } from "zod";
-import type { User } from "@shared/schema";
-import { insertUserSchema, insertResourceSchema, insertAudienceSchema, insertCampaignSchema, insertIntegrationSchema } from "@shared/schema";
+import type { Express, NextFunction, Request, Response } from "express";
+import type {
+  InsertAudience,
+  InsertAutomation,
+  InsertCampaign,
+  InsertIntegration,
+  InsertResource,
+  InsertUser,
+  User,
+} from "@shared/schema";
+import {
+  insertUserSchema,
+  insertResourceSchema,
+  insertAudienceSchema,
+  insertCampaignSchema,
+  insertIntegrationSchema,
+} from "@shared/schema";
 import crypto from "crypto";
 
 // Extend session data to include OAuth state
@@ -32,7 +46,17 @@ async function verifyPassword(password: string, hash: string): Promise<boolean> 
   return await bcrypt.compare(password, hash);
 }
 
-function getPublicAppUrl(req: Express.Request): string {
+const ADMIN_ROLES = new Set<User["role"]>(["system_admin", "tenant_admin"]);
+
+function isAdminRole(role: User["role"]): boolean {
+  return ADMIN_ROLES.has(role);
+}
+
+function isSystemAdminRole(role: User["role"]): boolean {
+  return role === "system_admin";
+}
+
+function getPublicAppUrl(req: Request): string {
   const configured = process.env.PUBLIC_APP_URL?.trim();
   if (configured && configured.length > 0) {
     return configured.replace(/\/$/, "");
@@ -84,7 +108,7 @@ passport.deserializeUser(async (id: number, done) => {
 });
 
 // Middleware to check authentication
-function isAuthenticated(req: Express.Request, res: Express.Response, next: Express.NextFunction) {
+function isAuthenticated(req: Request, res: Response, next: NextFunction) {
   if (req.isAuthenticated()) {
     return next();
   }
@@ -92,14 +116,24 @@ function isAuthenticated(req: Express.Request, res: Express.Response, next: Expr
 }
 
 // Middleware to check if user is admin
-function isAdmin(req: Express.Request, res: Express.Response, next: Express.NextFunction) {
+function isAdmin(req: Request, res: Response, next: NextFunction) {
   if (req.isAuthenticated()) {
     const user = req.user as User;
-    if (user.role === "admin") {
+    if (isAdminRole(user.role)) {
       return next();
     }
   }
   res.status(403).json({ message: "Forbidden - Admin access required" });
+}
+
+function isSystemAdmin(req: Request, res: Response, next: NextFunction) {
+  if (req.isAuthenticated()) {
+    const user = req.user as User;
+    if (isSystemAdminRole(user.role)) {
+      return next();
+    }
+  }
+  res.status(403).json({ message: "Forbidden - System admin access required" });
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -194,11 +228,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.user as User;
       const data = insertResourceSchema.parse(req.body);
-      
-      const resource = await storage.createResource({
+      const resourceValues: InsertResource & { tenantId: number } = {
         ...data,
         tenantId: user.tenantId,
-      });
+      };
+      const resource = await storage.createResource(resourceValues);
 
       res.status(201).json(resource);
     } catch (err) {
@@ -219,8 +253,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Prevent tenantId override
-      const { tenantId, ...data } = insertResourceSchema.partial().parse(req.body);
-      
+      const data = insertResourceSchema.partial().parse(req.body);
       const resource = await storage.updateResource(id, data);
       res.json(resource);
     } catch (err) {
@@ -282,11 +315,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.user as User;
       const data = insertAudienceSchema.parse(req.body);
-      
-      const audience = await storage.createAudience({
+      const audienceValues: InsertAudience & { tenantId: number } = {
         ...data,
         tenantId: user.tenantId,
-      });
+      };
+      const audience = await storage.createAudience(audienceValues);
 
       res.status(201).json(audience);
     } catch (err) {
@@ -307,8 +340,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Prevent tenantId override
-      const { tenantId, ...data } = insertAudienceSchema.partial().parse(req.body);
-      
+      const data = insertAudienceSchema.partial().parse(req.body);
       const audience = await storage.updateAudience(id, data);
       res.json(audience);
     } catch (err) {
@@ -372,11 +404,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const data = insertCampaignSchema.parse(req.body);
       
       // Always create campaigns as draft - webhook will be sent manually via send-webhook endpoint
-      const campaign = await storage.createCampaign({
+      const campaignValues: InsertCampaign & { tenantId: number } = {
         ...data,
         tenantId: user.tenantId,
         status: "draft", // Explicitly set to draft
-      });
+      };
+      const campaign = await storage.createCampaign(campaignValues);
 
       res.status(201).json(campaign);
     } catch (err) {
@@ -397,9 +430,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Prevent tenantId override
-      const { tenantId, ...data } = insertCampaignSchema.partial().parse(req.body);
-      
-      const campaign = await storage.updateCampaign(id, data);
+      const data = insertCampaignSchema.partial().parse(req.body);
+      const campaign = await storage.updateCampaign(id, { ...data });
       res.json(campaign);
     } catch (err) {
       next(err);
@@ -708,7 +740,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.user as User;
       
       // Prevent tenantId override in create/update
-      const { tenantId, ...bodyData } = insertIntegrationSchema.parse(req.body);
+      const bodyData = insertIntegrationSchema.parse(req.body);
       
       // Check if integration already exists
       const existing = await storage.getIntegrationByProvider(user.tenantId, bodyData.provider);
@@ -720,10 +752,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Create new
-      const integration = await storage.createIntegration({
+      const integrationValues: InsertIntegration & { tenantId: number } = {
         ...bodyData,
         tenantId: user.tenantId,
-      });
+      };
+      const integration = await storage.createIntegration(integrationValues);
 
       res.status(201).json(integration);
     } catch (err) {
@@ -753,7 +786,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ====== Admin Settings Routes (admin only) ======
 
   // Get app settings
-  app.get("/api/admin/settings", isAdmin, async (req, res, next) => {
+  app.get("/api/admin/settings", isSystemAdmin, async (req, res, next) => {
     try {
       const settings = await storage.getAppSettings();
       // Never expose secrets to frontend
@@ -776,7 +809,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update app settings
-  app.put("/api/admin/settings", isAdmin, async (req, res, next) => {
+  app.put("/api/admin/settings", isSystemAdmin, async (req, res, next) => {
     try {
       const settings = await storage.updateAppSettings(req.body);
       
@@ -801,19 +834,52 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ====== User Management Routes (admin only) ======
 
-  // List all users (admin only)
+  // List tenants (system admin only)
+  app.get("/api/admin/tenants", isSystemAdmin, async (_req, res, next) => {
+    try {
+      const tenants = await storage.getTenants();
+      res.json(tenants);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // List users (admin only)
   app.get("/api/admin/users", isAdmin, async (req, res, next) => {
     try {
-      const user = req.user as User;
-      // Get all users from the admin's tenant
-      const users = await storage.getUsersByTenant(user.tenantId);
-      
-      // Remove passwords from response
-      const usersWithoutPasswords = users.map(u => {
+      const currentUser = req.user as User;
+      const tenantIdParam = req.query.tenantId ? Number(req.query.tenantId) : undefined;
+
+      if (tenantIdParam !== undefined && Number.isNaN(tenantIdParam)) {
+        return res.status(400).json({ message: "Invalid tenantId" });
+      }
+
+      const tenants = await storage.getTenants();
+      const tenantMap = new Map(tenants.map((tenant) => [tenant.id, tenant.name]));
+
+      let users: User[];
+      if (isSystemAdminRole(currentUser.role)) {
+        if (tenantIdParam !== undefined) {
+          const tenantExists = tenantMap.has(tenantIdParam);
+          if (!tenantExists) {
+            return res.status(404).json({ message: "Tenant not found" });
+          }
+          users = await storage.getUsersByTenant(tenantIdParam);
+        } else {
+          users = await storage.getAllUsers();
+        }
+      } else {
+        users = await storage.getUsersByTenant(currentUser.tenantId);
+      }
+
+      const usersWithoutPasswords = users.map((u) => {
         const { password: _, ...userWithoutPassword } = u;
-        return userWithoutPassword;
+        return {
+          ...userWithoutPassword,
+          tenantName: tenantMap.get(u.tenantId) ?? null,
+        };
       });
-      
+
       res.json(usersWithoutPasswords);
     } catch (err) {
       next(err);
@@ -823,34 +889,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create new user (admin only)
   app.post("/api/admin/users", isAdmin, async (req, res, next) => {
     try {
-      const user = req.user as User;
-      
+      const currentUser = req.user as User;
+
       const createUserSchema = z.object({
         email: z.string().email(),
         password: z.string().min(6),
-        role: z.enum(["admin", "client"]),
+        role: z.enum(["system_admin", "tenant_admin", "member"]),
+        tenantId: z.number().int().positive().optional(),
+        tenantName: z.string().min(2).optional(),
       });
 
       const data = createUserSchema.parse(req.body);
 
-      // Check if user already exists
+      if (!isSystemAdminRole(currentUser.role) && data.role === "system_admin") {
+        return res.status(403).json({ message: "Only system admins can create other system admins" });
+      }
+
       const existingUser = await storage.getUserByEmail(data.email);
       if (existingUser) {
         return res.status(400).json({ message: "User with this email already exists" });
       }
 
-      // Hash password and create user in admin's tenant
+      let targetTenantId: number;
+      let tenantName: string | null = null;
+
+      if (isSystemAdminRole(currentUser.role)) {
+        if (data.tenantId && data.tenantName) {
+          return res.status(400).json({ message: "Provide either tenantId or tenantName, not both" });
+        }
+
+        if (data.tenantId) {
+          const tenant = await storage.getTenant(data.tenantId);
+          if (!tenant) {
+            return res.status(404).json({ message: "Tenant not found" });
+          }
+          targetTenantId = tenant.id;
+          tenantName = tenant.name;
+        } else if (data.tenantName) {
+          const tenant = await storage.createTenant({ name: data.tenantName });
+          targetTenantId = tenant.id;
+          tenantName = tenant.name;
+        } else {
+          return res.status(400).json({ message: "tenantId or tenantName must be provided" });
+        }
+      } else {
+        targetTenantId = currentUser.tenantId;
+        const tenant = await storage.getTenant(targetTenantId);
+        tenantName = tenant?.name ?? null;
+      }
+
       const hashedPassword = await hashPassword(data.password);
       const newUser = await storage.createUser({
         email: data.email,
         password: hashedPassword,
-        tenantId: user.tenantId,
+        tenantId: targetTenantId,
         role: data.role,
       });
 
-      // Remove password from response
       const { password: _, ...userWithoutPassword } = newUser;
-      res.status(201).json(userWithoutPassword);
+      res.status(201).json({
+        ...userWithoutPassword,
+        tenantName,
+      });
     } catch (err) {
       next(err);
     }
@@ -859,24 +959,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Update user (admin only)
   app.patch("/api/admin/users/:id", isAdmin, async (req, res, next) => {
     try {
-      const user = req.user as User;
+      const currentUser = req.user as User;
       const userId = parseInt(req.params.id);
 
       const updateUserSchema = z.object({
         email: z.string().email().optional(),
         password: z.string().min(6).optional(),
-        role: z.enum(["admin", "client"]).optional(),
+        role: z.enum(["system_admin", "tenant_admin", "member"]).optional(),
+        tenantId: z.number().int().positive().optional(),
+        tenantName: z.string().min(2).optional(),
       });
 
       const data = updateUserSchema.parse(req.body);
 
-      // Get existing user to verify tenant
       const existingUser = await storage.getUser(userId);
-      if (!existingUser || existingUser.tenantId !== user.tenantId) {
+      if (!existingUser) {
         return res.status(404).json({ message: "User not found" });
       }
 
-      // If email is being changed, check it's not already taken
+      if (!isSystemAdminRole(currentUser.role) && existingUser.tenantId !== currentUser.tenantId) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      if (!isSystemAdminRole(currentUser.role) && data.role === "system_admin") {
+        return res.status(403).json({ message: "Only system admins can grant system admin role" });
+      }
+
+      if (!isSystemAdminRole(currentUser.role) && (data.tenantId || data.tenantName)) {
+        return res.status(403).json({ message: "Only system admins can reassign tenants" });
+      }
+
       if (data.email && data.email !== existingUser.email) {
         const emailTaken = await storage.getUserByEmail(data.email);
         if (emailTaken) {
@@ -884,19 +996,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Hash password if being updated
-      const updateData: any = {};
+      let updatedTenantId = existingUser.tenantId;
+      let tenantName: string | null = null;
+
+      if (isSystemAdminRole(currentUser.role)) {
+        if (data.tenantId && data.tenantName) {
+          return res.status(400).json({ message: "Provide either tenantId or tenantName, not both" });
+        }
+
+        if (data.tenantId) {
+          const tenant = await storage.getTenant(data.tenantId);
+          if (!tenant) {
+            return res.status(404).json({ message: "Tenant not found" });
+          }
+          updatedTenantId = tenant.id;
+          tenantName = tenant.name;
+        } else if (data.tenantName) {
+          const tenant = await storage.createTenant({ name: data.tenantName });
+          updatedTenantId = tenant.id;
+          tenantName = tenant.name;
+        } else {
+          const tenant = await storage.getTenant(updatedTenantId);
+          tenantName = tenant?.name ?? null;
+        }
+      } else {
+        const tenant = await storage.getTenant(updatedTenantId);
+        tenantName = tenant?.name ?? null;
+      }
+
+      const updateData: Partial<InsertUser> = {};
       if (data.email) updateData.email = data.email;
       if (data.role) updateData.role = data.role;
       if (data.password) {
         updateData.password = await hashPassword(data.password);
       }
+      if (updatedTenantId !== existingUser.tenantId) {
+        updateData.tenantId = updatedTenantId;
+      }
 
       const updatedUser = await storage.updateUser(userId, updateData);
-      
-      // Remove password from response
+      if (!updatedUser) {
+        return res.status(500).json({ message: "Failed to update user" });
+      }
+
       const { password: _, ...userWithoutPassword } = updatedUser;
-      res.json(userWithoutPassword);
+      res.json({
+        ...userWithoutPassword,
+        tenantName,
+      });
     } catch (err) {
       next(err);
     }
@@ -905,18 +1052,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Delete user (admin only)
   app.delete("/api/admin/users/:id", isAdmin, async (req, res, next) => {
     try {
-      const user = req.user as User;
+      const currentUser = req.user as User;
       const userId = parseInt(req.params.id);
 
-      // Get existing user to verify tenant
       const existingUser = await storage.getUser(userId);
-      if (!existingUser || existingUser.tenantId !== user.tenantId) {
+      if (!existingUser) {
         return res.status(404).json({ message: "User not found" });
       }
 
-      // Prevent admin from deleting themselves
-      if (userId === user.id) {
+      if (!isSystemAdminRole(currentUser.role) && existingUser.tenantId !== currentUser.tenantId) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      if (userId === currentUser.id) {
         return res.status(400).json({ message: "Cannot delete your own account" });
+      }
+
+      if (!isSystemAdminRole(currentUser.role) && isSystemAdminRole(existingUser.role)) {
+        return res.status(403).json({ message: "Only system admins can remove other system admins" });
       }
 
       await storage.deleteUser(userId);
@@ -1024,12 +1177,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Save ad accounts
       if (accountsData.data && accountsData.data.length > 0) {
         for (const account of accountsData.data) {
-          await storage.createResource({
+          const accountResource: InsertResource & { tenantId: number } = {
             tenantId,
             type: "account",
             name: account.name || "Ad Account",
             value: account.id,
-          });
+          };
+          await storage.createResource(accountResource);
         }
       }
 
@@ -1045,22 +1199,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Save pages and Instagram accounts
       if (pagesData.data && pagesData.data.length > 0) {
         for (const page of pagesData.data) {
-          // Save page
-          await storage.createResource({
+          const pageResource: InsertResource & { tenantId: number } = {
             tenantId,
             type: "page",
             name: page.name || "Facebook Page",
             value: page.id,
-          });
+          };
+          await storage.createResource(pageResource);
 
-          // Save Instagram account if connected
           if (page.instagram_business_account?.id) {
-            await storage.createResource({
+            const instagramResource: InsertResource & { tenantId: number } = {
               tenantId,
               type: "instagram",
               name: `Instagram - ${page.name}`,
               value: page.instagram_business_account.id,
-            });
+            };
+            await storage.createResource(instagramResource);
           }
         }
       }
@@ -1069,12 +1223,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // This requires additional API calls with specific permissions
 
       // Save access token in integrations table for future use
-      await storage.createIntegration({
+      const metaIntegration: InsertIntegration & { tenantId: number } = {
         tenantId,
         provider: "Meta",
         config: { accessToken, tokenType: tokenData.token_type },
         status: "connected",
-      });
+      };
+      await storage.createIntegration(metaIntegration);
 
       // Redirect back to resources page
       res.redirect("/resources?oauth=success");
@@ -1168,17 +1323,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Save access token in integrations table
-      await storage.createIntegration({
+      const googleIntegration: InsertIntegration & { tenantId: number } = {
         tenantId,
         provider: "Google Drive",
-        config: { 
+        config: {
           accessToken: tokenData.access_token,
           refreshToken: tokenData.refresh_token,
           tokenType: tokenData.token_type,
           expiresIn: tokenData.expires_in,
         },
         status: "connected",
-      });
+      };
+      await storage.createIntegration(googleIntegration);
 
       // Redirect back to integrations page
       res.redirect("/integrations?oauth=success");

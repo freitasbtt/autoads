@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,67 +23,199 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Plus, Edit, Trash2 } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
+import type { Tenant } from "@shared/schema";
 
-interface User {
+type UserRole = "system_admin" | "tenant_admin" | "member";
+
+interface AdminUser {
   id: number;
   email: string;
-  role: "admin" | "client";
+  role: UserRole;
   tenantId: number;
+  tenantName: string | null;
   createdAt: string;
+}
+
+type FormState = {
+  email: string;
+  password: string;
+  role: UserRole;
+};
+
+type CreateUserPayload = {
+  email: string;
+  password: string;
+  role: UserRole;
+  tenantId?: number;
+  tenantName?: string;
+};
+
+type UpdateUserPayload = Partial<Omit<CreateUserPayload, "password">> & {
+  password?: string;
+};
+
+const roleLabels: Record<UserRole, string> = {
+  system_admin: "Admin do Sistema",
+  tenant_admin: "Admin do Cliente",
+  member: "Colaborador",
+};
+
+const roleBadgeVariants: Record<UserRole, "default" | "secondary" | "outline"> = {
+  system_admin: "default",
+  tenant_admin: "secondary",
+  member: "outline",
+};
+
+async function throwIfNotOk(res: Response): Promise<void> {
+  if (!res.ok) {
+    const text = (await res.text()) || res.statusText;
+    throw new Error(text);
+  }
 }
 
 export default function UserManagement() {
   const { toast } = useToast();
+  const { user: currentUser } = useAuth();
+  const isSystemAdmin = currentUser?.role === "system_admin";
+  const defaultRole: UserRole = isSystemAdmin ? "tenant_admin" : "member";
+
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<User | null>(null);
-  const [formData, setFormData] = useState({
+  const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
+  const [formData, setFormData] = useState<FormState>({
     email: "",
     password: "",
-    role: "client" as "admin" | "client",
+    role: defaultRole,
+  });
+  const [createTenantChoice, setCreateTenantChoice] = useState<"existing" | "new">("existing");
+  const [createTenantId, setCreateTenantId] = useState<string>("");
+  const [createTenantName, setCreateTenantName] = useState("");
+  const [editTenantChoice, setEditTenantChoice] = useState<"existing" | "new">("existing");
+  const [editTenantId, setEditTenantId] = useState<string>("");
+  const [editTenantName, setEditTenantName] = useState("");
+  const [selectedTenantFilter, setSelectedTenantFilter] = useState<string>("all");
+
+  const roleOptions = useMemo<UserRole[]>(
+    () => (isSystemAdmin ? ["system_admin", "tenant_admin", "member"] : ["tenant_admin", "member"]),
+    [isSystemAdmin]
+  );
+
+  const { data: tenants = [] } = useQuery<Tenant[]>({
+    queryKey: ["/api/admin/tenants"],
+    enabled: isSystemAdmin,
   });
 
-  const { data: users = [], isLoading } = useQuery<User[]>({
-    queryKey: ["/api/admin/users"],
+  useEffect(() => {
+    if (!isSystemAdmin || createTenantChoice === "new") {
+      return;
+    }
+    if (tenants.length === 0) {
+      setCreateTenantChoice("new");
+      setCreateTenantId("");
+      return;
+    }
+    if (!createTenantId) {
+      const defaultTenantId =
+        selectedTenantFilter !== "all" && selectedTenantFilter
+          ? selectedTenantFilter
+          : String(tenants[0].id);
+      setCreateTenantId(defaultTenantId);
+    }
+  }, [isSystemAdmin, tenants, createTenantChoice, createTenantId, selectedTenantFilter]);
+
+  const {
+    data: users = [],
+    isLoading,
+  } = useQuery<AdminUser[]>({
+    queryKey: ["adminUsers", isSystemAdmin ? selectedTenantFilter : currentUser?.tenantId ?? "self"],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (isSystemAdmin && selectedTenantFilter !== "all") {
+        params.set("tenantId", selectedTenantFilter);
+      }
+      const query = params.toString();
+      const res = await fetch(`/api/admin/users${query ? `?${query}` : ""}`, {
+        credentials: "include",
+      });
+      await throwIfNotOk(res);
+      return await res.json();
+    },
   });
+
+  const resetForm = () => {
+    setFormData({
+      email: "",
+      password: "",
+      role: defaultRole,
+    });
+    setSelectedUser(null);
+    setCreateTenantName("");
+    setCreateTenantChoice("existing");
+    setEditTenantChoice("existing");
+    setEditTenantId("");
+    setEditTenantName("");
+  if (isSystemAdmin) {
+      if (tenants.length > 0) {
+        const defaultTenantId =
+          selectedTenantFilter !== "all" && selectedTenantFilter
+            ? selectedTenantFilter
+            : String(tenants[0].id);
+        setCreateTenantChoice("existing");
+        setCreateTenantId(defaultTenantId);
+      } else {
+        setCreateTenantChoice("new");
+        setCreateTenantId("");
+      }
+    } else {
+      setCreateTenantChoice("existing");
+      setCreateTenantId("");
+    }
+  };
+
+  const openCreateDialog = () => {
+    resetForm();
+    setIsCreateDialogOpen(true);
+  };
 
   const createMutation = useMutation({
-    mutationFn: (data: typeof formData) =>
-      apiRequest("POST", "/api/admin/users", data),
+    mutationFn: (payload: CreateUserPayload) => apiRequest("POST", "/api/admin/users", payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: ["adminUsers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/tenants"] });
       toast({
-        title: "Usuário criado",
-        description: "O usuário foi criado com sucesso.",
+        title: "Usuario criado",
+        description: "O usuario foi criado com sucesso.",
       });
       setIsCreateDialogOpen(false);
       resetForm();
     },
     onError: (error: any) => {
       toast({
-        title: "Erro ao criar usuário",
-        description: error.message || "Não foi possível criar o usuário.",
+        title: "Erro ao criar usuario",
+        description: error?.message || "Nao foi possivel criar o usuario.",
         variant: "destructive",
       });
     },
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }: { id: number; data: Partial<typeof formData> }) =>
+    mutationFn: ({ id, data }: { id: number; data: UpdateUserPayload }) =>
       apiRequest("PATCH", `/api/admin/users/${id}`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: ["adminUsers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/tenants"] });
       toast({
-        title: "Usuário atualizado",
-        description: "O usuário foi atualizado com sucesso.",
+        title: "Usuario atualizado",
+        description: "O usuario foi atualizado com sucesso.",
       });
       setIsEditDialogOpen(false);
       resetForm();
     },
     onError: (error: any) => {
       toast({
-        title: "Erro ao atualizar usuário",
-        description: error.message || "Não foi possível atualizar o usuário.",
+        title: "Erro ao atualizar usuario",
+        description: error?.message || "Nao foi possivel atualizar o usuario.",
         variant: "destructive",
       });
     },
@@ -92,63 +224,126 @@ export default function UserManagement() {
   const deleteMutation = useMutation({
     mutationFn: (id: number) => apiRequest("DELETE", `/api/admin/users/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+      queryClient.invalidateQueries({ queryKey: ["adminUsers"] });
       toast({
-        title: "Usuário excluído",
-        description: "O usuário foi removido com sucesso.",
+        title: "Usuario removido",
+        description: "O usuario foi removido com sucesso.",
       });
     },
     onError: (error: any) => {
       toast({
-        title: "Erro ao excluir usuário",
-        description: error.message || "Não foi possível excluir o usuário.",
+        title: "Erro ao remover usuario",
+        description: error?.message || "Nao foi possivel remover o usuario.",
         variant: "destructive",
       });
     },
   });
 
-  const resetForm = () => {
-    setFormData({
-      email: "",
-      password: "",
-      role: "client",
-    });
-    setSelectedUser(null);
-  };
-
   const handleCreate = () => {
     if (!formData.email || !formData.password) {
       toast({
-        title: "Campos obrigatórios",
-        description: "Email e senha são obrigatórios.",
+        title: "Campos obrigatorios",
+        description: "Email e senha sao obrigatorios.",
         variant: "destructive",
       });
       return;
     }
-    createMutation.mutate(formData);
+
+    const payload: CreateUserPayload = {
+      email: formData.email,
+      password: formData.password,
+      role: formData.role,
+    };
+
+    if (isSystemAdmin) {
+      if (createTenantChoice === "existing") {
+        if (!createTenantId) {
+          toast({
+            title: "Selecione um cliente",
+            description: "Escolha um cliente existente ou crie um novo.",
+            variant: "destructive",
+          });
+          return;
+        }
+        payload.tenantId = Number(createTenantId);
+      } else {
+        const trimmed = createTenantName.trim();
+        if (!trimmed) {
+          toast({
+            title: "Nome do cliente obrigatorio",
+            description: "Informe um nome para o novo cliente.",
+            variant: "destructive",
+          });
+          return;
+        }
+        payload.tenantName = trimmed;
+      }
+    }
+
+    createMutation.mutate(payload);
   };
 
-  const handleEdit = (user: User) => {
+  const handleEdit = (user: AdminUser) => {
     setSelectedUser(user);
     setFormData({
       email: user.email,
       password: "",
       role: user.role,
     });
+    setEditTenantChoice("existing");
+    setEditTenantId(String(user.tenantId));
+    setEditTenantName("");
     setIsEditDialogOpen(true);
   };
 
   const handleUpdate = () => {
     if (!selectedUser) return;
-    
-    const updates: Partial<typeof formData> = {};
+
+    if (!formData.email) {
+      toast({
+        title: "Email obrigatorio",
+        description: "Informe um email valido.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const updates: UpdateUserPayload = {};
     if (formData.email !== selectedUser.email) updates.email = formData.email;
     if (formData.password) updates.password = formData.password;
     if (formData.role !== selectedUser.role) updates.role = formData.role;
 
+    if (isSystemAdmin) {
+      if (editTenantChoice === "existing") {
+        if (!editTenantId) {
+          toast({
+            title: "Selecione um cliente",
+            description: "Escolha um cliente existente ou crie um novo.",
+            variant: "destructive",
+          });
+          return;
+        }
+        const tenantIdNumber = Number(editTenantId);
+        if (tenantIdNumber !== selectedUser.tenantId) {
+          updates.tenantId = tenantIdNumber;
+        }
+      } else {
+        const trimmed = editTenantName.trim();
+        if (!trimmed) {
+          toast({
+            title: "Nome do cliente obrigatorio",
+            description: "Informe um nome para o novo cliente.",
+            variant: "destructive",
+          });
+          return;
+        }
+        updates.tenantName = trimmed;
+      }
+    }
+
     if (Object.keys(updates).length === 0) {
       toast({
-        title: "Nenhuma alteração",
+        title: "Nenhuma alteracao",
         description: "Nenhum campo foi modificado.",
         variant: "destructive",
       });
@@ -159,40 +354,65 @@ export default function UserManagement() {
   };
 
   const handleDelete = (userId: number) => {
-    if (confirm("Tem certeza que deseja excluir este usuário?")) {
+    if (confirm("Tem certeza que deseja excluir este usuario?")) {
       deleteMutation.mutate(userId);
     }
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h2 className="text-2xl font-semibold">Gerenciamento de Usuários</h2>
+          <h2 className="text-2xl font-semibold">Gerenciamento de Usuarios</h2>
           <p className="text-muted-foreground">
-            Adicione, edite ou remova usuários do sistema
+            Administre contas de sistema e acesso por cliente
           </p>
         </div>
-        <Button onClick={() => setIsCreateDialogOpen(true)} data-testid="button-create-user">
-          <Plus className="h-4 w-4 mr-2" />
-          Novo Usuário
-        </Button>
+        <div className="flex flex-col gap-3 md:flex-row md:items-center">
+          {isSystemAdmin && (
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="tenant-filter" className="text-xs uppercase text-muted-foreground">
+                Cliente
+              </Label>
+              <Select
+                value={selectedTenantFilter}
+                onValueChange={setSelectedTenantFilter}
+              >
+                <SelectTrigger id="tenant-filter" className="w-[220px]" data-testid="select-tenant-filter">
+                  <SelectValue placeholder="Todos os clientes" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos os clientes</SelectItem>
+                  {tenants.map((tenant) => (
+                    <SelectItem key={tenant.id} value={String(tenant.id)}>
+                      {tenant.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <Button onClick={openCreateDialog} data-testid="button-create-user">
+            <Plus className="h-4 w-4 mr-2" />
+            Novo Usuario
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
         <div className="text-center py-12">
-          <p className="text-muted-foreground">Carregando usuários...</p>
+          <p className="text-muted-foreground">Carregando usuarios...</p>
         </div>
       ) : users.length === 0 ? (
         <Card>
           <CardContent className="text-center py-12">
-            <p className="text-muted-foreground">Nenhum usuário encontrado</p>
+            <p className="text-muted-foreground">Nenhum usuario encontrado</p>
           </CardContent>
         </Card>
       ) : (
         <Card>
           <CardHeader>
-            <CardTitle className="text-xl">Usuários ({users.length})</CardTitle>
+            <CardTitle className="text-xl">Usuarios ({users.length})</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
@@ -203,13 +423,16 @@ export default function UserManagement() {
                       Email
                     </th>
                     <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
-                      Permissão
+                      Permissao
+                    </th>
+                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
+                      Cliente
                     </th>
                     <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
                       Criado em
                     </th>
                     <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
-                      Ações
+                      Acoes
                     </th>
                   </tr>
                 </thead>
@@ -222,12 +445,15 @@ export default function UserManagement() {
                     >
                       <td className="py-4 px-4 font-medium">{user.email}</td>
                       <td className="py-4 px-4">
-                        <Badge variant={user.role === "admin" ? "default" : "secondary"}>
-                          {user.role === "admin" ? "Administrador" : "Cliente"}
+                        <Badge variant={roleBadgeVariants[user.role]}>
+                          {roleLabels[user.role]}
                         </Badge>
                       </td>
                       <td className="py-4 px-4 text-sm text-muted-foreground">
-                        {new Date(user.createdAt).toLocaleDateString("pt-BR")}
+                        {user.tenantName ?? "Sem nome"}
+                      </td>
+                      <td className="py-4 px-4 text-sm text-muted-foreground">
+                        {new Date(user.createdAt).toLocaleDateString()}
                       </td>
                       <td className="py-4 px-4">
                         <div className="flex justify-end gap-1">
@@ -260,13 +486,18 @@ export default function UserManagement() {
         </Card>
       )}
 
-      {/* Create User Dialog */}
-      <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
+      <Dialog
+        open={isCreateDialogOpen}
+        onOpenChange={(open) => {
+          setIsCreateDialogOpen(open);
+          if (!open) resetForm();
+        }}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Novo Usuário</DialogTitle>
+            <DialogTitle>Novo Usuario</DialogTitle>
             <DialogDescription>
-              Crie um novo usuário para acessar o sistema
+              Crie um usuario para um cliente ou para o sistema
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -287,28 +518,71 @@ export default function UserManagement() {
                 id="password"
                 data-testid="input-user-password"
                 type="password"
-                placeholder="Mínimo 6 caracteres"
+                placeholder="Minimo 6 caracteres"
                 value={formData.password}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="role">Permissão</Label>
+              <Label htmlFor="role">Permissao</Label>
               <Select
                 value={formData.role}
-                onValueChange={(value: "admin" | "client") =>
-                  setFormData({ ...formData, role: value })
-                }
+                onValueChange={(value) => setFormData({ ...formData, role: value as UserRole })}
               >
                 <SelectTrigger data-testid="select-user-role">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="client">Cliente</SelectItem>
-                  <SelectItem value="admin">Administrador</SelectItem>
+                  {roleOptions.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {roleLabels[option]}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
+            {isSystemAdmin && (
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label>Cliente</Label>
+                  <Select
+                    value={createTenantChoice === "new" ? "new" : createTenantId}
+                    onValueChange={(value) => {
+                      if (value === "new") {
+                        setCreateTenantChoice("new");
+                        setCreateTenantId("");
+                      } else {
+                        setCreateTenantChoice("existing");
+                        setCreateTenantId(value);
+                        setCreateTenantName("");
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione um cliente" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {tenants.map((tenant) => (
+                        <SelectItem key={tenant.id} value={String(tenant.id)}>
+                          {tenant.name}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value="new">+ Criar novo cliente</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {createTenantChoice === "new" && (
+                  <div className="space-y-2">
+                    <Label>Nome do cliente</Label>
+                    <Input
+                      value={createTenantName}
+                      onChange={(e) => setCreateTenantName(e.target.value)}
+                      placeholder="Minha Empresa"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button
@@ -325,19 +599,24 @@ export default function UserManagement() {
               disabled={createMutation.isPending}
               data-testid="button-confirm-create"
             >
-              {createMutation.isPending ? "Criando..." : "Criar Usuário"}
+              {createMutation.isPending ? "Criando..." : "Criar Usuario"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Edit User Dialog */}
-      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+      <Dialog
+        open={isEditDialogOpen}
+        onOpenChange={(open) => {
+          setIsEditDialogOpen(open);
+          if (!open) resetForm();
+        }}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Editar Usuário</DialogTitle>
+            <DialogTitle>Editar Usuario</DialogTitle>
             <DialogDescription>
-              Atualize as informações do usuário
+              Atualize as informacoes do usuario
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
@@ -352,7 +631,7 @@ export default function UserManagement() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-password">Nova Senha (opcional)</Label>
+              <Label htmlFor="edit-password">Nova senha (opcional)</Label>
               <Input
                 id="edit-password"
                 data-testid="input-edit-user-password"
@@ -363,22 +642,65 @@ export default function UserManagement() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-role">Permissão</Label>
+              <Label htmlFor="edit-role">Permissao</Label>
               <Select
                 value={formData.role}
-                onValueChange={(value: "admin" | "client") =>
-                  setFormData({ ...formData, role: value })
-                }
+                onValueChange={(value) => setFormData({ ...formData, role: value as UserRole })}
               >
                 <SelectTrigger data-testid="select-edit-user-role">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="client">Cliente</SelectItem>
-                  <SelectItem value="admin">Administrador</SelectItem>
+                  {roleOptions.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {roleLabels[option]}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
+            {isSystemAdmin && selectedUser && (
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label>Cliente</Label>
+                  <Select
+                    value={editTenantChoice === "new" ? "new" : editTenantId}
+                    onValueChange={(value) => {
+                      if (value === "new") {
+                        setEditTenantChoice("new");
+                        setEditTenantId("");
+                      } else {
+                        setEditTenantChoice("existing");
+                        setEditTenantId(value);
+                        setEditTenantName("");
+                      }
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {tenants.map((tenant) => (
+                        <SelectItem key={tenant.id} value={String(tenant.id)}>
+                          {tenant.name}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value="new">+ Criar novo cliente</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {editTenantChoice === "new" && (
+                  <div className="space-y-2">
+                    <Label>Nome do cliente</Label>
+                    <Input
+                      value={editTenantName}
+                      onChange={(e) => setEditTenantName(e.target.value)}
+                      placeholder="Minha Empresa"
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button
@@ -395,7 +717,7 @@ export default function UserManagement() {
               disabled={updateMutation.isPending}
               data-testid="button-confirm-update"
             >
-              {updateMutation.isPending ? "Salvando..." : "Salvar Alterações"}
+              {updateMutation.isPending ? "Salvando..." : "Salvar Alteracoes"}
             </Button>
           </DialogFooter>
         </DialogContent>
