@@ -27,6 +27,7 @@ interface Resource {
 
 export default function ExistingCampaignForm() {
   const [selectedObjectives, setSelectedObjectives] = useState<string[]>([]);
+  const [accountId, setAccountId] = useState<string>("");
   const [pageId, setPageId] = useState<string>("");
   const [instagramId, setInstagramId] = useState<string>("");
   const [whatsappId, setWhatsappId] = useState<string>("");
@@ -61,6 +62,7 @@ export default function ExistingCampaignForm() {
   const needsWebsite = selectedObjectives.includes("TRAFFIC");
   const needsWhatsApp = selectedObjectives.includes("WHATSAPP");
 
+  const adAccounts = resources.filter((r) => r.type === "account");
   const pages = resources.filter((r) => r.type === "page");
   const instagramAccounts = resources.filter((r) => r.type === "instagram");
   const whatsappNumbers = resources.filter((r) => r.type === "whatsapp");
@@ -94,7 +96,7 @@ export default function ExistingCampaignForm() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!pageId || !instagramId || !driveFolderId || !title || !message) {
+    if (!accountId || !pageId || !instagramId || !driveFolderId || !title || !message) {
       toast({
         title: "Campos obrigatórios",
         description: "Por favor, preencha todos os campos obrigatórios",
@@ -145,11 +147,13 @@ export default function ExistingCampaignForm() {
       name: title, // Use creative title as campaign name
       objective: selectedObjectives[0], // Use first objective as primary
       status: "draft",
+      accountId: accountId ? Number(accountId) : undefined,
       pageId: pageId ? Number(pageId) : undefined,
       instagramId: instagramId ? Number(instagramId) : undefined,
       whatsappId: whatsappId ? Number(whatsappId) : undefined,
       leadformId: leadFormId ? Number(leadFormId) : undefined,
       websiteUrl: websiteUrl || undefined,
+      driveFolderId: driveFolderId || undefined,
       adSets: [], // Empty for existing campaign form
       creatives: [
         {
@@ -210,6 +214,28 @@ export default function ExistingCampaignForm() {
             <CardTitle>Recursos</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="account">Conta Meta Ads *</Label>
+              <Select value={accountId} onValueChange={setAccountId}>
+                <SelectTrigger id="account" data-testid="select-account">
+                  <SelectValue placeholder="Selecione" />
+                </SelectTrigger>
+                <SelectContent>
+                  {adAccounts.length === 0 ? (
+                    <SelectItem value="none" disabled>
+                      Nenhuma conta disponivel
+                    </SelectItem>
+                  ) : (
+                    adAccounts.map((account) => (
+                      <SelectItem key={account.id} value={String(account.id)}>
+                        {account.name}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="page">Página Facebook *</Label>

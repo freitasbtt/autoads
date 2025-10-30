@@ -481,6 +481,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const instagramResource = campaign.instagramId ? await storage.getResource(campaign.instagramId) : null;
       const whatsappResource = campaign.whatsappId ? await storage.getResource(campaign.whatsappId) : null;
       const leadformResource = campaign.leadformId ? await storage.getResource(campaign.leadformId) : null;
+      const adAccountId = accountResource?.value
+        ? accountResource.value.replace(/\D+/g, "")
+        : "";
+
+      const creativeEntries = Array.isArray(campaign.creatives)
+        ? (campaign.creatives as Array<{ driveFolderId?: unknown }>)
+        : [];
+
+      const primaryDriveFolderFromCreative = creativeEntries
+        .map((creative) => {
+          const value = typeof creative?.driveFolderId === "string" ? creative.driveFolderId.trim() : "";
+          return value;
+        })
+        .find((value) => value.length > 0);
+
+      const driveFolderId =
+        primaryDriveFolderFromCreative ||
+        (typeof campaign.driveFolderId === "string" ? campaign.driveFolderId : "");
 
       // Prepare webhook payload
       const webhookPayload = [{
@@ -503,14 +521,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             page_id: pageResource ? pageResource.value : "",
             instagram_user_id: instagramResource ? instagramResource.value : "",
             whatsapp_number_id: whatsappResource ? whatsappResource.value : "",
-            drive_folder_id: campaign.driveFolderId || "",
+            drive_folder_id: driveFolderId || "",
             message_text: campaign.message || "",
             title_text: campaign.title || "",
             leadgen_form_id: leadformResource ? leadformResource.value : "",
             website_url: campaign.websiteUrl || "",
             status: campaign.status.toUpperCase(),
             status_detail: "Reenviado ao n8n",
-            ad_account_id: accountResource ? accountResource.value : "",
+            ad_account_id: adAccountId || (accountResource ? accountResource.value : ""),
             client: `Tenant-${user.tenantId}`
           },
           ts: new Date().toISOString()
