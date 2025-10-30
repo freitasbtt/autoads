@@ -15,7 +15,16 @@ import type {
   InsertAutomation,
   AppSettings,
   InsertAppSettings,
+  CampaignMetric,
+  InsertCampaignMetric,
 } from "@shared/schema";
+
+export interface CampaignMetricsFilter {
+  startDate?: string;
+  endDate?: string;
+  accountIds?: number[];
+  campaignIds?: number[];
+}
 
 export interface IStorage {
   // Tenant operations
@@ -54,6 +63,15 @@ export interface IStorage {
   updateCampaign(id: number, campaign: Partial<InsertCampaign>): Promise<Campaign | undefined>;
   deleteCampaign(id: number): Promise<boolean>;
 
+  // Campaign metrics operations
+  getCampaignMetrics(
+    tenantId: number,
+    filters?: CampaignMetricsFilter
+  ): Promise<CampaignMetric[]>;
+  createCampaignMetric(
+    metric: InsertCampaignMetric & { tenantId: number }
+  ): Promise<CampaignMetric>;
+
   // Integration operations
   getIntegration(id: number): Promise<Integration | undefined>;
   getIntegrationsByTenant(tenantId: number): Promise<Integration[]>;
@@ -83,6 +101,7 @@ export class MemStorage implements IStorage {
   private campaigns: Map<number, Campaign>;
   private integrations: Map<number, Integration>;
   private automations: Map<number, Automation>;
+  private campaignMetrics: Map<number, CampaignMetric>;
   private nextId: number;
 
   constructor() {
@@ -93,6 +112,7 @@ export class MemStorage implements IStorage {
     this.campaigns = new Map();
     this.integrations = new Map();
     this.automations = new Map();
+    this.campaignMetrics = new Map();
     this.nextId = 1;
   }
 
@@ -283,6 +303,67 @@ export class MemStorage implements IStorage {
     return this.campaigns.delete(id);
   }
 
+  // Campaign metrics operations
+  async getCampaignMetrics(
+    tenantId: number,
+    filters: CampaignMetricsFilter = {}
+  ): Promise<CampaignMetric[]> {
+    const { startDate, endDate, accountIds, campaignIds } = filters;
+    return Array.from(this.campaignMetrics.values()).filter((metric) => {
+      if (metric.tenantId !== tenantId) {
+        return false;
+      }
+
+      const metricDate = new Date(`${metric.date}T00:00:00Z`);
+
+      if (startDate && metricDate < new Date(`${startDate}T00:00:00Z`)) {
+        return false;
+      }
+
+      if (endDate && metricDate > new Date(`${endDate}T00:00:00Z`)) {
+        return false;
+      }
+
+      if (accountIds && accountIds.length > 0 && !accountIds.includes(metric.accountId)) {
+        return false;
+      }
+
+      if (
+        campaignIds &&
+        campaignIds.length > 0 &&
+        (metric.campaignId === null || metric.campaignId === undefined || !campaignIds.includes(metric.campaignId))
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+  }
+
+  async createCampaignMetric(
+    metric: InsertCampaignMetric & { tenantId: number }
+  ): Promise<CampaignMetric> {
+    const id = this.nextId++;
+    const spendValue =
+      metric.spend !== undefined && metric.spend !== null
+        ? String(metric.spend)
+        : "0";
+    const created: CampaignMetric = {
+      id,
+      tenantId: metric.tenantId,
+      accountId: metric.accountId,
+      campaignId: metric.campaignId ?? null,
+      date: metric.date,
+      spend: spendValue ?? "0",
+      impressions: metric.impressions ?? 0,
+      clicks: metric.clicks ?? 0,
+      leads: metric.leads ?? 0,
+      createdAt: new Date(),
+    };
+    this.campaignMetrics.set(id, created);
+    return created;
+  }
+
   // Integration operations
   async getIntegration(id: number): Promise<Integration | undefined> {
     return this.integrations.get(id);
@@ -402,7 +483,8 @@ export class MemStorage implements IStorage {
 }
 
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, gte, lte, inArray } from "drizzle-orm";
+import type { SQL } from "drizzle-orm";
 import * as schema from "@shared/schema";
 
 export class DbStorage implements IStorage {
@@ -605,6 +687,56 @@ export class DbStorage implements IStorage {
   async deleteCampaign(id: number): Promise<boolean> {
     const result = await db.delete(schema.campaigns).where(eq(schema.campaigns.id, id));
     return result.rowCount !== null && result.rowCount > 0;
+  }
+
+  // Campaign metrics operations
+  async getCampaignMetrics(
+    tenantId: number,
+    filters: CampaignMetricsFilter = {}
+  ): Promise<CampaignMetric[]> {
+    const conditions: Array<SQL<unknown>> = [
+      eq(schema.campaignMetrics.tenantId, tenantId),
+    ];
+
+    if (filters.startDate) {
+      conditions.push(gte(schema.campaignMetrics.date, filters.startDate));
+    }
+
+    if (filters.endDate) {
+      conditions.push(lte(schema.campaignMetrics.date, filters.endDate));
+    }
+
+    if (filters.accountIds && filters.accountIds.length > 0) {
+      conditions.push(inArray(schema.campaignMetrics.accountId, filters.accountIds));
+    }
+
+    if (filters.campaignIds && filters.campaignIds.length > 0) {
+      conditions.push(inArray(schema.campaignMetrics.campaignId, filters.campaignIds));
+    }
+
+    const normalizedConditions = conditions.filter(
+      (condition): condition is SQL<unknown> => Boolean(condition),
+    );
+
+    const where =
+      normalizedConditions.length > 1
+        ? and(...normalizedConditions)
+        : normalizedConditions[0];
+
+    return db.query.campaignMetrics.findMany({
+      where,
+    });
+  }
+
+  async createCampaignMetric(
+    metric: InsertCampaignMetric & { tenantId: number }
+  ): Promise<CampaignMetric> {
+    const [created] = await db
+      .insert(schema.campaignMetrics)
+      .values(metric)
+      .returning();
+
+    return created;
   }
 
   // Integration operations

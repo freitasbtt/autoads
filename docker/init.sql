@@ -79,6 +79,19 @@ CREATE TABLE IF NOT EXISTS campaigns (
   updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS campaign_metrics (
+  id SERIAL PRIMARY KEY,
+  tenant_id INTEGER NOT NULL REFERENCES tenants(id),
+  account_id INTEGER NOT NULL REFERENCES resources(id),
+  campaign_id INTEGER REFERENCES campaigns(id),
+  date DATE NOT NULL,
+  spend NUMERIC(14, 2) NOT NULL DEFAULT 0,
+  impressions INTEGER NOT NULL DEFAULT 0,
+  clicks INTEGER NOT NULL DEFAULT 0,
+  leads INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS integrations (
   id SERIAL PRIMARY KEY,
   tenant_id INTEGER NOT NULL REFERENCES tenants(id),

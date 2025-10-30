@@ -8,12 +8,15 @@ import memorystore from "memorystore";
 import { z } from "zod";
 import type { Express, NextFunction, Request, Response } from "express";
 import type {
+  Campaign,
+  CampaignMetric,
   InsertAudience,
   InsertAutomation,
   InsertCampaign,
   InsertIntegration,
   InsertResource,
   InsertUser,
+  Resource,
   User,
 } from "@shared/schema";
 import {
@@ -24,6 +27,7 @@ import {
   insertIntegrationSchema,
 } from "@shared/schema";
 import crypto from "crypto";
+import { differenceInCalendarDays, format, isValid, parseISO, subDays } from "date-fns";
 
 // Extend session data to include OAuth state
 declare module "express-session" {
@@ -113,6 +117,55 @@ function isAuthenticated(req: Request, res: Response, next: NextFunction) {
     return next();
   }
   res.status(401).json({ message: "Unauthorized" });
+}
+
+const DATE_PARAM_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const dashboardMetricsQuerySchema = z.object({
+  startDate: z.string().regex(DATE_PARAM_REGEX).optional(),
+  endDate: z.string().regex(DATE_PARAM_REGEX).optional(),
+});
+
+function normalizeQueryArray(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((entry) => (typeof entry === "string" ? entry.split(",") : []))
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+  }
+
+  return undefined;
+}
+
+function parseNumberQueryParam(value: unknown): number[] | undefined {
+  const entries = normalizeQueryArray(value);
+  if (!entries || entries.length === 0) {
+    return undefined;
+  }
+
+  const numbers = entries
+    .map((entry) => Number.parseInt(entry, 10))
+    .filter((num) => Number.isFinite(num));
+
+  return numbers.length > 0 ? numbers : undefined;
+}
+
+function parseStringQueryParam(value: unknown): string[] | undefined {
+  const entries = normalizeQueryArray(value);
+  if (!entries || entries.length === 0) {
+    return undefined;
+  }
+  return entries;
 }
 
 // Middleware to check if user is admin
@@ -207,6 +260,321 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.user as User;
       const resources = await storage.getResourcesByTenant(user.tenantId);
       res.json(resources);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.get("/api/dashboard/metrics", isAuthenticated, async (req, res, next) => {
+    try {
+      const user = req.user as User;
+      const query = dashboardMetricsQuerySchema.parse(req.query);
+
+      const now = new Date();
+      const endDate = query.endDate ? parseISO(query.endDate) : now;
+      if (!isValid(endDate)) {
+        return res.status(400).json({ message: "Parametro endDate invalido" });
+      }
+
+      const startDate = query.startDate ? parseISO(query.startDate) : subDays(endDate, 29);
+      if (!isValid(startDate)) {
+        return res.status(400).json({ message: "Parametro startDate invalido" });
+      }
+
+      if (startDate > endDate) {
+        return res
+          .status(400)
+          .json({ message: "O startDate deve ser menor ou igual ao endDate" });
+      }
+
+      const formattedStart = format(startDate, "yyyy-MM-dd");
+      const formattedEnd = format(endDate, "yyyy-MM-dd");
+
+      const rangeDays = differenceInCalendarDays(endDate, startDate) + 1;
+      const previousEndDate = subDays(startDate, 1);
+      const previousStartDate = subDays(previousEndDate, Math.max(rangeDays - 1, 0));
+      const formattedPreviousStart = format(previousStartDate, "yyyy-MM-dd");
+      const formattedPreviousEnd = format(previousEndDate, "yyyy-MM-dd");
+
+      const accountIds = parseNumberQueryParam(req.query.accountId);
+      const campaignIds = parseNumberQueryParam(req.query.campaignId);
+      const objectivesParam = parseStringQueryParam(req.query.objective);
+
+      const accountFilterSet =
+        accountIds && accountIds.length > 0 ? new Set(accountIds) : undefined;
+      const campaignFilterSet =
+        campaignIds && campaignIds.length > 0 ? new Set(campaignIds) : undefined;
+      const objectiveFilterSet =
+        objectivesParam && objectivesParam.length > 0
+          ? new Set(objectivesParam.map((value) => value.toUpperCase()))
+          : undefined;
+
+      const [metricsRaw, previousMetricsRaw, resources, campaigns] = await Promise.all([
+        storage.getCampaignMetrics(user.tenantId, {
+          startDate: formattedStart,
+          endDate: formattedEnd,
+          accountIds,
+          campaignIds,
+        }),
+        rangeDays > 0
+          ? storage.getCampaignMetrics(user.tenantId, {
+              startDate: formattedPreviousStart,
+              endDate: formattedPreviousEnd,
+              accountIds,
+              campaignIds,
+            })
+          : Promise.resolve([] as CampaignMetric[]),
+        storage.getResourcesByTenant(user.tenantId),
+        storage.getCampaignsByTenant(user.tenantId),
+      ]);
+
+      const accountResources = resources.filter((resource) => resource.type === "account");
+      const accountMap = new Map<number, Resource>(
+        accountResources.map((resource) => [resource.id, resource])
+      );
+      const campaignMap = new Map<number, Campaign>(
+        campaigns.map((campaign) => [campaign.id, campaign])
+      );
+
+      const filterMetricByQuery = (metric: CampaignMetric): boolean => {
+        if (accountFilterSet && !accountFilterSet.has(metric.accountId)) {
+          return false;
+        }
+
+        if (campaignFilterSet) {
+          if (!metric.campaignId || !campaignFilterSet.has(metric.campaignId)) {
+            return false;
+          }
+        }
+
+        if (objectiveFilterSet) {
+          if (!metric.campaignId) {
+            return false;
+          }
+          const relatedCampaign = campaignMap.get(metric.campaignId);
+          const campaignObjective = relatedCampaign?.objective?.toUpperCase();
+          if (!campaignObjective || !objectiveFilterSet.has(campaignObjective)) {
+            return false;
+          }
+        }
+
+        return true;
+      };
+
+      const metrics = metricsRaw.filter(filterMetricByQuery);
+      const previousMetrics = previousMetricsRaw.filter(filterMetricByQuery);
+
+      const filteredCampaigns = campaigns.filter((campaign) => {
+        const campaignAccountId = campaign.accountId ?? undefined;
+
+        if (accountFilterSet && (!campaignAccountId || !accountFilterSet.has(campaignAccountId))) {
+          return false;
+        }
+
+        if (campaignFilterSet && !campaignFilterSet.has(campaign.id)) {
+          return false;
+        }
+
+        if (objectiveFilterSet) {
+          const campaignObjective = campaign.objective?.toUpperCase();
+          if (!campaignObjective || !objectiveFilterSet.has(campaignObjective)) {
+            return false;
+          }
+        }
+
+        return true;
+      });
+
+      type MetricTotals = {
+        spend: number;
+        impressions: number;
+        clicks: number;
+        leads: number;
+      };
+
+      const createEmptyTotals = (): MetricTotals => ({
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        leads: 0,
+      });
+
+      const cloneTotals = (totals: MetricTotals): MetricTotals => ({
+        spend: totals.spend,
+        impressions: totals.impressions,
+        clicks: totals.clicks,
+        leads: totals.leads,
+      });
+
+      const addMetricToTotals = (totals: MetricTotals, metric: CampaignMetric) => {
+        const spendValue =
+          typeof metric.spend === "number"
+            ? metric.spend
+            : typeof metric.spend === "string"
+              ? parseFloat(metric.spend)
+              : 0;
+
+        totals.spend += Number.isFinite(spendValue) ? spendValue : 0;
+        totals.impressions += metric.impressions ?? 0;
+        totals.clicks += metric.clicks ?? 0;
+        totals.leads += metric.leads ?? 0;
+      };
+
+      const ensureTotals = (map: Map<number, MetricTotals>, key: number): MetricTotals => {
+        let totals = map.get(key);
+        if (!totals) {
+          totals = createEmptyTotals();
+          map.set(key, totals);
+        }
+        return totals;
+      };
+
+      const totalsByAccount = new Map<number, MetricTotals>();
+      const totalsByCampaign = new Map<number, MetricTotals>();
+      const campaignAccountById = new Map<number, number>();
+
+      for (const metric of metrics) {
+        const accountTotals = ensureTotals(totalsByAccount, metric.accountId);
+        addMetricToTotals(accountTotals, metric);
+
+        if (metric.campaignId !== null && metric.campaignId !== undefined) {
+          const campaignTotals = ensureTotals(totalsByCampaign, metric.campaignId);
+          addMetricToTotals(campaignTotals, metric);
+          campaignAccountById.set(metric.campaignId, metric.accountId);
+        }
+      }
+
+      const totals = metrics.reduce<MetricTotals>((acc, metric) => {
+        addMetricToTotals(acc, metric);
+        return acc;
+      }, createEmptyTotals());
+
+      const previousTotals = previousMetrics.reduce<MetricTotals>((acc, metric) => {
+        addMetricToTotals(acc, metric);
+        return acc;
+      }, createEmptyTotals());
+
+      const accountCampaignsMap = new Map<number, Campaign[]>();
+      for (const campaign of filteredCampaigns) {
+        if (campaign.accountId === null || campaign.accountId === undefined) {
+          continue;
+        }
+        const list = accountCampaignsMap.get(campaign.accountId);
+        if (list) {
+          list.push(campaign);
+        } else {
+          accountCampaignsMap.set(campaign.accountId, [campaign]);
+        }
+      }
+
+      const hasSelectionFilters =
+        (accountFilterSet && accountFilterSet.size > 0) ||
+        (campaignFilterSet && campaignFilterSet.size > 0) ||
+        (objectiveFilterSet && objectiveFilterSet.size > 0);
+
+      const accountIdsToInclude = new Set<number>();
+
+      if (accountFilterSet && accountFilterSet.size > 0) {
+        accountFilterSet.forEach((id) => accountIdsToInclude.add(id));
+      }
+
+      for (const accountId of Array.from(totalsByAccount.keys())) {
+        accountIdsToInclude.add(accountId);
+      }
+
+      for (const campaign of filteredCampaigns) {
+        if (campaign.accountId !== null && campaign.accountId !== undefined) {
+          accountIdsToInclude.add(campaign.accountId);
+        }
+      }
+
+      if (campaignFilterSet && campaignFilterSet.size > 0) {
+        campaignFilterSet.forEach((campaignId) => {
+          const campaign = campaignMap.get(campaignId);
+          if (campaign?.accountId) {
+            accountIdsToInclude.add(campaign.accountId);
+          } else {
+            const accountId = campaignAccountById.get(campaignId);
+            if (accountId !== undefined) {
+              accountIdsToInclude.add(accountId);
+            }
+          }
+        });
+      }
+
+      if (!hasSelectionFilters) {
+        for (const resource of accountResources) {
+          accountIdsToInclude.add(resource.id);
+        }
+      }
+
+      const accountEntries = Array.from(accountIdsToInclude).map((accountId) => {
+        const resource = accountMap.get(accountId);
+        const accountTotals = totalsByAccount.get(accountId);
+        const accountMetrics = accountTotals ? cloneTotals(accountTotals) : createEmptyTotals();
+
+        const campaignsForAccount = accountCampaignsMap.get(accountId) ?? [];
+        const campaignEntries: Array<{
+          id: number;
+          name: string | null;
+          objective: string | null;
+          status: string | null;
+          metrics: MetricTotals;
+        }> = campaignsForAccount.map((campaign) => {
+          const campaignTotals = totalsByCampaign.get(campaign.id);
+          return {
+            id: campaign.id,
+            name: campaign.name ?? null,
+            objective: campaign.objective ?? null,
+            status: campaign.status ?? null,
+            metrics: campaignTotals ? cloneTotals(campaignTotals) : createEmptyTotals(),
+          };
+        });
+
+        const campaignEntryIds = new Set(campaignEntries.map((entry) => entry.id));
+
+        for (const [campaignId, campaignTotals] of Array.from(totalsByCampaign.entries())) {
+          if (campaignEntryIds.has(campaignId)) {
+            continue;
+          }
+          const campaignAccountId = campaignAccountById.get(campaignId);
+          if (campaignAccountId !== accountId) {
+            continue;
+          }
+          const fallbackCampaign = campaignMap.get(campaignId);
+          campaignEntries.push({
+            id: campaignId,
+            name: fallbackCampaign?.name ?? null,
+            objective: fallbackCampaign?.objective ?? null,
+            status: fallbackCampaign?.status ?? null,
+            metrics: cloneTotals(campaignTotals),
+          });
+        }
+
+        campaignEntries.sort((a, b) => b.metrics.spend - a.metrics.spend);
+
+        return {
+          id: accountId,
+          name: resource?.name ?? `Conta ${accountId}`,
+          value: resource?.value ?? String(accountId),
+          metrics: accountMetrics,
+          campaigns: campaignEntries,
+        };
+      });
+
+      accountEntries.sort((a, b) => b.metrics.spend - a.metrics.spend);
+
+      res.json({
+        dateRange: {
+          start: formattedStart,
+          end: formattedEnd,
+          previousStart: formattedPreviousStart,
+          previousEnd: formattedPreviousEnd,
+        },
+        totals,
+        previousTotals,
+        accounts: accountEntries,
+      });
     } catch (err) {
       next(err);
     }

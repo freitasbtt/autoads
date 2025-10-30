@@ -12,6 +12,7 @@ RUN npm ci
 # Copy source code
 COPY . .
 
+RUN npm run db:push
 # Build application (frontend + backend)
 RUN npm run build
 

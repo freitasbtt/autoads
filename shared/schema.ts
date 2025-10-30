@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, jsonb, serial, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, jsonb, serial, pgEnum, date as pgDate, numeric } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -158,6 +158,28 @@ export const insertAutomationSchema = createInsertSchema(automations).omit({
 });
 export type InsertAutomation = z.infer<typeof insertAutomationSchema>;
 export type Automation = typeof automations.$inferSelect;
+
+// Campaign metrics table - aggregated performance data per campaign/account
+export const campaignMetrics = pgTable("campaign_metrics", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  accountId: integer("account_id").notNull().references(() => resources.id),
+  campaignId: integer("campaign_id").references(() => campaigns.id),
+  date: pgDate("date").notNull(),
+  spend: numeric("spend", { precision: 14, scale: 2 }).notNull().default("0"),
+  impressions: integer("impressions").notNull().default(0),
+  clicks: integer("clicks").notNull().default(0),
+  leads: integer("leads").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertCampaignMetricSchema = createInsertSchema(campaignMetrics).omit({
+  id: true,
+  tenantId: true,
+  createdAt: true,
+});
+export type InsertCampaignMetric = z.infer<typeof insertCampaignMetricSchema>;
+export type CampaignMetric = typeof campaignMetrics.$inferSelect;
 
 // App Settings table - global OAuth and webhook configuration (admin only)
 export const appSettings = pgTable("app_settings", {
