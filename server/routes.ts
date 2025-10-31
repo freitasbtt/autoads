@@ -1,5 +1,7 @@
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { MetaGraphClient, fetchMetaDashboardMetrics } from "./meta/graph";
+import type { MetricTotals as MetaMetricTotals } from "./meta/graph";
 import { pingDatabase } from "./db";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
@@ -9,7 +11,6 @@ import { z } from "zod";
 import type { Express, NextFunction, Request, Response } from "express";
 import type {
   Campaign,
-  CampaignMetric,
   InsertAudience,
   InsertAutomation,
   InsertCampaign,
@@ -168,6 +169,22 @@ function parseStringQueryParam(value: unknown): string[] | undefined {
   return entries;
 }
 
+function emptyTotals(): MetaMetricTotals {
+  return {
+    spend: 0,
+    resultSpend: 0,
+    impressions: 0,
+    clicks: 0,
+    leads: 0,
+    results: 0,
+    costPerResult: null,
+  };
+}
+
+type MetaIntegrationConfig = {
+  accessToken?: string | null;
+};
+
 // Middleware to check if user is admin
 function isAdmin(req: Request, res: Response, next: NextFunction) {
   if (req.isAuthenticated()) {
@@ -270,317 +287,119 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.user as User;
       const query = dashboardMetricsQuerySchema.parse(req.query);
 
-      const now = new Date();
-      const endDate = query.endDate ? parseISO(query.endDate) : now;
-      if (!isValid(endDate)) {
-        return res.status(400).json({ message: "Parametro endDate invalido" });
-      }
-
-      const startDate = query.startDate ? parseISO(query.startDate) : subDays(endDate, 29);
-      if (!isValid(startDate)) {
-        return res.status(400).json({ message: "Parametro startDate invalido" });
-      }
-
-      if (startDate > endDate) {
+      if ((query.startDate && !query.endDate) || (!query.startDate && query.endDate)) {
         return res
           .status(400)
-          .json({ message: "O startDate deve ser menor ou igual ao endDate" });
+          .json({ message: "Forneca startDate e endDate juntos ou nenhum deles." });
       }
 
-      const formattedStart = format(startDate, "yyyy-MM-dd");
-      const formattedEnd = format(endDate, "yyyy-MM-dd");
-
-      const rangeDays = differenceInCalendarDays(endDate, startDate) + 1;
-      const previousEndDate = subDays(startDate, 1);
-      const previousStartDate = subDays(previousEndDate, Math.max(rangeDays - 1, 0));
-      const formattedPreviousStart = format(previousStartDate, "yyyy-MM-dd");
-      const formattedPreviousEnd = format(previousEndDate, "yyyy-MM-dd");
-
       const accountIds = parseNumberQueryParam(req.query.accountId);
-      const campaignIds = parseNumberQueryParam(req.query.campaignId);
+      const campaignIdParams = parseStringQueryParam(req.query.campaignId);
       const objectivesParam = parseStringQueryParam(req.query.objective);
+      const statusParam = parseStringQueryParam(req.query.status);
 
-      const accountFilterSet =
-        accountIds && accountIds.length > 0 ? new Set(accountIds) : undefined;
+      const allResources = await storage.getResourcesByTenant(user.tenantId);
+      const accountResources = allResources.filter((resource) => resource.type === "account");
+
+      const selectedAccounts =
+        accountIds && accountIds.length > 0
+          ? accountResources.filter((resource) => accountIds.includes(resource.id))
+          : accountResources;
+
+      if (selectedAccounts.length === 0) {
+        return res.json({
+          dateRange: {
+            start: query.startDate ?? null,
+            end: query.endDate ?? null,
+            previousStart: null,
+            previousEnd: null,
+          },
+          totals: emptyTotals(),
+          previousTotals: emptyTotals(),
+          accounts: [],
+        });
+      }
+
+      const integration = await storage.getIntegrationByProvider(user.tenantId, "Meta");
+      const metaConfig = (integration?.config ?? {}) as MetaIntegrationConfig;
+
+      if (!metaConfig.accessToken) {
+        return res.status(400).json({
+          message: "Integracao com Meta nao esta conectada para este tenant.",
+        });
+      }
+
+      const settings = await storage.getAppSettings();
+      if (!settings?.metaAppSecret) {
+        return res
+          .status(500)
+          .json({ message: "Meta app secret nao configurado." });
+      }
+
       const campaignFilterSet =
-        campaignIds && campaignIds.length > 0 ? new Set(campaignIds) : undefined;
+        campaignIdParams && campaignIdParams.length > 0
+          ? new Set(campaignIdParams.map(String))
+          : undefined;
       const objectiveFilterSet =
         objectivesParam && objectivesParam.length > 0
           ? new Set(objectivesParam.map((value) => value.toUpperCase()))
           : undefined;
+      const statusFilterSet =
+        statusParam && statusParam.length > 0
+          ? new Set(statusParam.map((value) => value.toUpperCase()))
+          : undefined;
 
-      const [metricsRaw, previousMetricsRaw, resources, campaigns] = await Promise.all([
-        storage.getCampaignMetrics(user.tenantId, {
-          startDate: formattedStart,
-          endDate: formattedEnd,
-          accountIds,
-          campaignIds,
-        }),
-        rangeDays > 0
-          ? storage.getCampaignMetrics(user.tenantId, {
-              startDate: formattedPreviousStart,
-              endDate: formattedPreviousEnd,
-              accountIds,
-              campaignIds,
-            })
-          : Promise.resolve([] as CampaignMetric[]),
-        storage.getResourcesByTenant(user.tenantId),
-        storage.getCampaignsByTenant(user.tenantId),
-      ]);
+      let previousStart: string | null = null;
+      let previousEnd: string | null = null;
 
-      const accountResources = resources.filter((resource) => resource.type === "account");
-      const accountMap = new Map<number, Resource>(
-        accountResources.map((resource) => [resource.id, resource])
-      );
-      const campaignMap = new Map<number, Campaign>(
-        campaigns.map((campaign) => [campaign.id, campaign])
-      );
-
-      const filterMetricByQuery = (metric: CampaignMetric): boolean => {
-        if (accountFilterSet && !accountFilterSet.has(metric.accountId)) {
-          return false;
+      if (query.startDate && query.endDate) {
+        const startDate = parseISO(query.startDate);
+        const endDate = parseISO(query.endDate);
+        if (!isValid(startDate) || !isValid(endDate)) {
+          return res.status(400).json({ message: "Parametros de data invalidos." });
+        }
+        if (startDate > endDate) {
+          return res
+            .status(400)
+            .json({ message: "O startDate deve ser menor ou igual ao endDate" });
         }
 
-        if (campaignFilterSet) {
-          if (!metric.campaignId || !campaignFilterSet.has(metric.campaignId)) {
-            return false;
-          }
-        }
+        const rangeDays = differenceInCalendarDays(endDate, startDate) + 1;
+        const previousEndDate = subDays(startDate, 1);
+        const previousStartDate = subDays(previousEndDate, Math.max(rangeDays - 1, 0));
+        previousStart = format(previousStartDate, "yyyy-MM-dd");
+        previousEnd = format(previousEndDate, "yyyy-MM-dd");
+      }
 
-        if (objectiveFilterSet) {
-          if (!metric.campaignId) {
-            return false;
-          }
-          const relatedCampaign = campaignMap.get(metric.campaignId);
-          const campaignObjective = relatedCampaign?.objective?.toUpperCase();
-          if (!campaignObjective || !objectiveFilterSet.has(campaignObjective)) {
-            return false;
-          }
-        }
+      const client = new MetaGraphClient(metaConfig.accessToken, settings.metaAppSecret);
 
-        return true;
-      };
-
-      const metrics = metricsRaw.filter(filterMetricByQuery);
-      const previousMetrics = previousMetricsRaw.filter(filterMetricByQuery);
-
-      const filteredCampaigns = campaigns.filter((campaign) => {
-        const campaignAccountId = campaign.accountId ?? undefined;
-
-        if (accountFilterSet && (!campaignAccountId || !accountFilterSet.has(campaignAccountId))) {
-          return false;
-        }
-
-        if (campaignFilterSet && !campaignFilterSet.has(campaign.id)) {
-          return false;
-        }
-
-        if (objectiveFilterSet) {
-          const campaignObjective = campaign.objective?.toUpperCase();
-          if (!campaignObjective || !objectiveFilterSet.has(campaignObjective)) {
-            return false;
-          }
-        }
-
-        return true;
+      const metrics = await fetchMetaDashboardMetrics({
+        accounts: selectedAccounts,
+        client,
+        campaignFilterSet,
+        objectiveFilterSet,
+        statusFilterSet,
+        startDate: query.startDate ?? undefined,
+        endDate: query.endDate ?? undefined,
+        previousStartDate: previousStart ?? undefined,
+        previousEndDate: previousEnd ?? undefined,
       });
-
-      type MetricTotals = {
-        spend: number;
-        impressions: number;
-        clicks: number;
-        leads: number;
-      };
-
-      const createEmptyTotals = (): MetricTotals => ({
-        spend: 0,
-        impressions: 0,
-        clicks: 0,
-        leads: 0,
-      });
-
-      const cloneTotals = (totals: MetricTotals): MetricTotals => ({
-        spend: totals.spend,
-        impressions: totals.impressions,
-        clicks: totals.clicks,
-        leads: totals.leads,
-      });
-
-      const addMetricToTotals = (totals: MetricTotals, metric: CampaignMetric) => {
-        const spendValue =
-          typeof metric.spend === "number"
-            ? metric.spend
-            : typeof metric.spend === "string"
-              ? parseFloat(metric.spend)
-              : 0;
-
-        totals.spend += Number.isFinite(spendValue) ? spendValue : 0;
-        totals.impressions += metric.impressions ?? 0;
-        totals.clicks += metric.clicks ?? 0;
-        totals.leads += metric.leads ?? 0;
-      };
-
-      const ensureTotals = (map: Map<number, MetricTotals>, key: number): MetricTotals => {
-        let totals = map.get(key);
-        if (!totals) {
-          totals = createEmptyTotals();
-          map.set(key, totals);
-        }
-        return totals;
-      };
-
-      const totalsByAccount = new Map<number, MetricTotals>();
-      const totalsByCampaign = new Map<number, MetricTotals>();
-      const campaignAccountById = new Map<number, number>();
-
-      for (const metric of metrics) {
-        const accountTotals = ensureTotals(totalsByAccount, metric.accountId);
-        addMetricToTotals(accountTotals, metric);
-
-        if (metric.campaignId !== null && metric.campaignId !== undefined) {
-          const campaignTotals = ensureTotals(totalsByCampaign, metric.campaignId);
-          addMetricToTotals(campaignTotals, metric);
-          campaignAccountById.set(metric.campaignId, metric.accountId);
-        }
-      }
-
-      const totals = metrics.reduce<MetricTotals>((acc, metric) => {
-        addMetricToTotals(acc, metric);
-        return acc;
-      }, createEmptyTotals());
-
-      const previousTotals = previousMetrics.reduce<MetricTotals>((acc, metric) => {
-        addMetricToTotals(acc, metric);
-        return acc;
-      }, createEmptyTotals());
-
-      const accountCampaignsMap = new Map<number, Campaign[]>();
-      for (const campaign of filteredCampaigns) {
-        if (campaign.accountId === null || campaign.accountId === undefined) {
-          continue;
-        }
-        const list = accountCampaignsMap.get(campaign.accountId);
-        if (list) {
-          list.push(campaign);
-        } else {
-          accountCampaignsMap.set(campaign.accountId, [campaign]);
-        }
-      }
-
-      const hasSelectionFilters =
-        (accountFilterSet && accountFilterSet.size > 0) ||
-        (campaignFilterSet && campaignFilterSet.size > 0) ||
-        (objectiveFilterSet && objectiveFilterSet.size > 0);
-
-      const accountIdsToInclude = new Set<number>();
-
-      if (accountFilterSet && accountFilterSet.size > 0) {
-        accountFilterSet.forEach((id) => accountIdsToInclude.add(id));
-      }
-
-      for (const accountId of Array.from(totalsByAccount.keys())) {
-        accountIdsToInclude.add(accountId);
-      }
-
-      for (const campaign of filteredCampaigns) {
-        if (campaign.accountId !== null && campaign.accountId !== undefined) {
-          accountIdsToInclude.add(campaign.accountId);
-        }
-      }
-
-      if (campaignFilterSet && campaignFilterSet.size > 0) {
-        campaignFilterSet.forEach((campaignId) => {
-          const campaign = campaignMap.get(campaignId);
-          if (campaign?.accountId) {
-            accountIdsToInclude.add(campaign.accountId);
-          } else {
-            const accountId = campaignAccountById.get(campaignId);
-            if (accountId !== undefined) {
-              accountIdsToInclude.add(accountId);
-            }
-          }
-        });
-      }
-
-      if (!hasSelectionFilters) {
-        for (const resource of accountResources) {
-          accountIdsToInclude.add(resource.id);
-        }
-      }
-
-      const accountEntries = Array.from(accountIdsToInclude).map((accountId) => {
-        const resource = accountMap.get(accountId);
-        const accountTotals = totalsByAccount.get(accountId);
-        const accountMetrics = accountTotals ? cloneTotals(accountTotals) : createEmptyTotals();
-
-        const campaignsForAccount = accountCampaignsMap.get(accountId) ?? [];
-        const campaignEntries: Array<{
-          id: number;
-          name: string | null;
-          objective: string | null;
-          status: string | null;
-          metrics: MetricTotals;
-        }> = campaignsForAccount.map((campaign) => {
-          const campaignTotals = totalsByCampaign.get(campaign.id);
-          return {
-            id: campaign.id,
-            name: campaign.name ?? null,
-            objective: campaign.objective ?? null,
-            status: campaign.status ?? null,
-            metrics: campaignTotals ? cloneTotals(campaignTotals) : createEmptyTotals(),
-          };
-        });
-
-        const campaignEntryIds = new Set(campaignEntries.map((entry) => entry.id));
-
-        for (const [campaignId, campaignTotals] of Array.from(totalsByCampaign.entries())) {
-          if (campaignEntryIds.has(campaignId)) {
-            continue;
-          }
-          const campaignAccountId = campaignAccountById.get(campaignId);
-          if (campaignAccountId !== accountId) {
-            continue;
-          }
-          const fallbackCampaign = campaignMap.get(campaignId);
-          campaignEntries.push({
-            id: campaignId,
-            name: fallbackCampaign?.name ?? null,
-            objective: fallbackCampaign?.objective ?? null,
-            status: fallbackCampaign?.status ?? null,
-            metrics: cloneTotals(campaignTotals),
-          });
-        }
-
-        campaignEntries.sort((a, b) => b.metrics.spend - a.metrics.spend);
-
-        return {
-          id: accountId,
-          name: resource?.name ?? `Conta ${accountId}`,
-          value: resource?.value ?? String(accountId),
-          metrics: accountMetrics,
-          campaigns: campaignEntries,
-        };
-      });
-
-      accountEntries.sort((a, b) => b.metrics.spend - a.metrics.spend);
 
       res.json({
         dateRange: {
-          start: formattedStart,
-          end: formattedEnd,
-          previousStart: formattedPreviousStart,
-          previousEnd: formattedPreviousEnd,
+          start: query.startDate ?? null,
+          end: query.endDate ?? null,
+          previousStart,
+          previousEnd,
         },
-        totals,
-        previousTotals,
-        accounts: accountEntries,
+        totals: metrics.totals,
+        previousTotals: metrics.previousTotals,
+        accounts: metrics.accounts,
       });
     } catch (err) {
       next(err);
     }
-  });
-
-  // Get resources by type
+  });  // Get resources by type
   app.get("/api/resources/:type", isAuthenticated, async (req, res, next) => {
     try {
       const user = req.user as User;
@@ -840,7 +659,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get webhook URL
       const settings = await storage.getAppSettings();
       if (!settings?.n8nWebhookUrl) {
-        return res.status(400).json({ message: "Webhook n8n não configurado. Configure em Admin > Configurações" });
+        return res.status(400).json({ message: "Webhook n8n nao configurado. Configure em Admin > Configuracoes" });
       }
 
       // Fetch resource details
@@ -923,7 +742,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const errorJson = JSON.parse(errorText);
           if (errorJson.code === 404 || errorJson.message?.includes("not registered")) {
-            userMessage = "Webhook n8n não está ativo. No n8n, clique em 'Execute workflow' e tente novamente.";
+            userMessage = "Webhook n8n nao esta ativo. No n8n, clique em 'Execute workflow' e tente novamente.";
           }
         } catch (e) {
           // Keep default message if parsing fails
@@ -952,7 +771,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get webhook URL
       const settings = await storage.getAppSettings();
       if (!settings?.n8nWebhookUrl) {
-        return res.status(400).json({ message: "Webhook n8n não configurado. Configure em Admin > Configurações" });
+        return res.status(400).json({ message: "Webhook n8n nao configurado. Configure em Admin > Configuracoes" });
       }
 
       // Extract data from request
@@ -1031,7 +850,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const errorJson = JSON.parse(errorText);
           if (errorJson.code === 404 || errorJson.message?.includes("not registered")) {
-            userMessage = "Webhook n8n não está ativo. No n8n, clique em 'Execute workflow' e tente novamente.";
+            userMessage = "Webhook n8n nao esta ativo. No n8n, clique em 'Execute workflow' e tente novamente.";
           }
         } catch (e) {
           // Keep default message if parsing fails
@@ -1793,3 +1612,4 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   return httpServer;
 }
+
