@@ -18,6 +18,37 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ChevronRight, ChevronLeft, Plus, Trash2, Check } from "lucide-react";
 import { Resource, Audience } from "@shared/schema";
 
+const OBJECTIVE_OPTIONS: Record<
+  string,
+  { label: string; objective: string; optimizationGoal: string }
+> = {
+  leads: {
+    label: "Geração de Leads",
+    objective: "OUTCOME_LEADS",
+    optimizationGoal: "LEAD_GENERATION",
+  },
+  whatsapp: {
+    label: "Mensagens WhatsApp",
+    objective: "OUTCOME_ENGAGEMENT",
+    optimizationGoal: "CONVERSATIONS",
+  },
+  traffic: {
+    label: "Tráfego",
+    objective: "OUTCOME_TRAFFIC",
+    optimizationGoal: "LINK_CLICKS",
+  },
+  conversions: {
+    label: "Conversões",
+    objective: "OUTCOME_SALES",
+    optimizationGoal: "OFFSITE_CONVERSIONS",
+  },
+  awareness: {
+    label: "Alcance",
+    objective: "OUTCOME_AWARENESS",
+    optimizationGoal: "IMPRESSIONS",
+  },
+};
+
 interface AdSet {
   audienceId: string;
   budget: string;
@@ -40,7 +71,9 @@ export default function CampaignForm() {
   const [config, setConfig] = useState({
     accountId: "",
     name: "",
+    objectiveKey: "",
     objective: "",
+    optimizationGoal: "",
     pageId: "",
     instagramId: "",
     whatsappId: "",
@@ -110,7 +143,7 @@ export default function CampaignForm() {
 
   // Validation for each step
   const isStep1Valid = () => {
-    return config.accountId && config.name && config.objective;
+    return config.accountId && config.name && config.objectiveKey;
   };
 
   const isStep2Valid = () => {
@@ -165,6 +198,7 @@ export default function CampaignForm() {
         budget: adSet.budget,
         startDate: adSet.startDate || null,
         endDate: adSet.endDate || null,
+        optimizationGoal: config.optimizationGoal,
       })),
       creatives: creatives.map((creative) => ({
         title: creative.title,
@@ -283,18 +317,26 @@ export default function CampaignForm() {
                 Objetivo <span className="text-destructive">*</span>
               </Label>
               <Select
-                value={config.objective}
-                onValueChange={(value) => setConfig({ ...config, objective: value })}
+                value={config.objectiveKey}
+                onValueChange={(value) => {
+                  const mapping = OBJECTIVE_OPTIONS[value];
+                  setConfig((prev) => ({
+                    ...prev,
+                    objectiveKey: value,
+                    objective: mapping?.objective ?? "",
+                    optimizationGoal: mapping?.optimizationGoal ?? "",
+                  }));
+                }}
               >
                 <SelectTrigger id="objective" data-testid="select-objective">
                   <SelectValue placeholder="Selecione o objetivo" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="LEAD">Geração de Leads</SelectItem>
-                  <SelectItem value="TRAFFIC">Tráfego</SelectItem>
-                  <SelectItem value="WHATSAPP">Mensagens WhatsApp</SelectItem>
-                  <SelectItem value="CONVERSIONS">Conversões</SelectItem>
-                  <SelectItem value="REACH">Alcance</SelectItem>
+                  {Object.entries(OBJECTIVE_OPTIONS).map(([key, option]) => (
+                    <SelectItem key={key} value={key}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

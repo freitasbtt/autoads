@@ -56,26 +56,71 @@ export type InsertResource = z.infer<typeof insertResourceSchema>;
 export type Resource = typeof resources.$inferSelect;
 
 // Audiences table - target audience profiles
+export const audienceCitySchema = z.object({
+  key: z.string().min(1),
+  radius: z.number().int().min(1).max(100),
+  distance_unit: z.literal("kilometer"),
+  name: z.string().optional(),
+  region: z.string().optional(),
+});
+
+export const audienceInterestSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+});
+
+export type AudienceCity = z.infer<typeof audienceCitySchema>;
+export type AudienceInterest = z.infer<typeof audienceInterestSchema>;
+
 export const audiences = pgTable("audiences", {
   id: serial("id").primaryKey(),
   tenantId: integer("tenant_id").notNull().references(() => tenants.id),
   name: text("name").notNull(),
   type: text("type").notNull(), // interesse, custom_list
-  ageMin: integer("age_min"),
-  ageMax: integer("age_max"),
-  interests: text("interests").array(),
+  ageMin: integer("age_min").notNull(),
+  ageMax: integer("age_max").notNull(),
+  interests: jsonb("interests").$type<AudienceInterest[] | null>().default(sql`'[]'::jsonb`),
+  cities: jsonb("cities").$type<AudienceCity[] | null>().default(sql`'[]'::jsonb`),
   behaviors: text("behaviors").array(),
-  locations: text("locations").array().notNull(),
+  locations: text("locations").array(),
   customListFile: text("custom_list_file"), // for CSV uploads
   estimatedSize: text("estimated_size"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
-export const insertAudienceSchema = createInsertSchema(audiences).omit({
-  id: true,
-  tenantId: true,
-  createdAt: true,
+const audienceCoreSchema = z.object({
+  name: z.string().min(1),
+  type: z.string().min(1),
+  ageMin: z.number().int().min(18).max(65),
+  ageMax: z.number().int().min(18).max(65),
+  interests: z.array(audienceInterestSchema).default([]),
+  cities: z.array(audienceCitySchema).default([]),
+  behaviors: z.array(z.string()).default([]),
+  locations: z.array(z.string()).default([]),
+  customListFile: z.string().nullable().optional(),
+  estimatedSize: z.string().nullable().optional(),
 });
+
+export const insertAudienceSchema = audienceCoreSchema.superRefine((data, ctx) => {
+  if (data.ageMin > data.ageMax) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["ageMax"],
+      message: "ageMin must be less than or equal to ageMax",
+    });
+  }
+});
+
+export const updateAudienceSchema = audienceCoreSchema.partial().superRefine((data, ctx) => {
+  if (data.ageMin !== undefined && data.ageMax !== undefined && data.ageMin > data.ageMax) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["ageMax"],
+      message: "ageMin must be less than or equal to ageMax",
+    });
+  }
+});
+
 export type InsertAudience = z.infer<typeof insertAudienceSchema>;
 export type Audience = typeof audiences.$inferSelect;
 

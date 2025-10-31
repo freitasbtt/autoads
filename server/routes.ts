@@ -20,10 +20,18 @@ import {
   insertUserSchema,
   insertResourceSchema,
   insertAudienceSchema,
+  updateAudienceSchema,
   insertCampaignSchema,
   insertIntegrationSchema,
 } from "@shared/schema";
 import crypto from "crypto";
+
+function setNoCacheHeaders(res: Response): void {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  res.setHeader("Surrogate-Control", "no-store");
+}
 
 // Extend session data to include OAuth state
 declare module "express-session" {
@@ -86,6 +94,21 @@ const OBJECTIVE_OUTCOME_MAP: Record<string, string> = {
   REACH: "OUTCOME_AWARENESS",
   OUTCOME_AWARENESS: "OUTCOME_AWARENESS",
 };
+
+const OBJECTIVE_OPTIMIZATION_MAP: Record<string, string> = {
+  OUTCOME_LEADS: "LEAD_GENERATION",
+  OUTCOME_ENGAGEMENT: "CONVERSATIONS",
+  OUTCOME_TRAFFIC: "LINK_CLICKS",
+  OUTCOME_SALES: "OFFSITE_CONVERSIONS",
+  OUTCOME_AWARENESS: "IMPRESSIONS",
+};
+
+const DEFAULT_PUBLISHER_PLATFORMS = [
+  "facebook",
+  "instagram",
+  "messenger",
+  "audience_network",
+] as const;
 
 function mapObjectiveToOutcome(value: unknown): string {
   const normalized = typeof value === "string" ? value.trim().toUpperCase() : "";
@@ -318,6 +341,130 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  function parseQueryParam(value: unknown): string {
+    if (Array.isArray(value)) {
+      return value[0] ?? "";
+    }
+    if (typeof value === "string") {
+      return value;
+    }
+    return "";
+  }
+
+  app.get("/api/meta/search/cities", isAuthenticated, async (req, res, next) => {
+    try {
+      const user = req.user as User;
+      const rawQuery = parseQueryParam(req.query.q);
+      const query = rawQuery.trim();
+
+      if (query.length < 2) {
+        return res.json([]);
+      }
+
+      const access = await getMetaAccess(user.tenantId);
+      if (!access) {
+        return res.status(400).json({ message: "Integração com Meta não configurada" });
+      }
+
+      const params = new URLSearchParams({
+        type: "adgeolocation",
+        q: query,
+        country_code: "BR",
+        location_types: JSON.stringify(["city"]),
+        access_token: access.accessToken,
+      });
+
+      if (access.appSecretProof) {
+        params.set("appsecret_proof", access.appSecretProof);
+      }
+
+      const response = await fetch(`https://graph.facebook.com/v23.0/search?${params.toString()}`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Meta city search failed:", response.status, errorText);
+        return res
+          .status(response.status)
+          .json({ message: "Falha ao buscar cidades no Meta", details: errorText });
+      }
+
+      const body: any = await response.json();
+      const results = Array.isArray(body?.data)
+        ? body.data
+            .map((item: any) => ({
+              id: String(item?.key ?? item?.id ?? ""),
+              name: typeof item?.name === "string" ? item.name : "",
+              region:
+                typeof item?.region === "string"
+                  ? item.region
+                  : typeof item?.country_name === "string"
+                  ? item.country_name
+                  : undefined,
+            }))
+            .filter((item: { id: string; name: string }) => item.id.length > 0 && item.name.length > 0)
+        : [];
+
+      setNoCacheHeaders(res);
+      res.removeHeader("ETag");
+      setNoCacheHeaders(res);
+      res.removeHeader("ETag");
+      res.json(results);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.get("/api/meta/search/interests", isAuthenticated, async (req, res, next) => {
+    try {
+      const user = req.user as User;
+      const rawQuery = parseQueryParam(req.query.q);
+      const query = rawQuery.trim();
+
+      if (query.length < 2) {
+        return res.json([]);
+      }
+
+      const access = await getMetaAccess(user.tenantId);
+      if (!access) {
+        return res.status(400).json({ message: "Integração com Meta não configurada" });
+      }
+
+      const params = new URLSearchParams({
+        type: "adinterest",
+        q: query,
+        limit: "10",
+        locale: "pt_BR",
+        access_token: access.accessToken,
+      });
+
+      if (access.appSecretProof) {
+        params.set("appsecret_proof", access.appSecretProof);
+      }
+
+      const response = await fetch(`https://graph.facebook.com/v23.0/search?${params.toString()}`);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Meta interest search failed:", response.status, errorText);
+        return res
+          .status(response.status)
+          .json({ message: "Falha ao buscar interesses no Meta", details: errorText });
+      }
+
+      const body: any = await response.json();
+      const results = Array.isArray(body?.data)
+        ? body.data
+            .map((item: any) => ({
+              id: String(item?.id ?? ""),
+              name: typeof item?.name === "string" ? item.name : "",
+            }))
+            .filter((item: { id: string; name: string }) => item.id.length > 0 && item.name.length > 0)
+        : [];
+
+      res.json(results);
+    } catch (err) {
+      next(err);
+    }
+  });
+
   // Get single audience
   app.get("/api/audiences/:id", isAuthenticated, async (req, res, next) => {
     try {
@@ -365,7 +512,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Prevent tenantId override
-      const data = insertAudienceSchema.partial().parse(req.body);
+      const data = updateAudienceSchema.parse(req.body);
       const audience = await storage.updateAudience(id, data);
       res.json(audience);
     } catch (err) {
@@ -544,6 +691,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return undefined;
       };
 
+      const mappedObjective = mapObjectiveToOutcome(campaign.objective);
+
       const adSetEntries = Array.isArray(campaign.adSets)
         ? (campaign.adSets as Array<Record<string, unknown>>)
         : [];
@@ -576,7 +725,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const startDateRaw = adSet["startDate"];
           const endDateRaw = adSet["endDate"];
           const gendersRaw = adSet["genders"];
-          const publisherPlatformsRaw = adSet["publisherPlatforms"];
 
           const dailyBudget =
             budgetValue !== undefined ? Math.max(0, Math.round(budgetValue * 100)) : undefined;
@@ -592,27 +740,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
               ? (gendersRaw as number[])
               : [];
 
-          const publisherPlatforms =
-            Array.isArray(publisherPlatformsRaw) &&
-            publisherPlatformsRaw.every((platform) => typeof platform === "string")
-              ? (publisherPlatformsRaw as string[])
-              : ["facebook", "instagram"];
+          const publisherPlatforms = Array.from(DEFAULT_PUBLISHER_PLATFORMS);
+
+          const cityTargets = (audienceData?.cities ?? []).map(({ key, radius, distance_unit }) => ({
+            key,
+            radius,
+            distance_unit,
+          }));
+
+          const interestTargets = (audienceData?.interests ?? []).map(({ id, name }) => ({
+            id,
+            name,
+          }));
+
+          const geoLocations =
+            cityTargets.length > 0
+              ? {
+                  cities: cityTargets,
+                }
+              : undefined;
+
+          const flexibleSpec =
+            interestTargets.length > 0
+              ? [
+                  {
+                    interests: interestTargets,
+                  },
+                ]
+              : undefined;
+
+          const optimizationGoalRaw = adSet["optimizationGoal"];
+          const optimizationGoal =
+            typeof optimizationGoalRaw === "string" && optimizationGoalRaw.trim().length > 0
+              ? optimizationGoalRaw.trim()
+              : OBJECTIVE_OPTIMIZATION_MAP[mappedObjective] ?? "LEAD_GENERATION";
 
           return {
             name: adSetName,
             billing_event: "IMPRESSIONS",
-            optimization_goal: "LEAD_GENERATION",
+            optimization_goal: optimizationGoal,
             bid_strategy: "LOWEST_COST_WITHOUT_CAP",
             daily_budget: dailyBudget,
             targeting: {
               age_min: audienceData?.ageMin ?? undefined,
               age_max: audienceData?.ageMax ?? undefined,
               genders,
-              geo_locations: {
-                regions: audienceData?.locations ?? [],
-              },
-              interests: audienceData?.interests ?? [],
-              behaviors: audienceData?.behaviors ?? [],
+              geo_locations: geoLocations,
+              flexible_spec: flexibleSpec,
               publisher_platforms: publisherPlatforms,
             },
             status: "PAUSED",
@@ -621,8 +795,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           };
         })
       );
-
-      const mappedObjective = mapObjectiveToOutcome(campaign.objective);
 
       const webhookPayload = {
         body: {
@@ -1308,6 +1480,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return crypto.createHmac('sha256', appSecret)
       .update(accessToken)
       .digest('hex');
+  }
+
+  async function getMetaAccess(tenantId: number): Promise<{
+    accessToken: string;
+    appSecretProof?: string;
+  } | null> {
+    const integration = await storage.getIntegrationByProvider(tenantId, "Meta");
+    if (!integration) {
+      return null;
+    }
+    const config = integration.config as Record<string, unknown>;
+    const accessToken = typeof config?.accessToken === "string" ? config.accessToken : undefined;
+    if (!accessToken) {
+      return null;
+    }
+    const settings = await storage.getAppSettings();
+    const appSecretProof =
+      settings?.metaAppSecret && settings.metaAppSecret.length > 0
+        ? generateAppSecretProof(accessToken, settings.metaAppSecret)
+        : undefined;
+    return { accessToken, appSecretProof };
   }
 
   // Initiate Meta OAuth flow

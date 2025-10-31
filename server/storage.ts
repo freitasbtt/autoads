@@ -209,10 +209,10 @@ export class MemStorage implements IStorage {
     const audience: Audience = {
       ...insertAudience,
       id,
-      ageMin: insertAudience.ageMin ?? null,
-      ageMax: insertAudience.ageMax ?? null,
-      interests: insertAudience.interests ?? null,
-      behaviors: insertAudience.behaviors ?? null,
+      interests: insertAudience.interests ?? [],
+      cities: insertAudience.cities ?? [],
+      behaviors: insertAudience.behaviors ?? [],
+      locations: insertAudience.locations ?? [],
       customListFile: insertAudience.customListFile ?? null,
       estimatedSize: insertAudience.estimatedSize ?? null,
       createdAt: new Date(),
@@ -224,7 +224,14 @@ export class MemStorage implements IStorage {
   async updateAudience(id: number, updates: Partial<InsertAudience>): Promise<Audience | undefined> {
     const audience = this.audiences.get(id);
     if (!audience) return undefined;
-    const updated = { ...audience, ...updates };
+    const updated = {
+      ...audience,
+      ...updates,
+      interests: updates.interests ?? audience.interests ?? [],
+      cities: updates.cities ?? audience.cities ?? [],
+      behaviors: updates.behaviors ?? audience.behaviors ?? [],
+      locations: updates.locations ?? audience.locations ?? [],
+    };
     this.audiences.set(id, updated);
     return updated;
   }
@@ -527,7 +534,14 @@ export class DbStorage implements IStorage {
   async createAudience(
     insertAudience: InsertAudience & { tenantId: number }
   ): Promise<Audience> {
-    const [audience] = await db.insert(schema.audiences).values(insertAudience).returning();
+    const values = {
+      ...insertAudience,
+      interests: insertAudience.interests ?? [],
+      cities: insertAudience.cities ?? [],
+      behaviors: insertAudience.behaviors ?? [],
+      locations: insertAudience.locations ?? [],
+    };
+    const [audience] = await db.insert(schema.audiences).values(values).returning();
     return audience;
   }
 
@@ -535,9 +549,16 @@ export class DbStorage implements IStorage {
     id: number,
     updates: Partial<InsertAudience>
   ): Promise<Audience | undefined> {
+    const updateData = {
+      ...updates,
+      interests: updates.interests,
+      cities: updates.cities,
+      behaviors: updates.behaviors,
+      locations: updates.locations,
+    };
     const [audience] = await db
       .update(schema.audiences)
-      .set(updates)
+      .set(updateData)
       .where(eq(schema.audiences.id, id))
       .returning();
     return audience;
