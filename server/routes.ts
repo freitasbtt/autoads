@@ -70,6 +70,31 @@ function getPublicAppUrl(req: Request): string {
   return `${req.protocol}://${host}`;
 }
 
+const OBJECTIVE_OUTCOME_MAP: Record<string, string> = {
+  LEAD: "OUTCOME_LEADS",
+  LEADS: "OUTCOME_LEADS",
+  OUTCOME_LEADS: "OUTCOME_LEADS",
+  TRAFFIC: "OUTCOME_TRAFFIC",
+  OUTCOME_TRAFFIC: "OUTCOME_TRAFFIC",
+  WHATSAPP: "OUTCOME_ENGAGEMENT",
+  MESSAGES: "OUTCOME_ENGAGEMENT",
+  MESSAGE: "OUTCOME_ENGAGEMENT",
+  OUTCOME_ENGAGEMENT: "OUTCOME_ENGAGEMENT",
+  CONVERSIONS: "OUTCOME_SALES",
+  SALES: "OUTCOME_SALES",
+  OUTCOME_SALES: "OUTCOME_SALES",
+  REACH: "OUTCOME_AWARENESS",
+  OUTCOME_AWARENESS: "OUTCOME_AWARENESS",
+};
+
+function mapObjectiveToOutcome(value: unknown): string {
+  const normalized = typeof value === "string" ? value.trim().toUpperCase() : "";
+  if (!normalized) {
+    return "OUTCOME_LEADS";
+  }
+  return OBJECTIVE_OUTCOME_MAP[normalized] ?? (normalized.startsWith("OUTCOME_") ? normalized : "OUTCOME_LEADS");
+}
+
 // Configure passport
 passport.use(
   new LocalStrategy(
@@ -500,42 +525,135 @@ export async function registerRoutes(app: Express): Promise<Server> {
         primaryDriveFolderFromCreative ||
         (typeof campaign.driveFolderId === "string" ? campaign.driveFolderId : "");
 
-      // Prepare webhook payload
-      const webhookPayload = [{
-        headers: {
-          "content-type": "application/json",
-          "user-agent": "Meta-Ads-Platform/1.0"
-        },
-        params: {},
-        query: {},
+      const tenant = await storage.getTenant(user.tenantId);
+      const callbackBaseUrl = getPublicAppUrl(req).replace(/\/$/, "");
+      const callbackUrl = `${callbackBaseUrl}/api/webhooks/n8n/status`;
+      const requestId = `req-${crypto.randomUUID().replace(/-/g, "")}`;
+
+      const parseBudgetToNumber = (raw: unknown): number | undefined => {
+        if (typeof raw === "number" && Number.isFinite(raw)) {
+          return raw;
+        }
+        if (typeof raw === "string") {
+          const normalized = raw.replace(/[^0-9,.-]/g, "").replace(/\./g, "").replace(",", ".");
+          const value = Number.parseFloat(normalized);
+          if (Number.isFinite(value)) {
+            return value;
+          }
+        }
+        return undefined;
+      };
+
+      const adSetEntries = Array.isArray(campaign.adSets)
+        ? (campaign.adSets as Array<Record<string, unknown>>)
+        : [];
+
+      const adSetsPayload = await Promise.all(
+        adSetEntries.map(async (rawAdSet, index) => {
+          const adSet = rawAdSet as Record<string, unknown>;
+
+          const audienceIdInput = adSet["audienceId"];
+          const audienceId =
+            typeof audienceIdInput === "number"
+              ? audienceIdInput
+              : Number.parseInt(String(audienceIdInput ?? ""), 10);
+
+          const audience =
+            Number.isFinite(audienceId) && audienceId > 0
+              ? await storage.getAudience(audienceId)
+              : undefined;
+
+          const audienceData =
+            audience && audience.tenantId === user.tenantId ? audience : undefined;
+
+          const adSetNameRaw = adSet["name"];
+          const adSetName =
+            typeof adSetNameRaw === "string" && adSetNameRaw.trim().length > 0
+              ? adSetNameRaw.trim()
+              : audienceData?.name ?? `Conjunto ${index + 1}`;
+
+          const budgetValue = parseBudgetToNumber(adSet["budget"]);
+          const startDateRaw = adSet["startDate"];
+          const endDateRaw = adSet["endDate"];
+          const gendersRaw = adSet["genders"];
+          const publisherPlatformsRaw = adSet["publisherPlatforms"];
+
+          const dailyBudget =
+            budgetValue !== undefined ? Math.max(0, Math.round(budgetValue * 100)) : undefined;
+          const startDate =
+            typeof startDateRaw === "string" && startDateRaw.trim().length > 0
+              ? startDateRaw
+              : new Date().toISOString().slice(0, 10);
+          const endDate =
+            typeof endDateRaw === "string" && endDateRaw.trim().length > 0 ? endDateRaw : undefined;
+
+          const genders =
+            Array.isArray(gendersRaw) && gendersRaw.every((g) => typeof g === "number")
+              ? (gendersRaw as number[])
+              : [];
+
+          const publisherPlatforms =
+            Array.isArray(publisherPlatformsRaw) &&
+            publisherPlatformsRaw.every((platform) => typeof platform === "string")
+              ? (publisherPlatformsRaw as string[])
+              : ["facebook", "instagram"];
+
+          return {
+            name: adSetName,
+            billing_event: "IMPRESSIONS",
+            optimization_goal: "LEAD_GENERATION",
+            bid_strategy: "LOWEST_COST_WITHOUT_CAP",
+            daily_budget: dailyBudget,
+            targeting: {
+              age_min: audienceData?.ageMin ?? undefined,
+              age_max: audienceData?.ageMax ?? undefined,
+              genders,
+              geo_locations: {
+                regions: audienceData?.locations ?? [],
+              },
+              interests: audienceData?.interests ?? [],
+              behaviors: audienceData?.behaviors ?? [],
+              publisher_platforms: publisherPlatforms,
+            },
+            status: "PAUSED",
+            start_time: startDate,
+            end_time: endDate,
+          };
+        })
+      );
+
+      const mappedObjective = mapObjectiveToOutcome(campaign.objective);
+
+      const webhookPayload = {
         body: {
-          rowIndex: campaign.id,
-          sheet: accountResource ? `ACC:${accountResource.value}` : "Unknown",
           data: {
-            submit: "ON",
-            campaign_id: String(campaign.id),
-            campaign_name: campaign.name,
-            objective: campaign.objective,
-            budget_type: "DAILY",
-            daily_budget: campaign.budget,
+            action: "create_campaign" as const,
+            client: tenant?.name ?? `Tenant-${user.tenantId}`,
+            ad_account_id: adAccountId || (accountResource ? accountResource.value : ""),
+            external_id: String(campaign.id),
+            campaign: {
+              name: campaign.name,
+              objective: mappedObjective,
+              buying_type: "AUCTION",
+              status: campaign.status ? campaign.status.toUpperCase() : "PAUSED",
+              special_ad_categories: ["NONE"],
+            },
+            adsets: adSetsPayload,
             page_id: pageResource ? pageResource.value : "",
             instagram_user_id: instagramResource ? instagramResource.value : "",
-            whatsapp_number_id: whatsappResource ? whatsappResource.value : "",
+            leadgen_form_id: leadformResource ? leadformResource.value : "",
             drive_folder_id: driveFolderId || "",
             message_text: campaign.message || "",
             title_text: campaign.title || "",
-            leadgen_form_id: leadformResource ? leadformResource.value : "",
+            whatsapp_number_id: whatsappResource ? whatsappResource.value : "",
             website_url: campaign.websiteUrl || "",
-            status: campaign.status.toUpperCase(),
-            status_detail: "Reenviado ao n8n",
-            ad_account_id: adAccountId || (accountResource ? accountResource.value : ""),
-            client: `Tenant-${user.tenantId}`
           },
-          ts: new Date().toISOString()
+          meta: {
+            request_id: requestId,
+            callback_url: callbackUrl,
+          },
         },
-        webhookUrl: settings.n8nWebhookUrl,
-        executionMode: "production"
-      }];
+      };
 
       // Send webhook
       const webhookResponse = await fetch(settings.n8nWebhookUrl, {
@@ -589,6 +707,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Extract data from request
       const {
+        ad_account_id,
+        account_id,
+        account_resource_id,
+        campaign_id,
+        external_id,
+        campaign_name,
+        objective,
         objectives,
         page_id,
         page_name,
@@ -602,48 +727,127 @@ export async function registerRoutes(app: Express): Promise<Server> {
         drive_folder_id,
         drive_folder_name,
         title,
+        title_text,
         message,
-        metadata
-      } = req.body;
+        message_text,
+        metadata,
+        client,
+        callback_url,
+        request_id,
+      } = req.body ?? {};
 
-      // Prepare webhook payload matching n8n expected format
-      const webhookPayload = [{
-        headers: {
-          "content-type": "application/json",
-          "user-agent": "Meta-Ads-Platform/1.0"
-        },
-        params: {},
-        query: {},
+      const tenant = await storage.getTenant(user.tenantId);
+      const callbackBaseUrl = getPublicAppUrl(req).replace(/\/$/, "");
+      const inferredCallbackUrl = `${callbackBaseUrl}/api/webhooks/n8n/status`;
+
+      const incomingMeta =
+        metadata && typeof metadata === "object" ? (metadata as Record<string, unknown>) : {};
+
+      const computedRequestId =
+        (typeof request_id === "string" && request_id.length > 0
+          ? request_id
+          : undefined) ||
+        (typeof incomingMeta["request_id"] === "string" && (incomingMeta["request_id"] as string).length > 0
+          ? (incomingMeta["request_id"] as string)
+          : `req-${crypto.randomUUID().replace(/-/g, "")}`);
+
+      const computedCallbackUrl =
+        (typeof callback_url === "string" && callback_url.length > 0
+          ? callback_url
+          : undefined) ||
+        (typeof incomingMeta["callback_url"] === "string" &&
+        (incomingMeta["callback_url"] as string).length > 0
+          ? (incomingMeta["callback_url"] as string)
+          : inferredCallbackUrl);
+
+      const accountResourceIdInput = account_resource_id ?? account_id;
+      const accountResourceId =
+        typeof accountResourceIdInput === "number"
+          ? accountResourceIdInput
+          : Number.parseInt(String(accountResourceIdInput ?? ""), 10);
+
+      const accountResource =
+        Number.isFinite(accountResourceId) && accountResourceId > 0
+          ? await storage.getResource(accountResourceId)
+          : undefined;
+
+      const sanitizedAdAccountId =
+        (typeof ad_account_id === "string" && ad_account_id.length > 0
+          ? ad_account_id
+          : undefined) ??
+        accountResource?.value ??
+        "";
+
+      const clientName =
+        (typeof client === "string" && client.trim().length > 0
+          ? client.trim()
+          : undefined) ??
+        tenant?.name ??
+        `Tenant-${user.tenantId}`;
+
+      const objectiveValueRaw =
+        (typeof objective === "string" && objective.length > 0 ? objective : undefined) ??
+        (Array.isArray(objectives) && objectives.length > 0 ? String(objectives[0]) : "");
+      const objectiveOutcome = mapObjectiveToOutcome(objectiveValueRaw);
+
+      const campaignIdentifier = external_id ?? campaign_id;
+      const outgoingExternalId = campaignIdentifier !== undefined && campaignIdentifier !== null
+        ? String(campaignIdentifier)
+        : "";
+
+      const webhookMeta: Record<string, unknown> = {
+        ...incomingMeta,
+        request_id: computedRequestId,
+        callback_url: computedCallbackUrl,
+      };
+
+      const webhookPayload = {
         body: {
-          rowIndex: Date.now(), // Use timestamp as unique identifier
-          sheet: "EXISTING_CAMPAIGN",
           data: {
-            submit: "ON",
-            objectives: objectives,
-            page_id: page_id || "",
-            page_name: page_name || "",
-            instagram_user_id: instagram_user_id || "",
-            instagram_name: instagram_name || "",
-            whatsapp_number_id: whatsapp_number_id || "",
-            whatsapp_name: whatsapp_name || "",
-            leadgen_form_id: leadgen_form_id || "",
-            leadgen_form_name: leadgen_form_name || "",
-            website_url: website_url || "",
-            drive_folder_id: drive_folder_id || "",
-            drive_folder_name: drive_folder_name || "",
-            message_text: message || "",
-            title_text: title || "",
-            status: "PENDING",
-            status_detail: "Enviado ao n8n (campanha existente)",
-            client: `Tenant-${user.tenantId}`,
-            form_type: metadata?.form_type || "existing_campaign",
-            timestamp: metadata?.timestamp || new Date().toISOString()
+            action: "add_creatives" as const,
+            client: clientName,
+            ad_account_id: sanitizedAdAccountId,
+            external_id: outgoingExternalId,
+            campaign_name:
+              (typeof campaign_name === "string" && campaign_name.length > 0
+                ? campaign_name
+                : undefined) || (typeof title_text === "string" && title_text.length > 0
+                ? title_text
+                : title ?? ""),
+            objective: objectiveOutcome,
+            page_id: page_id !== undefined && page_id !== null ? String(page_id) : "",
+            instagram_user_id:
+              instagram_user_id !== undefined && instagram_user_id !== null
+                ? String(instagram_user_id)
+                : "",
+            leadgen_form_id:
+              leadgen_form_id !== undefined && leadgen_form_id !== null
+                ? String(leadgen_form_id)
+                : "",
+            drive_folder_id:
+              drive_folder_id !== undefined && drive_folder_id !== null
+                ? String(drive_folder_id)
+                : "",
+            message_text:
+              (typeof message_text === "string" && message_text.length > 0
+                ? message_text
+                : message) || "",
+            title_text:
+              (typeof title_text === "string" && title_text.length > 0 ? title_text : title) || "",
+            whatsapp_number_id:
+              whatsapp_number_id !== undefined && whatsapp_number_id !== null
+                ? String(whatsapp_number_id)
+                : "",
+            website_url: typeof website_url === "string" ? website_url : "",
+            page_name: typeof page_name === "string" ? page_name : "",
+            instagram_name: typeof instagram_name === "string" ? instagram_name : "",
+            whatsapp_name: typeof whatsapp_name === "string" ? whatsapp_name : "",
+            leadgen_form_name: typeof leadgen_form_name === "string" ? leadgen_form_name : "",
+            drive_folder_name: typeof drive_folder_name === "string" ? drive_folder_name : "",
           },
-          ts: new Date().toISOString()
+          meta: webhookMeta,
         },
-        webhookUrl: settings.n8nWebhookUrl,
-        executionMode: "production"
-      }];
+      };
 
       // Send webhook
       const webhookResponse = await fetch(settings.n8nWebhookUrl, {
