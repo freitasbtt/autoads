@@ -41,14 +41,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Separator } from "@/components/ui/separator";
-import {
   Command,
   CommandEmpty,
   CommandGroup,
@@ -64,10 +56,11 @@ import {
 import { cn } from "@/lib/utils";
 
 import type { Campaign, Resource } from "@shared/schema";
+import { CampaignCreativesDialog } from "@/components/CampaignCreativesDialog";
 
-/* ------------------------------------------------------------------
- * Types
- * ------------------------------------------------------------------ */
+// -------------------------------------------------
+// Tipos e helpers
+// -------------------------------------------------
 
 type MetricTotals = {
   spend: number;
@@ -84,8 +77,7 @@ type DashboardCampaignMetrics = {
   name: string | null;
   objective: string | null;
   status: string | null;
-
-  // já vem do backend com a "ação principal" escolhida
+  metrics: MetricTotals;
   resultado?: {
     label: string;
     quantidade: number | null;
@@ -110,14 +102,20 @@ type DashboardCampaignMetrics = {
       clicks: number;
     }>;
   };
+};
 
-  metrics: MetricTotals;
+type CampaignHeaderSnapshot = {
+  spend: number;
+  resultLabel: string;
+  resultQuantity: number | null;
+  costPerResult: number | null;
+  ctr: number | null;
 };
 
 type DashboardAccountMetrics = {
   id: number;
   name: string;
-  value: string;
+  value: string; // <- esse 'value' é seu act_xxx
   metrics: MetricTotals;
   campaigns: DashboardCampaignMetrics[];
 };
@@ -132,36 +130,6 @@ type DashboardMetricsResponse = {
   totals: MetricTotals;
   previousTotals: MetricTotals;
   accounts: DashboardAccountMetrics[];
-};
-
-type InsightAction = {
-  type: string;
-  value: number;
-};
-
-type InsightCost = {
-  type: string;
-  value: number | null;
-};
-
-type CampaignInsightsResponse = {
-  campaignId: string;
-  campaignName: string | null;
-  objective: string | null;
-  dateRange: {
-    start: string | null;
-    end: string | null;
-    preset: string | null;
-  };
-  totals: {
-    spend: number;
-    impressions: number;
-    reach: number;
-    clicks: number;
-  };
-  actions: InsightAction[];
-  actionValues: InsightAction[];
-  costPerActionType: InsightCost[];
 };
 
 type KPICardTrend = {
@@ -202,10 +170,6 @@ type AccountMetricProps = {
   value: string;
 };
 
-/* ------------------------------------------------------------------
- * Helpers / formatters
- * ------------------------------------------------------------------ */
-
 const defaultTotals: MetricTotals = {
   spend: 0,
   resultSpend: 0,
@@ -241,31 +205,6 @@ const OBJECTIVE_LABELS: Record<string, string> = {
   SALES: "Vendas",
 };
 
-const OPTIMIZATION_GOAL_LABELS: Record<string, string> = {
-  LEAD_GENERATION: "Otimização para Leads",
-  MESSAGES: "Otimização para Mensagens",
-  PURCHASE: "Otimização para Compras",
-  LANDING_PAGE_VIEWS: "Otimização para Página de destino",
-  LINK_CLICKS: "Otimização para Cliques no link",
-  POST_ENGAGEMENT: "Otimização para Engajamento",
-  OUTCOME_ENGAGEMENT: "Otimização para Engajamento",
-  OUTCOME_SALES: "Otimização para Vendas",
-  OUTCOME_TRAFFIC: "Otimização para Tráfego",
-  OUTCOME_REACH: "Otimização para Alcance",
-};
-
-function getObjectiveLabel(value: string | null | undefined): string {
-  if (!value) return "";
-  const upper = value.toUpperCase();
-  return OBJECTIVE_LABELS[upper] ?? upper;
-}
-
-function getOptimizationGoalLabel(value: string | null | undefined): string {
-  if (!value) return "Objetivo não informado";
-  const upper = value.toUpperCase();
-  return OPTIMIZATION_GOAL_LABELS[upper] ?? upper;
-}
-
 const STATUS_LABELS: Record<string, string> = {
   ACTIVE: "Ativa",
   PAUSED: "Pausada",
@@ -273,6 +212,12 @@ const STATUS_LABELS: Record<string, string> = {
   DELETED: "Removida",
   DISCARDED: "Descartada",
 };
+
+function getObjectiveLabel(value: string | null | undefined): string {
+  if (!value) return "";
+  const upper = value.toUpperCase();
+  return OBJECTIVE_LABELS[upper] ?? upper;
+}
 
 function getStatusLabel(value: string | null | undefined): string {
   if (!value) return "Status não informado";
@@ -341,15 +286,10 @@ function calcCTR(clicks: number, impressions: number): number | null {
   return (clicks / impressions) * 100;
 }
 
-function calcCPL(spend: number, results: number | null): number | null {
-  if (!results || results <= 0) return null;
-  return spend / results;
-}
-
 /**
- * Extrai o "resultado principal" que a gente quer exibir:
- * - Tenta usar o campo `resultado` que já vem priorizado do backend
- * - Se não tiver, cai num fallback lógico usando MetricTotals
+ * Extrai o "resultado principal":
+ * - Prefere `resultado` (vindo pronto do backend)
+ * - Cai pro fallback em MetricTotals se não existir
  */
 function extractResultSummary(
   metrics: MetricTotals,
@@ -362,24 +302,24 @@ function extractResultSummary(
   label: string;
   quantidade: number | null;
   custo: number | null;
-  } {
-    if (resultado) {
-      if (resultado.quantidade !== null) {
-        return {
-          label: resultado.label || "Resultado",
-          quantidade: resultado.quantidade,
-          custo: resultado.custo_por_resultado,
-        };
-      }
-
+} {
+  if (resultado) {
+    if (resultado.quantidade !== null) {
       return {
         label: resultado.label || "Resultado",
-        quantidade: null,
+        quantidade: resultado.quantidade,
         custo: resultado.custo_por_resultado,
       };
     }
 
-    // fallback quando não existe `resultado`
+    return {
+      label: resultado.label || "Resultado",
+      quantidade: null,
+      custo: resultado.custo_por_resultado,
+    };
+  }
+
+  // fallback quando não existe `resultado`
   const rawQty =
     (Number.isFinite(metrics.results) && metrics.results > 0
       ? metrics.results
@@ -399,10 +339,6 @@ function extractResultSummary(
     custo: fallbackCost ?? null,
   };
 }
-
-/* ------------------------------------------------------------------
- * Mini componentes visuais
- * ------------------------------------------------------------------ */
 
 function AccountMetric({ label, value }: AccountMetricProps) {
   return (
@@ -559,677 +495,32 @@ function FilterCombobox({
   );
 }
 
-/* ------------------------------------------------------------------
- * Modal de Insights (drilldown da campanha)
- * ------------------------------------------------------------------ */
+// Snapshot rápido pra passar pro modal
+function buildCampaignHeaderSnapshot(
+  campaign: DashboardCampaignMetrics,
+): CampaignHeaderSnapshot {
+  const campSummary = extractResultSummary(
+    campaign.metrics,
+    campaign.resultado,
+  );
 
-type InsightsDialogProps = {
-  open: boolean;
-  onClose: () => void;
-  campaign: DashboardCampaignMetrics | null;
-  account: DashboardAccountMetrics | null;
-  baseRange: DateRange;
-};
+  const ctr = calcCTR(
+    campaign.metrics.clicks,
+    campaign.metrics.impressions,
+  );
 
-function InsightsDialog({
-  open,
-  onClose,
-  campaign,
-  account,
-  baseRange,
-}: InsightsDialogProps) {
-  const [modalRange, setModalRange] = useState<DateRange>(baseRange);
-
-  // sempre que trocar a campanha ou mudar o range base, reseta o modalRange
-  useEffect(() => {
-    if (campaign && baseRange.from && baseRange.to) {
-      setModalRange({
-        from: baseRange.from,
-        to: baseRange.to,
-      });
-    }
-  }, [campaign, baseRange.from, baseRange.to]);
-
-  const modalFrom = modalRange.from ?? baseRange.from!;
-  const modalTo =
-    modalRange.to ?? modalRange.from ?? baseRange.to ?? baseRange.from!;
-
-  const insightsEndpoint = campaign
-    ? `/api/meta/campaigns/${encodeURIComponent(
-        campaign.id,
-      )}/metrics?startDate=${formatDate(
-        modalFrom,
-        "yyyy-MM-dd",
-      )}&endDate=${formatDate(modalTo, "yyyy-MM-dd")}`
-    : null;
-
-  const {
-    data: insightData,
-    isLoading: insightLoading,
-    isError: insightError,
-    error: insightErrorObj,
-    refetch: refetchInsights,
-  } = useQuery<CampaignInsightsResponse, Error>({
-    queryKey: [insightsEndpoint],
-    enabled: Boolean(open && insightsEndpoint),
-  });
-
-  const modalRangesPresets = useMemo<QuickRange[]>(() => {
-    const now = new Date();
-    return [
-      {
-        label: "Últimos 7 dias",
-        range: {
-          from: subDays(now, 6),
-          to: now,
-        },
-      },
-      {
-        label: "Últimos 30 dias",
-        range: {
-          from: subDays(now, 29),
-          to: now,
-        },
-      },
-      {
-        label: "Este mês",
-        range: {
-          from: startOfMonth(now),
-          to: endOfMonth(now),
-        },
-      },
-    ];
-  }, []);
-
-  const handlePresetClick = (range: DateRange) => {
-    const fromDate: Date = range.from ?? new Date();
-    const toDate: Date = (range.to ?? range.from ?? fromDate) as Date;
-    setModalRange({ from: fromDate, to: toDate });
+  return {
+    spend: campaign.metrics.spend,
+    resultLabel: campSummary.label,
+    resultQuantity: campSummary.quantidade,
+    costPerResult: campSummary.custo,
+    ctr,
   };
-
-  // métricas base da campanha
-  const spend = insightData?.totals.spend ?? 0;
-  const impressions = insightData?.totals.impressions ?? 0;
-  const clicks = insightData?.totals.clicks ?? 0;
-  const reach = insightData?.totals.reach ?? 0;
-
-  // "ação principal" prioritária pra exibir
-  const mainAction = useMemo(() => {
-    if (!insightData?.actions) return null;
-
-    // heurística: prioriza coisas tipo lead/conversa/compra antes de clique
-    const priority = [
-      "lead",
-      "leadgen",
-      "conversa",
-      "mensagem",
-      "whatsapp",
-      "purchase",
-      "compra",
-      "resultado",
-    ];
-
-    for (const p of priority) {
-      const found = insightData.actions.find((a) =>
-        a.type.toLowerCase().includes(p),
-      );
-      if (found) return found;
-    }
-
-    // fallback = maior volume
-    let top = insightData.actions[0];
-    for (const act of insightData.actions) {
-      if (act.value > top.value) {
-        top = act;
-      }
-    }
-    return top ?? null;
-  }, [insightData?.actions]);
-
-  const mainResults = mainAction?.value ?? 0;
-  const ctr = calcCTR(clicks, impressions);
-  const cpc = clicks > 0 ? spend / clicks : null;
-  const cpl = calcCPL(spend, mainResults);
-
-  const adsetBreakdown = useMemo(
-    () => campaign?.resultado?.adsets ?? [],
-    [campaign],
-  );
-  const dominantGoalLabel = useMemo(() => {
-    const goal = campaign?.resultado?.optimization_goal ?? null;
-    return goal ? getOptimizationGoalLabel(goal) : null;
-  }, [campaign]);
-
-  const costRows = (insightData?.costPerActionType ?? []).map((row) => ({
-    action: row.type,
-    cost:
-      row.value !== null && Number.isFinite(row.value)
-        ? formatCurrency(row.value!)
-        : "N/D",
-  }));
-
-  const actionRows = (insightData?.actions ?? []).map((row) => ({
-    action: row.type,
-    qty: row.value,
-  }));
-
-  const dialogTitle = campaign
-    ? campaign.name || `Campanha ${campaign.id}`
-    : "Métricas da campanha";
-
-  const objectiveLabel = getObjectiveLabel(campaign?.objective);
-
-  return (
-    <Dialog open={open} onOpenChange={(val) => (!val ? onClose() : null)}>
-      <DialogContent className="max-h-[90vh] w-[95vw] max-w-4xl overflow-y-auto p-0">
-        {/* HEADER DO MODAL */}
-        <div className="flex items-start justify-between border-b p-4">
-          <DialogHeader className="space-y-1">
-            <DialogTitle className="text-xl font-semibold leading-tight">
-              {dialogTitle}
-            </DialogTitle>
-
-            <DialogDescription className="text-sm text-muted-foreground">
-              {account ? (
-                <>
-                  Conta:{" "}
-                  <span className="font-medium text-foreground">
-                    {account.name}
-                  </span>{" "}
-                  - ID {account.value}
-                </>
-              ) : (
-                "Conta não encontrada"
-              )}
-              {objectiveLabel && (
-                <>
-                  {" "}
-                  - Objetivo:{" "}
-                  <Badge variant="outline" className="align-middle">
-                    {objectiveLabel}
-                  </Badge>
-                </>
-              )}
-            </DialogDescription>
-
-            <div className="text-[0.7rem] text-muted-foreground">
-              Período aplicado:{" "}
-              <span className="font-medium text-foreground">
-                {formatRangeLabel({
-                  from: modalFrom,
-                  to: modalTo,
-                })}
-              </span>
-            </div>
-          </DialogHeader>
-
-          <Button
-            variant="ghost"
-            size="sm"
-            className="rounded-full p-2 text-muted-foreground hover:text-foreground"
-            onClick={onClose}
-          >
-            <X className="h-4 w-4" />
-            <span className="sr-only">Fechar</span>
-          </Button>
-        </div>
-
-        <div className="space-y-6 p-4">
-          {/* CONTROLES DO PERÍODO DENTRO DO MODAL */}
-          <Card>
-            <CardContent className="space-y-4 pt-6">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Ajustar período
-                </span>
-
-                {modalRangesPresets.map((preset) => (
-                  <Button
-                    key={preset.label}
-                    size="sm"
-                    variant={
-                      isSameDay(
-                        preset.range.from ?? new Date(),
-                        modalFrom ?? new Date(),
-                      ) &&
-                      isSameDay(
-                        (preset.range.to ??
-                          preset.range.from ??
-                          new Date()) as Date,
-                        modalTo ?? new Date(),
-                      )
-                        ? "default"
-                        : "outline"
-                    }
-                    className="rounded-full"
-                    onClick={() => handlePresetClick(preset.range)}
-                  >
-                    {preset.label}
-                  </Button>
-                ))}
-
-                <div className="ml-auto flex flex-col gap-1 text-right">
-                  <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Período customizado
-                  </span>
-                  <DateRangeSelector
-                    value={modalRange}
-                    onChange={(r) => {
-                      if (!r?.from) return;
-                      setModalRange({
-                        from: r.from,
-                        to: r.to ?? r.from,
-                      });
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                <span>
-                  Você pode analisar datas diferentes só dessa campanha, sem
-                  alterar o período global do dashboard.
-                </span>
-
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 px-2 text-[0.7rem]"
-                  onClick={() => refetchInsights()}
-                >
-                  <Loader2
-                    className={cn(
-                      "mr-1 h-3.5 w-3.5 animate-spin",
-                      insightLoading ? "opacity-100" : "hidden",
-                    )}
-                  />
-                  Atualizar
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* ESTADO DE ERRO */}
-          {insightError ? (
-            <Card className="border-destructive/50 bg-destructive/5">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2 text-destructive">
-                  <BarChart3 className="h-4 w-4" />
-                  Falha ao carregar métricas da campanha
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <p className="text-sm text-muted-foreground">
-                  {insightErrorObj?.message ??
-                    "Ocorreu um erro inesperado ao buscar os dados da campanha."}
-                </p>
-                <Button variant="outline" size="sm" onClick={() => refetchInsights()}>
-                  Tentar novamente
-                </Button>
-              </CardContent>
-            </Card>
-          ) : (
-            <>
-              {/* KPIs PRINCIPAIS DA CAMPANHA */}
-              <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <Card className="bg-muted/30">
-                  <CardContent className="space-y-2 pt-6">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Gasto
-                    </p>
-                    <p className="text-xl font-semibold">
-                      {formatCurrency(spend)}
-                    </p>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-muted/30">
-                  <CardContent className="space-y-2 pt-6">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Alcance
-                    </p>
-                    <p className="text-xl font-semibold">
-                      {formatInteger(reach)}
-                    </p>
-                    <p className="text-[0.7rem] leading-none text-muted-foreground">
-                      Pessoas únicas impactadas
-                    </p>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-muted/30">
-                  <CardContent className="space-y-2 pt-6">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Cliques
-                    </p>
-                    <p className="text-xl font-semibold">
-                      {formatInteger(clicks)}
-                    </p>
-                    <p className="text-[0.7rem] leading-none text-muted-foreground">
-                      CTR: {formatPercentage(ctr)}
-                    </p>
-                  </CardContent>
-                </Card>
-
-                <Card className="bg-muted/30">
-                  <CardContent className="space-y-2 pt-6">
-                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                      Ação principal
-                    </p>
-                    <p className="text-xl font-semibold">
-                      {formatInteger(mainResults)}
-                    </p>
-                    <p className="text-[0.7rem] leading-none text-muted-foreground">
-                      {mainAction
-                        ? mainAction.type
-                        : "Sem ações relevantes no período"}
-                    </p>
-                  </CardContent>
-                </Card>
-              </section>
-
-              {/* MÉTRICAS DERIVADAS (CPL / CPC / CTR) */}
-              <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">
-                      CPL / CPA
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-xs text-muted-foreground">
-                        Custo por resultado
-                      </span>
-                      <span className="font-mono text-lg font-semibold">
-                        {cpl !== null ? formatCurrency(cpl) : "N/D"}
-                      </span>
-                    </div>
-                    <div className="rounded-md bg-muted p-2 text-[0.7rem] leading-tight text-muted-foreground">
-                      Quanto você está pagando, em média, por cada{" "}
-                      {mainAction
-                        ? mainAction.type.toLowerCase()
-                        : "ação registrada"}{" "}
-                      nesse período.
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">
-                      CPC
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-xs text-muted-foreground">
-                        Custo por clique
-                      </span>
-                      <span className="font-mono text-lg font-semibold">
-                        {cpc !== null ? formatCurrency(cpc) : "N/D"}
-                      </span>
-                    </div>
-                    <div className="rounded-md bg-muted p-2 text-[0.7rem] leading-tight text-muted-foreground">
-                      Quanto cada clique efetivo custou no período.
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">
-                      CTR
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <div className="flex items-baseline justify-between">
-                      <span className="text-xs text-muted-foreground">
-                        Taxa de cliques
-                      </span>
-                      <span className="font-mono text-lg font-semibold">
-                        {formatPercentage(ctr)}
-                      </span>
-                    </div>
-                    <div className="rounded-md bg-muted p-2 text-[0.7rem] leading-tight text-muted-foreground">
-                      Relação entre impressões e cliques.
-                    </div>
-                  </CardContent>
-                </Card>
-              </section>
-
-              {/* AÇÕES REGISTRADAS */}
-              <section className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="flex items-center gap-2 text-sm font-semibold">
-                    <BarChart3 className="h-4 w-4 text-muted-foreground" />
-                    Resultados por ação
-                  </h3>
-                  <span className="text-[0.7rem] text-muted-foreground">
-                    Engajamentos e conversões capturadas pela API
-                  </span>
-                </div>
-
-                <div className="overflow-x-auto rounded-md border">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
-                      <tr className="border-b">
-                        <th className="px-4 py-2 font-medium">Ação</th>
-                        <th className="px-4 py-2 text-right font-medium">
-                          Quantidade
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {actionRows.length === 0 ? (
-                        <tr>
-                          <td
-                            className="px-4 py-6 text-center text-xs text-muted-foreground"
-                            colSpan={2}
-                          >
-                            Nenhuma ação registrada nesse período.
-                          </td>
-                        </tr>
-                      ) : (
-                        actionRows.map((row) => (
-                          <tr
-                            key={row.action}
-                            className="border-b last:border-none hover:bg-muted/30"
-                          >
-                            <td className="px-4 py-3 font-medium">
-                              {row.action}
-                            </td>
-                            <td className="px-4 py-3 text-right font-mono">
-                              {formatInteger(row.qty)}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-
-              {/* CUSTO POR AÇÃO */}
-              <section className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="flex items-center gap-2 text-sm font-semibold">
-                    <DollarSign className="h-4 w-4 text-muted-foreground" />
-                    Custo por tipo de ação
-                  </h3>
-                  <span className="text-[0.7rem] text-muted-foreground">
-                    Quanto custa gerar cada tipo de resultado
-                  </span>
-                </div>
-
-                <div className="overflow-x-auto rounded-md border">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
-                      <tr className="border-b">
-                        <th className="px-4 py-2 font-medium">Ação</th>
-                        <th className="px-4 py-2 text-right font-medium">
-                          Custo
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {costRows.length === 0 ? (
-                        <tr>
-                          <td
-                            className="px-4 py-6 text-center text-xs text-muted-foreground"
-                            colSpan={2}
-                          >
-                            Nenhum custo por ação disponível.
-                          </td>
-                        </tr>
-                      ) : (
-                        costRows.map((row) => (
-                          <tr
-                            key={row.action}
-                            className="border-b last:border-none hover:bg-muted/30"
-                          >
-                            <td className="px-4 py-3 font-medium">
-                              {row.action}
-                            </td>
-                            <td className="px-4 py-3 text-right font-mono">
-                              {row.cost}
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-
-              {adsetBreakdown.length > 0 && (
-                <section className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="flex items-center gap-2 text-sm font-semibold">
-                      <TrendingUp className="h-4 w-4 text-muted-foreground" />
-                      Resultado oficial por conjunto
-                    </h3>
-                    {dominantGoalLabel && (
-                      <span className="text-[0.7rem] text-muted-foreground">
-                        {dominantGoalLabel}
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="overflow-x-auto rounded-md border">
-                    <table className="w-full text-sm">
-                      <thead className="bg-muted/40 text-left text-xs uppercase text-muted-foreground">
-                        <tr className="border-b">
-                          <th className="px-4 py-2 font-medium">Conjunto</th>
-                          <th className="px-4 py-2 font-medium">Objetivo</th>
-                          <th className="px-4 py-2 font-medium">Resultado</th>
-                          <th className="px-4 py-2 text-right font-medium">
-                            Quantidade
-                          </th>
-                          <th className="px-4 py-2 text-right font-medium">
-                            Custo/Resultado
-                          </th>
-                          <th className="px-4 py-2 text-right font-medium">
-                            Gasto
-                          </th>
-                          <th className="px-4 py-2 text-right font-medium">
-                            CTR
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {adsetBreakdown.map((adset) => {
-                          const cost =
-                            adset.custo_por_resultado ??
-                            calcCPL(adset.spend, adset.quantidade);
-                          const adsetCtr = calcCTR(
-                            adset.clicks,
-                            adset.impressions,
-                          );
-                          return (
-                            <tr
-                              key={adset.adset_id}
-                              className="border-b last:border-none hover:bg-muted/30"
-                            >
-                              <td className="px-4 py-3 font-medium">
-                                {adset.adset_name ?? adset.adset_id}
-                              </td>
-                              <td className="px-4 py-3 text-muted-foreground">
-                                {getOptimizationGoalLabel(
-                                  adset.optimization_goal,
-                                )}
-                              </td>
-                              <td className="px-4 py-3">
-                                {adset.label ?? "Resultado"}
-                              </td>
-                              <td className="px-4 py-3 text-right font-mono">
-                                {formatInteger(adset.quantidade)}
-                              </td>
-                              <td className="px-4 py-3 text-right font-mono">
-                                {cost !== null
-                                  ? formatCurrency(cost)
-                                  : "N/D"}
-                              </td>
-                              <td className="px-4 py-3 text-right font-mono">
-                                {formatCurrency(adset.spend)}
-                              </td>
-                              <td className="px-4 py-3 text-right font-mono">
-                                {formatPercentage(adsetCtr)}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                  <p className="text-[0.7rem] leading-tight text-muted-foreground">
-                    Essa tabela replica a coluna Resultado do Gerenciador de
-                    Anúncios, respeitando a meta de otimização de cada conjunto.
-                  </p>
-                </section>
-              )}
-
-              {/* RESUMO BRUTO */}
-              <section className="space-y-4">
-                <Separator />
-                <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-                  <AccountMetric
-                    label="Impressões"
-                    value={formatInteger(impressions)}
-                  />
-                  <AccountMetric
-                    label="Cliques"
-                    value={formatInteger(clicks)}
-                  />
-                  <AccountMetric label="Alcance" value={formatInteger(reach)} />
-                  <AccountMetric
-                    label="Gasto"
-                    value={formatCurrency(spend)}
-                  />
-                </div>
-                <p className="text-[0.7rem] leading-tight text-muted-foreground">
-                  Dados fornecidos pela API de Insights da Meta Ads para a
-                  campanha selecionada no período escolhido.
-                </p>
-              </section>
-            </>
-          )}
-
-          {insightLoading && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              <span>Carregando métricas da campanha…</span>
-            </div>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
 }
 
-/* ------------------------------------------------------------------
- * Dashboard principal
- * ------------------------------------------------------------------ */
+// -------------------------------------------------
+// Componente principal
+// -------------------------------------------------
 
 export default function Dashboard() {
   // RANGE PRINCIPAL
@@ -1247,15 +538,18 @@ export default function Dashboard() {
   const [showDebug, setShowDebug] = useState(false);
 
   // CAMPANHA ABERTA NO MODAL
-  const [insightsCampaignRef, setInsightsCampaignRef] = useState<{
-    account: DashboardAccountMetrics;
+  const [creativeDialogRef, setCreativeDialogRef] = useState<{
     campaign: DashboardCampaignMetrics;
+    account: string; // valor real da conta (ex: act_123...)
+    headerSnapshot: CampaignHeaderSnapshot;
   } | null>(null);
 
   // Resolver datas ativas
   const resolvedFrom: Date = (dateRange?.from ?? fallbackRange.from)!;
   const resolvedTo: Date =
     (dateRange?.to ?? fallbackRange.to ?? fallbackRange.from)!;
+  const selectedStartDate = formatDate(resolvedFrom, "yyyy-MM-dd");
+  const selectedEndDate = formatDate(resolvedTo, "yyyy-MM-dd");
 
   // Query: contas vinculadas (resources)
   const { data: resourcesData = [] } = useQuery<Resource[]>({
@@ -1305,14 +599,14 @@ export default function Dashboard() {
   const accountOptions = useMemo<FilterOption[]>(() => {
     return accountResources
       .map((resource) => ({
-        value: String(resource.id),
+        value: String(resource.id), // id interno
         label: resource.name,
-        description: resource.value, // ID real da conta
+        description: resource.value, // id real Meta ex: act_123
       }))
       .sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
   }, [accountResources]);
 
-  // lookup rápido accountId -> { name, value }
+  // lookup rápido accountId interno -> { name, value }
   const accountNameLookup = useMemo(() => {
     const map = new Map<number, { name: string; value: string }>();
     for (const resource of accountResources) {
@@ -1329,9 +623,9 @@ export default function Dashboard() {
   // Contagem de filtros ativos
   const hasActiveFilters = Boolean(
     accountFilter ||
-    campaignFilter ||
-    objectiveFilter ||
-    statusFilter,
+      campaignFilter ||
+      objectiveFilter ||
+      statusFilter,
   );
   const filterCount = [
     accountFilter,
@@ -1348,6 +642,7 @@ export default function Dashboard() {
     setCampaignFilter(null);
     setObjectiveFilter(null);
     setStatusFilter(null);
+    setCreativeDialogRef(null);
   };
 
   // comparar ranges
@@ -1397,6 +692,13 @@ export default function Dashboard() {
     refetch,
   } = useQuery<DashboardMetricsResponse, Error>({
     queryKey: [metricsEndpoint],
+    queryFn: async () => {
+      const res = await fetch(metricsEndpoint);
+      if (!res.ok) {
+        throw new Error("Erro ao carregar métricas do dashboard");
+      }
+      return res.json();
+    },
   });
 
   const accounts: DashboardAccountMetrics[] = data?.accounts ?? [];
@@ -1407,7 +709,7 @@ export default function Dashboard() {
     const selectedAccount = accountFilter ?? null;
 
     for (const account of accounts) {
-      const accountIdStr = String(account.id);
+      const accountIdStr = String(account.id); // id interno
       if (selectedAccount && accountIdStr !== selectedAccount) {
         continue;
       }
@@ -1434,6 +736,7 @@ export default function Dashboard() {
       }
     }
 
+    // fallback pro catálogo local
     if (options.length === 0 && campaignsData.length > 0) {
       for (const campaign of campaignsData) {
         const accountId = campaign.accountId ?? null;
@@ -1552,10 +855,12 @@ export default function Dashboard() {
       }
     }
     if (options.length === 0) {
-      options.push(...Object.keys(STATUS_LABELS).map((key) => ({
-        value: key,
-        label: getStatusLabel(key),
-      })));
+      options.push(
+        ...Object.keys(STATUS_LABELS).map((key) => ({
+          value: key,
+          label: getStatusLabel(key),
+        })),
+      );
     }
     return options.sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
   }, [accounts]);
@@ -1567,7 +872,7 @@ export default function Dashboard() {
     }
   }, [statusFilter, statusOptions]);
 
-  // chips de filtros aplicados (pra mostrar visualmente)
+  // chips de filtros aplicados
   const activeFilterChips = useMemo(() => {
     const chips: Array<{
       label: string;
@@ -1629,10 +934,6 @@ export default function Dashboard() {
     objectiveOptions,
     statusFilter,
     statusOptions,
-    setAccountFilter,
-    setCampaignFilter,
-    setObjectiveFilter,
-    setStatusFilter,
   ]);
 
   // KPIs do topo
@@ -1705,12 +1006,11 @@ export default function Dashboard() {
       <div className="space-y-6 p-6">
         {/* HEADER TOPO */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          {/* LADO ESQUERDO: título e período */}
+          {/* LADO ESQUERDO */}
           <div className="space-y-1">
             <h1 className="text-3xl font-semibold">Dashboard</h1>
             <p className="text-muted-foreground">
-              Visão geral das contas e campanhas Meta Ads no período
-              selecionado
+              Visão geral das contas e campanhas Meta Ads no período selecionado
             </p>
             <p className="text-[0.7rem] leading-tight text-muted-foreground">
               Período aplicado:{" "}
@@ -1721,7 +1021,7 @@ export default function Dashboard() {
             </p>
           </div>
 
-          {/* LADO DIREITO: ações rápidas */}
+          {/* LADO DIREITO */}
           <div className="flex flex-col items-start gap-3 sm:items-end">
             {isFetching && (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -1943,10 +1243,7 @@ export default function Dashboard() {
             ) : (
               // LOOP DAS CONTAS
               accounts.map((account) => {
-                const accountSummary = extractResultSummary(
-                  account.metrics,
-                  // futuramente dá pra ter -ccount.resultado` se você quiser
-                );
+                const accountSummary = extractResultSummary(account.metrics);
 
                 const accountCtr = calcCTR(
                   account.metrics.clicks,
@@ -2042,57 +1339,58 @@ export default function Dashboard() {
                                 );
 
                                 const campaignCtr = calcCTR(
-                              campaign.metrics.clicks,
-                              campaign.metrics.impressions,
-                            );
+                                  campaign.metrics.clicks,
+                                  campaign.metrics.impressions,
+                                );
 
-                            const displayName =
-                              campaign.name ?? `Campanha ${campaign.id}`;
+                                const displayName =
+                                  campaign.name ?? `Campanha ${campaign.id}`;
 
                                 const objectiveLabel = getObjectiveLabel(
                                   campaign.objective,
                                 );
 
-                            const statusLabel = campaign.status
-                              ? campaign.status === "active"
-                                ? "Ativa"
-                                : campaign.status === "paused"
-                                  ? "Pausada"
-                                  : campaign.status
-                              : null;
+                                const rawStatus = campaign.status ?? "";
+                                const statusLabel = rawStatus
+                                  ? getStatusLabel(rawStatus)
+                                  : null;
+                                const isActive =
+                                  rawStatus.toLowerCase() === "active";
 
-                            const detailRows = (() => {
-                              const details = campaign.resultado?.detalhes ?? [];
-                              if (details.length <= 1) {
-                                return details;
-                              }
-                              const merged = new Map<
-                                string,
-                                {
-                                  tipo: string;
-                                  label: string;
-                                  quantidade: number;
-                                  custo_por_resultado: number | null;
-                                }
-                              >();
-                              for (const detail of details) {
-                                const key = detail.tipo ?? detail.label ?? "";
-                                const current = merged.get(key);
-                                if (current) {
-                                  current.quantidade += detail.quantidade;
-                                  if (
-                                    current.custo_por_resultado === null &&
-                                    detail.custo_por_resultado !== null
-                                  ) {
-                                    current.custo_por_resultado =
-                                      detail.custo_por_resultado;
+                                const detailRows = (() => {
+                                  const details =
+                                    campaign.resultado?.detalhes ?? [];
+                                  if (details.length <= 1) {
+                                    return details;
                                   }
-                                } else {
-                                  merged.set(key, { ...detail });
-                                }
-                              }
-                              return Array.from(merged.values());
-                            })();
+                                  const merged = new Map<
+                                    string,
+                                    {
+                                      tipo: string;
+                                      label: string;
+                                      quantidade: number;
+                                      custo_por_resultado: number | null;
+                                    }
+                                  >();
+                                  for (const detail of details) {
+                                    const key =
+                                      detail.tipo ?? detail.label ?? "";
+                                    const current = merged.get(key);
+                                    if (current) {
+                                      current.quantidade += detail.quantidade;
+                                      if (
+                                        current.custo_por_resultado === null &&
+                                        detail.custo_por_resultado !== null
+                                      ) {
+                                        current.custo_por_resultado =
+                                          detail.custo_por_resultado;
+                                      }
+                                    } else {
+                                      merged.set(key, { ...detail });
+                                    }
+                                  }
+                                  return Array.from(merged.values());
+                                })();
 
                                 return (
                                   <tr
@@ -2127,9 +1425,7 @@ export default function Dashboard() {
                                       {statusLabel ? (
                                         <Badge
                                           variant={
-                                            campaign.status === "active"
-                                              ? "default"
-                                              : "secondary"
+                                            isActive ? "default" : "secondary"
                                           }
                                         >
                                           {statusLabel}
@@ -2159,6 +1455,7 @@ export default function Dashboard() {
                                               )
                                             : "N/D"}
                                         </span>
+
                                         {detailRows.length > 0 && (
                                           <div className="flex flex-wrap justify-end gap-2 text-[0.65rem] text-muted-foreground">
                                             {detailRows.map((detail) => (
@@ -2188,13 +1485,17 @@ export default function Dashboard() {
                                         size="sm"
                                         variant="outline"
                                         onClick={() =>
-                                          setInsightsCampaignRef({
-                                            account,
+                                          setCreativeDialogRef({
                                             campaign,
+                                            account: account.value, // act_xxx
+                                            headerSnapshot:
+                                              buildCampaignHeaderSnapshot(
+                                                campaign,
+                                              ),
                                           })
                                         }
                                       >
-                                        Ver métricas
+                                        Ver criativos
                                       </Button>
                                     </td>
                                   </tr>
@@ -2231,6 +1532,7 @@ export default function Dashboard() {
                       accountFilter,
                       campaignFilter,
                       objectiveFilter,
+                      statusFilter,
                     },
                     response: data ?? null,
                   },
@@ -2247,27 +1549,16 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* MODAL DE INSIGHTS (campanha individual) */}
-      <InsightsDialog
-        open={!!insightsCampaignRef}
-        onClose={() => setInsightsCampaignRef(null)}
-        campaign={insightsCampaignRef?.campaign ?? null}
-        account={insightsCampaignRef?.account ?? null}
-        baseRange={effectiveRange}
+      {/* MODAL DE CRIATIVOS */}
+      <CampaignCreativesDialog
+        open={!!creativeDialogRef}
+        onClose={() => setCreativeDialogRef(null)}
+        campaign={creativeDialogRef?.campaign ?? null}
+        account={creativeDialogRef?.account ?? null}
+        headerSnapshot={creativeDialogRef?.headerSnapshot ?? null}
+        startDate={selectedStartDate}
+        endDate={selectedEndDate}
       />
     </>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-

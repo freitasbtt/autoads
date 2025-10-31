@@ -1,6 +1,9 @@
-import { createServer, type Server } from "http";
+﻿import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { MetaGraphClient, fetchMetaDashboardMetrics } from "./meta/graph";
+import {
+  MetaGraphClient,
+  fetchMetaDashboardMetrics,
+} from "./meta/graph";
 import type { MetricTotals as MetaMetricTotals } from "./meta/graph";
 import { pingDatabase } from "./db";
 import passport from "passport";
@@ -399,7 +402,97 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       next(err);
     }
-  });  // Get resources by type
+  });
+
+  app.get(
+    "/api/meta/campaigns/:id/creatives",
+    isAuthenticated,
+    async (req, res, next) => {
+      try {
+        const user = req.user as User;
+        const campaignId = req.params.id;
+        const accountIdParam = req.query.accountId;
+
+        if (typeof accountIdParam !== "string" || accountIdParam.length === 0) {
+          return res.status(400).json({
+            message: "Parametro accountId obrigatorio.",
+          });
+        }
+
+        const startParam =
+          typeof req.query.startDate === "string" ? req.query.startDate : null;
+        const endParam =
+          typeof req.query.endDate === "string" ? req.query.endDate : null;
+
+        let timeRange: { since: string; until: string } | null = null;
+        if (startParam && endParam) {
+          const startDate = parseISO(startParam);
+          const endDate = parseISO(endParam);
+          if (!isValid(startDate) || !isValid(endDate)) {
+            return res.status(400).json({ message: "Parametros de data invalidos." });
+          }
+          if (startDate > endDate) {
+            return res
+              .status(400)
+              .json({ message: "O startDate deve ser menor ou igual ao endDate" });
+          }
+          timeRange = {
+            since: format(startDate, "yyyy-MM-dd"),
+            until: format(endDate, "yyyy-MM-dd"),
+          };
+        }
+
+        const allResources = await storage.getResourcesByTenant(user.tenantId);
+        const accountResources = allResources.filter(
+          (resource) => resource.type === "account",
+        );
+        const accountMatch = accountResources.find(
+          (resource) => resource.value === accountIdParam,
+        );
+
+        if (!accountMatch) {
+          return res.status(404).json({
+            message: "Conta nao encontrada ou nao pertence ao tenant atual.",
+          });
+        }
+
+        const integration = await storage.getIntegrationByProvider(
+          user.tenantId,
+          "Meta",
+        );
+        const metaConfig = (integration?.config ?? {}) as MetaIntegrationConfig;
+
+        if (!metaConfig.accessToken) {
+          return res.status(400).json({
+            message: "Integracao com Meta nao esta conectada para este tenant.",
+          });
+        }
+
+        const settings = await storage.getAppSettings();
+        if (!settings?.metaAppSecret) {
+          return res
+            .status(500)
+            .json({ message: "Meta app secret nao configurado." });
+        }
+
+        const client = new MetaGraphClient(
+          metaConfig.accessToken,
+          settings.metaAppSecret,
+        );
+        const creatives = await client.fetchCampaignCreativeReports(
+          accountIdParam,
+          campaignId,
+          timeRange,
+        );
+
+        res.json({ creatives });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  // Get resources by type
   app.get("/api/resources/:type", isAuthenticated, async (req, res, next) => {
     try {
       const user = req.user as User;
@@ -1612,4 +1705,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   return httpServer;
 }
+
+
 
