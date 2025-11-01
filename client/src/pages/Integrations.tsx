@@ -1,192 +1,408 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
+import {
+  Loader2,
+  Link as LinkIcon,
+  CheckCircle2,
+  PlugZap,
+
+} from "lucide-react";
+
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import StatusBadge from "@/components/StatusBadge";
-import { Loader2, Link as LinkIcon, CheckCircle2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 
 interface Integration {
   id: number;
   tenantId: number;
-  provider: string;
+  provider: string; // "Meta" | "Google Drive" etc.
   config: any;
-  status: string;
+  status: string; // "connected" | "pending" etc.
 }
 
 export default function Integrations() {
-  const [isTesting, setIsTesting] = useState(false);
   const { toast } = useToast();
 
+  // estados de loading separados pra UX melhor
+  const [isTestingMeta, setIsTestingMeta] = useState(false);
+  const [isTestingDrive, setIsTestingDrive] = useState(false);
+
+  const [isDisconnectingMeta, setIsDisconnectingMeta] = useState(false);
+  const [isDisconnectingDrive, setIsDisconnectingDrive] = useState(false);
+
+  // pega integrações do backend
   const { data: integrations = [] } = useQuery<Integration[]>({
     queryKey: ["/api/integrations"],
   });
 
-  const metaIntegration = integrations.find((i) => i.provider === "Meta");
-  const driveIntegration = integrations.find((i) => i.provider === "Google Drive");
+  const metaIntegration = integrations.find(
+    (i) => i.provider === "Meta",
+  );
+  const driveIntegration = integrations.find(
+    (i) => i.provider === "Google Drive",
+  );
 
-  const handleTestConnection = (provider: string) => {
-    setIsTesting(true);
-    setTimeout(() => {
-      setIsTesting(false);
-      toast({
-        title: "Conexão testada",
-        description: `A conexão com ${provider} foi testada com sucesso`,
-      });
-    }, 1500);
-  };
+  /* ------------------------------------------
+   * handlers de ação
+   * ------------------------------------------ */
 
-  const handleMetaOAuth = () => {
+  const handleTestConnection = useCallback(
+    async (provider: "Meta" | "Google Drive") => {
+      if (provider === "Meta") {
+        setIsTestingMeta(true);
+      } else {
+        setIsTestingDrive(true);
+      }
+
+      try {
+        // aqui você pode futuramente chamar um /api/integrations/:id/test
+        // por enquanto só simula sucesso
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+
+        toast({
+          title: "Conexão testada",
+          description: `A conexão com ${provider} está funcionando.`,
+        });
+      } catch (err: any) {
+        toast({
+          title: "Erro ao testar",
+          description:
+            err?.message ??
+            `Não foi possível testar a conexão com ${provider}.`,
+          variant: "destructive",
+        });
+      } finally {
+        if (provider === "Meta") {
+          setIsTestingMeta(false);
+        } else {
+          setIsTestingDrive(false);
+        }
+      }
+    },
+    [toast],
+  );
+
+  const handleMetaOAuth = useCallback(() => {
     window.location.href = "/auth/meta";
-  };
+  }, []);
 
-  const handleGoogleOAuth = () => {
+  const handleGoogleOAuth = useCallback(() => {
     window.location.href = "/auth/google";
-  };
+  }, []);
 
-  // Check for OAuth success
+  /**
+   * handleDisconnect
+   * - chama DELETE /api/integrations/:id
+   * - invalida o cache do react-query
+   * - mostra toast
+   * - tem confirm() simples
+   */
+  const handleDisconnect = useCallback(
+    async (integration: Integration) => {
+      const isMeta = integration.provider === "Meta";
+      const isDrive = integration.provider === "Google Drive";
+
+      if (
+        !window.confirm(
+          `Desconectar ${integration.provider}? Você pode conectar de novo depois.`,
+        )
+      ) {
+        return;
+      }
+
+      if (isMeta) setIsDisconnectingMeta(true);
+      if (isDrive) setIsDisconnectingDrive(true);
+
+      try {
+        const res = await fetch(
+          `/api/integrations/${integration.id}`,
+          {
+            method: "DELETE",
+          },
+        );
+
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(
+            body?.message ||
+              `Erro ${res.status} ao desconectar ${integration.provider}`,
+          );
+        }
+
+        toast({
+          title: "Integração removida",
+          description: `${integration.provider} foi desconectado.`,
+        });
+
+        // força recarregar lista de integrações
+        queryClient.invalidateQueries({
+          queryKey: ["/api/integrations"],
+        });
+      } catch (err: any) {
+        toast({
+          title: "Erro ao desconectar",
+          description:
+            err?.message ??
+            `Não foi possível desconectar ${integration.provider}.`,
+          variant: "destructive",
+        });
+      } finally {
+        if (isMeta) setIsDisconnectingMeta(false);
+        if (isDrive) setIsDisconnectingDrive(false);
+      }
+    },
+    [toast],
+  );
+
+  /* ------------------------------------------
+   * efeito pós-oauth (?oauth=success)
+   * ------------------------------------------ */
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('oauth') === 'success') {
+    if (params.get("oauth") === "success") {
       toast({
         title: "Conectado com sucesso!",
         description: "Sua integração foi configurada.",
       });
-      // Clean URL
-      window.history.replaceState({}, '', '/integrations');
-      // Refresh integrations
-      queryClient.invalidateQueries({ queryKey: ["/api/integrations"] });
+
+      // tira o query param da URL
+      window.history.replaceState({}, "", "/integrations");
+
+      // atualiza as integrações
+      queryClient.invalidateQueries({
+        queryKey: ["/api/integrations"],
+      });
     }
   }, [toast]);
 
+  /* ------------------------------------------
+   * JSX helpers
+   * ------------------------------------------ */
+
+  function ProviderCard({
+    title,
+    description,
+    integration,
+    onConnect,
+    onTest,
+    onDisconnect,
+    isTesting,
+    isDisconnecting,
+  }: {
+    title: string;
+    description: string;
+    integration: Integration | undefined;
+    onConnect: () => void;
+    onTest: () => void;
+    onDisconnect: () => void;
+    isTesting: boolean;
+    isDisconnecting: boolean;
+  }) {
+    const connected = Boolean(integration);
+
+    return (
+      <Card className="relative overflow-hidden">
+        <CardHeader>
+          <div className="flex items-start justify-between">
+            <div className="space-y-1">
+              <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                {title}
+                <StatusBadge
+                  status={connected ? "connected" : "pending"}
+                />
+              </CardTitle>
+              <CardDescription className="text-sm leading-relaxed">
+                {description}
+              </CardDescription>
+
+              {connected && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground pt-2">
+                  <CheckCircle2 className="h-4 w-4 text-green-600" />
+                  <span>Conectado com sucesso</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </CardHeader>
+
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {/* Conectar / Reconectar */}
+            <Button
+              variant="default"
+              size="sm"
+              onClick={onConnect}
+              className="flex items-center gap-2"
+              data-testid={`button-connect-${title
+                .toLowerCase()
+                .replace(/\s+/g, "")}`}
+            >
+              <LinkIcon className="h-4 w-4" />
+              <span>
+                {connected ? "Reconectar OAuth" : "Conectar OAuth"}
+              </span>
+            </Button>
+
+            {/* Testar conexão */}
+            {connected && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isTesting}
+                onClick={onTest}
+                className="flex items-center gap-2"
+                data-testid={`button-test-${title
+                  .toLowerCase()
+                  .replace(/\s+/g, "")}`}
+              >
+                {isTesting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <PlugZap className="h-4 w-4" />
+                )}
+                <span>
+                  {isTesting
+                    ? "Testando..."
+                    : "Testar Conexão"}
+                </span>
+              </Button>
+            )}
+
+            {/* Desconectar */}
+            {connected && (
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={isDisconnecting}
+                onClick={onDisconnect}
+                className="flex items-center gap-2"
+                data-testid={`button-disconnect-${title
+                  .toLowerCase()
+                  .replace(/\s+/g, "")}`}
+              >
+                {isDisconnecting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <PlugZap className="h-4 w-4" />
+                )}
+                <span>
+                  {isDisconnecting
+                    ? "Removendo..."
+                    : "Desconectar"}
+                </span>
+              </Button>
+            )}
+          </div>
+
+          {/* Metadado opcional da integração (ex: nome da conta) */}
+          {connected && integration?.config && (
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground leading-relaxed">
+              {/* exemplo: mostra algo útil que veio do OAuth */}
+              {integration.config.accountName && (
+                <div>
+                  <span className="text-foreground font-medium">
+                    Conta:
+                  </span>{" "}
+                  {integration.config.accountName}
+                </div>
+              )}
+              {integration.config.email && (
+                <div>
+                  <span className="text-foreground font-medium">
+                    E-mail:
+                  </span>{" "}
+                  {integration.config.email}
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  /* ------------------------------------------
+   * render final
+   * ------------------------------------------ */
+
   return (
     <div className="p-6 space-y-6">
+      {/* título da página */}
       <div>
-        <h1 className="text-3xl font-semibold">Integrações</h1>
-        <p className="text-muted-foreground">Conecte sua conta com APIs externas usando OAuth</p>
+        <h1 className="text-3xl font-semibold tracking-tight">
+          Integrações
+        </h1>
+        <p className="text-muted-foreground text-sm">
+          Conecte e gerencie acessos a provedores externos
+          (Meta Ads, Google Drive etc.)
+        </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="flex items-center gap-2">
-                  Meta Ads API
-                  <StatusBadge status={metaIntegration ? "connected" : "pending"} />
-                </CardTitle>
-                <CardDescription className="mt-2">
-                  Conecte sua conta Meta para importar recursos automaticamente
-                </CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {metaIntegration && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <CheckCircle2 className="h-4 w-4 text-green-600" />
-                <span>Conectado com sucesso</span>
-              </div>
-            )}
-            <div className="flex gap-2">
-              <Button
-                variant="default"
-                size="sm"
-                onClick={handleMetaOAuth}
-                data-testid="button-connect-meta"
-              >
-                <LinkIcon className="h-4 w-4 mr-2" />
-                {metaIntegration ? "Reconectar OAuth" : "Conectar OAuth"}
-              </Button>
-              {metaIntegration && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleTestConnection("Meta")}
-                  disabled={isTesting}
-                  data-testid="button-test-meta"
-                >
-                  {isTesting ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="h-4 w-4 mr-2" />
-                  )}
-                  Testar Conexão
-                </Button>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+      {/* cards de integrações */}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        {/* META */}
+        <ProviderCard
+          title="Meta Ads API"
+          description="Conecte sua conta Meta para importar contas de anúncio e métricas de campanha automaticamente."
+          integration={metaIntegration}
+          onConnect={handleMetaOAuth}
+          onTest={() => handleTestConnection("Meta")}
+          onDisconnect={() =>
+            metaIntegration && handleDisconnect(metaIntegration)
+          }
+          isTesting={isTestingMeta}
+          isDisconnecting={isDisconnectingMeta}
+        />
 
-        <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="flex items-center gap-2">
-                  Google Drive API
-                  <StatusBadge status={driveIntegration ? "connected" : "pending"} />
-                </CardTitle>
-                <CardDescription className="mt-2">
-                  Conecte sua conta Google para acessar pastas do Drive
-                </CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {driveIntegration && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <CheckCircle2 className="h-4 w-4 text-green-600" />
-                <span>Conectado com sucesso</span>
-              </div>
-            )}
-            <div className="flex gap-2">
-              <Button
-                variant="default"
-                size="sm"
-                onClick={handleGoogleOAuth}
-                data-testid="button-connect-google"
-              >
-                <LinkIcon className="h-4 w-4 mr-2" />
-                {driveIntegration ? "Reconectar OAuth" : "Conectar OAuth"}
-              </Button>
-              {driveIntegration && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleTestConnection("Google Drive")}
-                  disabled={isTesting}
-                  data-testid="button-test-drive"
-                >
-                  {isTesting ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <CheckCircle2 className="h-4 w-4 mr-2" />
-                  )}
-                  Testar Conexão
-                </Button>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        {/* DRIVE */}
+        <ProviderCard
+          title="Google Drive API"
+          description="Conecte seu Google Drive para acessar pastas e arquivos usados nos criativos."
+          integration={driveIntegration}
+          onConnect={handleGoogleOAuth}
+          onTest={() => handleTestConnection("Google Drive")}
+          onDisconnect={() =>
+            driveIntegration && handleDisconnect(driveIntegration)
+          }
+          isTesting={isTestingDrive}
+          isDisconnecting={isDisconnectingDrive}
+        />
       </div>
 
+      {/* bloco educativo */}
       <Card className="border-accent/20 bg-accent/5">
         <CardHeader>
-          <CardTitle className="text-base">Como funciona o OAuth</CardTitle>
+          <CardTitle className="text-base font-semibold leading-tight">
+            Como funciona o OAuth
+          </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2 text-sm text-muted-foreground">
+        <CardContent className="space-y-2 text-sm leading-relaxed text-muted-foreground">
           <p>
-            <strong className="text-foreground">1.</strong> Clique em "Conectar OAuth" para ser redirecionado à página de login do serviço
+            <strong className="text-foreground">1.</strong>{" "}
+            Clique em <span className="font-medium text-foreground">Conectar OAuth</span> e faça login no provedor.
           </p>
           <p>
-            <strong className="text-foreground">2.</strong> Faça login e autorize o acesso às suas informações
+            <strong className="text-foreground">2.</strong>{" "}
+            Você autoriza o acesso somente ao que precisamos (contas de anúncio, campanhas, pastas do Drive etc.).
           </p>
           <p>
-            <strong className="text-foreground">3.</strong> Você será redirecionado de volta e seus recursos serão importados automaticamente
+            <strong className="text-foreground">3.</strong>{" "}
+            Voltando para cá, sua conta aparece como{" "}
+            <StatusBadge status="connected" /> e nós já conseguimos
+            puxar recursos automaticamente.
           </p>
-          <p className="pt-2 text-xs">
-            <strong>Nota:</strong> Certifique-se de que as URLs de callback estão configuradas corretamente no Meta App e Google Cloud Console.
+          <p className="pt-2 text-xs text-muted-foreground">
+            <strong>Nota:</strong> garanta que as URLs de callback
+            estão configuradas corretamente no App do Meta e no
+            Google Cloud Console — isso é obrigatório para concluir o login.
           </p>
         </CardContent>
       </Card>

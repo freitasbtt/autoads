@@ -64,12 +64,8 @@ type GraphAdsetInsightRow = {
 };
 
 /**
- * IMPORTANTE:
- * /insights com level=ad NÃO aceita pedir creative_id direto nos fields.
- * Então pegamos só métricas de performance do anúncio aqui
- * e depois fazemos outro passo /{campaign_id}/ads pra mapear ad -> creative.
- * Esse fluxo segue o padrão documentado pela própria Marketing API:
- * primeiro coleta métricas por anúncio (ad), depois cruza com /ads pra achar o creative. :contentReference[oaicite:4]{index=4}
+ * Insights nível anúncio (ad)
+ * usado pro MODAL
  */
 type GraphAdLevelInsightRow = {
   ad_id?: string;
@@ -79,7 +75,7 @@ type GraphAdLevelInsightRow = {
   spend?: string;
   actions?: GraphActionEntry[];
   cost_per_action_type?: GraphActionEntry[];
-  ctr?: string; // CTR pode ser solicitado junto das métricas de anúncio hoje. :contentReference[oaicite:5]{index=5}
+  ctr?: string;
 };
 
 // /{creative_id}?fields=...
@@ -119,16 +115,16 @@ type GraphAd = {
 };
 
 /* --------------------------------------------------
- * Tipos internos usados no dashboard
+ * Tipos internos usados no dashboard e modal
  * -------------------------------------------------- */
 
 export type MetricTotals = {
-  spend: number;          // gasto total
-  resultSpend: number;    // gasto somado apenas dos adsets que geraram "resultado oficial"
+  spend: number;
+  resultSpend: number;
   impressions: number;
   clicks: number;
   leads: number;
-  results: number;        // quantidade de "resultado oficial"
+  results: number;
   costPerResult: number | null;
 };
 
@@ -186,28 +182,28 @@ export type MetaDashboardResult = {
 };
 
 export type CampaignHeaderSnapshot = {
-  resultLabel: string;         // exemplo: "Conversas iniciadas", "Leads", "Vendas"
+  resultLabel: string;
   resultQuantity: number | null;
   costPerResult: number | null;
   spend: number;
   ctr: number | null;
 };
 
-export type CampaignCreativeReport = {
-  id: string; // creative_id
-  name: string | null;
+/**
+ * Cada item = 1 ANÚNCIO individual
+ * usado no modal
+ */
+export type CampaignAdReport = {
+  ad_id: string;
+  ad_name: string | null;
+  creative_id: string | null;
   thumbnailUrl: string | null;
-  assets: Array<{
-    id: string;
-    label: string;
-    thumbnailUrl: string | null;
-    url: string | null;
-  }>;
-  performance: {
+  metrics: {
     impressions: number;
     clicks: number;
     spend: number;
-    results: number;
+    ctr: number | null;
+    resultQty: number;
     costPerResult: number | null;
   };
 };
@@ -253,10 +249,7 @@ const DEFAULT_ATTRIBUTION_WINDOWS = [
 ] as const;
 
 /**
- * ACTION_TYPE_LABELS é usado pra traduzir action_type cru da Meta
- * pra algo amigável de UI ("Conversas iniciadas", "Leads", etc).
- * A lista abaixo está alinhada com nomes que a Meta expõe em relatórios
- * como "actions" e variações de conversas, leads, compras e cliques. :contentReference[oaicite:6]{index=6}
+ * ACTION_TYPE_LABELS: traduz action_type cru -> rótulo amigável
  */
 const ACTION_TYPE_LABELS: Record<string, string> = {
   lead: "Leads",
@@ -281,7 +274,8 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
   whatsapp_link_click: "Cliques para WhatsApp",
   whatsapp_conversion: "Conversas no WhatsApp",
   "onsite_conversion.messaging_first_reply": "Conversas por mensagem",
-  "onsite_conversion.messaging_conversation_started_7d": "Conversas iniciadas",
+  "onsite_conversion.messaging_conversation_started_7d":
+    "Conversas iniciadas",
   "onsite_conversion.total_messaging_connection": "Conexões por mensagem",
   messaging_conversation_started_7d: "Conversas iniciadas",
   messaging_connection: "Conexões por mensagem",
@@ -314,9 +308,7 @@ const ACTION_TYPE_LABELS: Record<string, string> = {
 };
 
 /**
- * Alguns objetivos da Meta têm nomes diferentes dependendo do lugar
- * (GOAL vs OBJECTIVE de campanha vs optimization_goal do ad set).
- * Esses mapas aproximam tudo em buckets mais estáveis pro nosso dashboard.
+ * Normalização de optimization_goal / objective
  */
 const OPTIMIZATION_GOAL_ALIASES: Record<string, string> = {
   OFFSITE_CONVERSIONS: "PURCHASE",
@@ -388,15 +380,27 @@ const OPTIMIZATION_GOAL_TO_ACTION_TYPES: Record<string, string[]> = {
     "whatsapp_conversion",
     "onsite_conversion.whatsapp_message",
   ],
-  PURCHASE: ["purchase", "offsite_conversion.fb_pixel_purchase", "conversion"],
+  PURCHASE: [
+    "purchase",
+    "offsite_conversion.fb_pixel_purchase",
+    "conversion",
+  ],
   LANDING_PAGE_VIEWS: [
     "landing_page_view",
     "omni_landing_page_view",
     "view_content",
   ],
   LINK_CLICKS: ["link_click", "outbound_click"],
-  POST_ENGAGEMENT: ["post_engagement", "page_engagement", "post_interaction_gross"],
-  OUTCOME_ENGAGEMENT: ["post_engagement", "page_engagement", "post_interaction_gross"],
+  POST_ENGAGEMENT: [
+    "post_engagement",
+    "page_engagement",
+    "post_interaction_gross",
+  ],
+  OUTCOME_ENGAGEMENT: [
+    "post_engagement",
+    "page_engagement",
+    "post_interaction_gross",
+  ],
   OUTCOME_REACH: ["impressions", "reach"],
   OUTCOME_SALES: [
     "purchase",
@@ -415,7 +419,7 @@ const OPTIMIZATION_GOAL_TO_ACTION_TYPES: Record<string, string[]> = {
   ],
 };
 
-// backup genérico caso não role casar objetivo -> ação
+// fallback quando não sabemos o goal
 const FALLBACK_RESULT_ACTION_TYPES: string[] = [
   "purchase",
   "offsite_conversion.fb_pixel_purchase",
@@ -438,7 +442,7 @@ const FALLBACK_RESULT_ACTION_TYPES: string[] = [
   "offsite_content_view_add_meta_leads",
 ];
 
-// usados pra rotular o "resultado oficial" por tipo de objetivo
+// tipos oficiais pra resumo por objective
 const LEAD_RESULT_ACTION_TYPES = [
   "lead",
   "leadgen",
@@ -463,7 +467,7 @@ type ObjectiveResultRule = {
   mode?: "sum" | "first";
 };
 
-// mapping campanha.objective -> como calcular "resultado oficial"
+// campanha.objective -> regra pra computar "resultado oficial"
 const OBJECTIVE_RESULT_RULES: Record<string, ObjectiveResultRule> = {
   OUTCOME_LEADS: {
     label: "Leads",
@@ -502,7 +506,7 @@ const OBJECTIVE_RESULT_RULES: Record<string, ObjectiveResultRule> = {
   },
 };
 
-// campanha.objective -> bucket normalizado
+// normaliza campaign.objective pra um bucket estável
 const CAMPAIGN_OBJECTIVE_ALIASES: Record<string, string> = {
   OUTCOME_LEAD_GENERATION: "OUTCOME_LEADS",
   OUTCOME_LEADS: "OUTCOME_LEADS",
@@ -534,6 +538,13 @@ function parseNumber(value?: string | null): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function parsePercentToNumber(value?: string | null): number | null {
+  if (!value) return null;
+  const num = Number.parseFloat(value);
+  if (!Number.isFinite(num)) return null;
+  return num;
+}
+
 function normalizeActionType(actionType?: string | null): string | null {
   if (!actionType) return null;
   return actionType.toLowerCase();
@@ -554,18 +565,15 @@ function getGoalActionCandidates(goal: string | null): string[] {
 }
 
 function extractEntryTotal(entry: GraphActionEntry): number {
-  // tenta pegar direto 'value'
   const direct = parseNumber(entry.value);
   if (direct > 0) return direct;
 
-  // senão, soma as janelas padrão de atribuição
   let total = 0;
   for (const windowKey of DEFAULT_ATTRIBUTION_WINDOWS) {
     total += parseNumber(entry[windowKey]);
   }
   if (total > 0) return total;
 
-  // fallback final: soma qualquer campo numérico
   for (const [key, raw] of Object.entries(entry)) {
     if (key === "action_type" || key === "value") continue;
     total += parseNumber(raw);
@@ -584,14 +592,10 @@ function sumActionsTotal(actions?: GraphActionEntry[] | null): number {
 
 function formatResultLabel(actionType: string | null): string {
   if (!actionType) return "Resultado";
-
   const normalized = actionType.toLowerCase();
   const mapped = ACTION_TYPE_LABELS[normalized];
   if (mapped) return mapped;
-
   if (LEAD_ACTION_TYPES.has(normalized)) return "Leads";
-
-  // fallback: humaniza snake_case / dotted
   return normalized
     .replace(/[_\.]/g, " ")
     .split(" ")
@@ -611,7 +615,7 @@ type ResultDetail = {
 };
 
 /* --------------------------------------------------
- * Agrupadores por adset
+ * Agrupadores por adset (para o dashboard principal)
  * -------------------------------------------------- */
 
 type AggregatedAdsetMetrics = {
@@ -703,7 +707,6 @@ function aggregateInsightRowsByAdset(
     if (row.campaign_name && !bucket.campaignName)
       bucket.campaignName = row.campaign_name;
 
-    // junta quantities de actions
     if (Array.isArray(row.actions)) {
       for (const action of row.actions) {
         const type = normalizeActionType(action.action_type);
@@ -719,7 +722,6 @@ function aggregateInsightRowsByAdset(
       }
     }
 
-    // junta custos por ação
     if (Array.isArray(row.cost_per_action_type)) {
       for (const entry of row.cost_per_action_type) {
         const type = normalizeActionType(entry.action_type);
@@ -755,7 +757,6 @@ function pickOfficialResultForAdset(
   goal: string | null,
   actions: AggregatedActionRecord,
 ): ResultDetail | null {
-  // tenta seguir o objetivo declarado do adset
   const candidates = getGoalActionCandidatesForAdsetGoal(goal);
   const seen = new Set<string>();
 
@@ -775,7 +776,7 @@ function pickOfficialResultForAdset(
     }
   }
 
-  // fallback: pega a ação de maior volume
+  // fallback: maior volume
   let fallback:
     | {
         type: string;
@@ -846,9 +847,7 @@ function getObjectiveResultRule(
   return OBJECTIVE_RESULT_RULES[normalized] ?? null;
 }
 
-
 function buildAdsetBundle(agg: AggregatedAdsetMetrics): AdsetBundle {
-  // transforma actions em lista ordenada
   const actionsArray: ResultDetail[] = Object.entries(agg.actions)
     .filter(([, info]) => info.quantity > 0)
     .map(([type, info]) => ({
@@ -859,7 +858,6 @@ function buildAdsetBundle(agg: AggregatedAdsetMetrics): AdsetBundle {
     }))
     .sort((a, b) => b.quantity - a.quantity);
 
-  // soma leads explícitos
   let leads = 0;
   LEAD_ACTION_TYPES.forEach((leadType) => {
     const info = agg.actions[leadType];
@@ -868,7 +866,6 @@ function buildAdsetBundle(agg: AggregatedAdsetMetrics): AdsetBundle {
     }
   });
 
-  // "resultado oficial" com base no optimization_goal declarado
   let official = pickOfficialResultForAdset(agg.optimizationGoal, agg.actions);
 
   const officialQty = official?.quantity ?? 0;
@@ -927,7 +924,6 @@ function buildCampaignBundle(
     }
   >();
 
-  // agrega métricas globais e separa adsets por optimization_goal
   for (const adset of adsets) {
     metrics.spend += adset.spend;
     metrics.impressions += adset.impressions;
@@ -955,7 +951,6 @@ function buildCampaignBundle(
     group.adsets.push(adset);
   }
 
-  // escolhe grupo dominante
   let dominantGroup:
     | {
         canonicalGoal: string | null;
@@ -971,13 +966,11 @@ function buildCampaignBundle(
       continue;
     }
 
-    // prioriza maior spend
     if (group.spend > dominantGroup.spend + 1e-6) {
       dominantGroup = group;
       continue;
     }
 
-    // se empate em spend, escolhe maior volume de resultado
     let groupResultSum = 0;
     for (const adset of group.adsets) {
       groupResultSum += adset.resultQuantity;
@@ -1002,10 +995,8 @@ function buildCampaignBundle(
   const resultAdsets = dominantGroup.adsets;
   const resultSpend = resultAdsets.reduce((sum, a) => sum + a.spend, 0);
 
-  // agrega todas as actions desses adsets dominantes
   const aggregatedActions = aggregateActionsForAdsets(resultAdsets);
 
-  // regra pra "resultado oficial" com base no objective da campanha
   const objectiveRule = getObjectiveResultRule(campaign.objective ?? null);
 
   let resultQuantity = 0;
@@ -1033,7 +1024,6 @@ function buildCampaignBundle(
     const selectedTypes: string[] = [];
 
     if (mode === "first") {
-      // pega o primeiro tipo que tiver resultado > 0
       for (const type of normalizedTypes) {
         const info = aggregatedActions[type];
         const quantity = info?.quantity ?? 0;
@@ -1058,12 +1048,10 @@ function buildCampaignBundle(
         break;
       }
 
-      // se nada teve qty > 0, ainda guardamos qual tipo seria o alvo
       if (breakdownEntries.length === 0 && normalizedTypes.length > 0) {
         selectedTypes.push(normalizedTypes[0]);
       }
     } else {
-      // soma todos os tipos declarados
       for (const type of normalizedTypes) {
         const info = aggregatedActions[type];
         const quantity = info?.quantity ?? 0;
@@ -1103,7 +1091,6 @@ function buildCampaignBundle(
       }));
     }
 
-    // resumo por adset (pra tabela detalhada da UI)
     adsetSummaries = resultAdsets.map((adset) => {
       const actionMap = new Map(adset.actions.map((a) => [a.type, a]));
 
@@ -1147,7 +1134,6 @@ function buildCampaignBundle(
     metrics.resultSpend = resultSpend;
     metrics.costPerResult = costPerResult;
   } else {
-    // não conseguimos identificar um "resultado oficial" baseado no objective
     summaryLabel = "Resultado";
     costPerResult = null;
 
@@ -1175,7 +1161,6 @@ function buildCampaignBundle(
       };
     });
 
-    // nesses casos não consolidamos resultados em nível de campanha
     metrics.results = 0;
     metrics.resultSpend = 0;
     metrics.costPerResult = null;
@@ -1197,7 +1182,7 @@ function buildCampaignBundle(
 }
 
 /* --------------------------------------------------
- * Totalizadores globais
+ * Totalizadores globais (dashboard principal)
  * -------------------------------------------------- */
 
 function createEmptyTotals(): MetricTotals {
@@ -1219,7 +1204,6 @@ function addTotals(target: MetricTotals, source: MetricTotals): void {
   target.clicks += source.clicks;
   target.leads += source.leads;
   target.results += source.results;
-
   target.costPerResult =
     target.results > 0 ? target.resultSpend / target.results : null;
 }
@@ -1276,9 +1260,7 @@ export class MetaGraphClient {
 
       let status = json.error?.code ?? response.status ?? 500;
 
-      // às vezes a Meta devolve code=200 mesmo em erro -> tratamos como 403
       if (status === 200) status = 403;
-
       if (status < 400 || status >= 600) {
         status = 500;
       }
@@ -1293,7 +1275,6 @@ export class MetaGraphClient {
     if (!next) return null;
     const url = new URL(next);
 
-    // às vezes o "next" não traz appsecret_proof / access_token
     if (!url.searchParams.has("appsecret_proof")) {
       url.searchParams.set("appsecret_proof", this.appsecretProof);
     }
@@ -1305,9 +1286,7 @@ export class MetaGraphClient {
   }
 
   /**
-   * Busca qualquer edge paginado (ex: /act_xxx/campaigns, /act_xxx/insights).
-   * Este método sempre retorna um array completo já "flattened"
-   * navegando por todas as páginas de paginação da Meta. :contentReference[oaicite:7]{index=7}
+   * Busca qualquer edge paginado (/act_xxx/campaigns, /act_xxx/insights, etc)
    */
   async fetchEdge<T>(
     path: string,
@@ -1330,7 +1309,7 @@ export class MetaGraphClient {
   }
 
   /**
-   * Campanhas de uma conta de anúncios
+   * Campanhas da conta
    */
   async fetchCampaigns(accountId: string): Promise<GraphCampaign[]> {
     return this.fetchEdge<GraphCampaign>(`/${accountId}/campaigns`, {
@@ -1367,9 +1346,7 @@ export class MetaGraphClient {
   }
 
   /**
-   * Insights nível adset
-   * (essa granularidade alimenta os cálculos de resultado oficial,
-   * custo por resultado e etc. na UI)
+   * Insights nível adset -> dashboard
    */
   async fetchAdsetInsights(
     accountId: string,
@@ -1396,10 +1373,7 @@ export class MetaGraphClient {
   }
 
   /**
-   * Insights nível anúncio (ad)
-   * IMPORTANTE: aqui NÃO pedimos creative_id/ad_creative_id porque a API
-   * rejeita esses campos. Em vez disso, vamos depois a /{campaign_id}/ads
-   * pra montar ad_id -> creative.id. :contentReference[oaicite:8]{index=8}
+   * Insights nível anúncio -> modal
    */
   private async fetchAdLevelInsightsForCampaign(
     campaignId: string,
@@ -1429,9 +1403,8 @@ export class MetaGraphClient {
   }
 
   /**
-   * Mapeia cada anúncio da campanha para seu creative.id
-   * via /{campaign_id}/ads?fields=id,creative{id}
-   * (isso é suportado na Marketing API atual; cada ad retorna um objeto creative com id). :contentReference[oaicite:9]{index=9}
+   * /{campaign_id}/ads?fields=id,creative{id}
+   * mapeia anúncio -> creative.id
    */
   private async fetchCampaignAdCreativeMap(
     campaignId: string,
@@ -1454,8 +1427,8 @@ export class MetaGraphClient {
   }
 
   /**
-   * Busca metadados dos criativos (nome, miniatura, imagens etc.)
-   * em lote via ?ids=... (batch em uma única requisição /?ids=1,2,3&fields=...).
+   * Busca metadata dos criativos em lote (?ids=...&fields=...)
+   * só pra thumb/preview
    */
   private async fetchCreativesMetadata(
     creativeIds: string[],
@@ -1464,7 +1437,6 @@ export class MetaGraphClient {
     if (creativeIds.length === 0) return out;
 
     const uniqueIds = Array.from(new Set(creativeIds.filter(Boolean)));
-
     const fields =
       "id,name,thumbnail_url,object_story_spec,asset_feed_spec";
     const chunkSize = 50;
@@ -1493,22 +1465,36 @@ export class MetaGraphClient {
   }
 
   /**
-   * Monta o relatório de criativos de uma campanha:
-   * - agrega performance por creative_id
-   * - coleta metadados visuais do criativo
-   * - calcula "resultado principal" e custo por resultado
-   *   usando a mesma regra de objetivo da campanha (OBJECTIVE_RESULT_RULES).
-   *
-   * Isso permite montar o modal/aba "Criativos" da sua UI:
-   * cada card = 1 creative, com thumb, variações de imagem e KPIs
-   * (impressões, cliques, gasto, resultados, CPA). :contentReference[oaicite:10]{index=10}
+   * escolhe qual thumb usar
    */
-  async fetchCampaignCreativeReports(
+  private pickCreativeThumbnail(meta: GraphAdCreative | undefined): string | null {
+    if (!meta) return null;
+    if (meta.thumbnail_url) return meta.thumbnail_url ?? null;
+
+    const linkPic = meta.object_story_spec?.link_data?.picture;
+    if (linkPic) return linkPic ?? null;
+
+    const img0 = meta.asset_feed_spec?.images?.[0];
+    if (img0?.url) return img0.url ?? null;
+
+    const vid0 = meta.asset_feed_spec?.videos?.[0];
+    if (vid0?.thumbnail_url) return vid0.thumbnail_url ?? null;
+
+    return null;
+  }
+
+  /**
+   * Monta relatório por ANÚNCIO individual
+   * - cada card do modal vira um anúncio do BM
+   * - calcula CTR, custo por resultado e resultado principal
+   *   (lead, mensagem, compra, etc) com base no objective
+   */
+  async fetchCampaignAdReports(
     accountId: string,
     campaignId: string,
     campaignObjective: string | null | undefined,
     timeRange: TimeRange,
-  ): Promise<CampaignCreativeReport[]> {
+  ): Promise<CampaignAdReport[]> {
     // 1. métricas nível anúncio
     const rows = await this.fetchAdLevelInsightsForCampaign(
       campaignId,
@@ -1518,76 +1504,53 @@ export class MetaGraphClient {
       return [];
     }
 
-    // 2. Mapear ad -> creative.id
+    // 2. map ad_id -> creative_id
     const adCreativeMap = await this.fetchCampaignAdCreativeMap(campaignId);
 
-    // 3. Agregar por creative_id
-    const aggregates = new Map<
-      string,
-      {
-        impressions: number;
-        clicks: number;
-        spend: number;
-        actions: Record<string, number>;
-      }
-    >();
+    // 3. carrega criativos em lote
+    const creativeIds = Array.from(
+      new Set(
+        rows
+          .map((r) => (r.ad_id ? adCreativeMap.get(r.ad_id) : undefined))
+          .filter(Boolean) as string[],
+      ),
+    );
+    const creativeMetadataMap = await this.fetchCreativesMetadata(
+      creativeIds,
+    );
+
+    // 4. regra de "resultado principal" guiada pelo objective
+    const objectiveRule = getObjectiveResultRule(
+      campaignObjective ?? null,
+    );
+
+    const reports: CampaignAdReport[] = [];
 
     for (const row of rows) {
+      if (!row.ad_id) continue;
+
       const adId = row.ad_id;
-      if (!adId) continue;
+      const adName = row.ad_name ?? null;
 
-      const creativeId = adCreativeMap.get(adId);
-      if (!creativeId) continue;
+      const impressions = parseNumber(row.impressions);
+      const clicks = parseNumber(row.clicks);
+      const spend = parseNumber(row.spend);
+      const ctr = parsePercentToNumber(row.ctr);
 
-      let bucket = aggregates.get(creativeId);
-      if (!bucket) {
-        bucket = {
-          impressions: 0,
-          clicks: 0,
-          spend: 0,
-          actions: {},
-        };
-        aggregates.set(creativeId, bucket);
-      }
-
-      bucket.impressions += parseNumber(row.impressions);
-      bucket.clicks += parseNumber(row.clicks);
-      bucket.spend += parseNumber(row.spend);
-
+      // map actions -> quantidade por tipo
+      const actionTotals: Record<string, number> = {};
       if (Array.isArray(row.actions)) {
         for (const act of row.actions) {
           const tNorm = normalizeActionType(act.action_type);
           if (!tNorm) continue;
-
           const qty = extractEntryTotal(act);
           if (qty <= 0) continue;
-
-          bucket.actions[tNorm] = (bucket.actions[tNorm] ?? 0) + qty;
+          actionTotals[tNorm] = (actionTotals[tNorm] ?? 0) + qty;
         }
       }
-    }
 
-    if (aggregates.size === 0) {
-      return [];
-    }
-
-    // 4. metadados visuais dos criativos
-    const creativeIds = Array.from(aggregates.keys());
-    const metadataMap = await this.fetchCreativesMetadata(creativeIds);
-
-    // 5. decidir QUAL métrica é o "resultado" desse criativo,
-    // usando a mesma lógica de objetivo da campanha
-    const objectiveRule = getObjectiveResultRule(campaignObjective ?? null);
-
-    const reports: CampaignCreativeReport[] = [];
-
-    for (const creativeId of creativeIds) {
-      const agg = aggregates.get(creativeId)!;
-      const meta = metadataMap.get(creativeId);
-
-      // descobrir qual ação conta como "resultado principal"
-      let resultsQty = 0;
-      let costPerResult: number | null = null;
+      // resultado principal do anúncio
+      let resultQty = 0;
 
       if (objectiveRule) {
         const normalizedTypes = objectiveRule.actionTypes.map((t) =>
@@ -1595,110 +1558,50 @@ export class MetaGraphClient {
         );
 
         if (objectiveRule.mode === "first") {
-          // pega o primeiro tipo que tiver volume > 0
           for (const t of normalizedTypes) {
-            const qty = agg.actions[t] ?? 0;
+            const qty = actionTotals[t] ?? 0;
             if (qty > 0) {
-              resultsQty = qty;
+              resultQty = qty;
               break;
             }
           }
         } else {
-          // soma todos os tipos relevantes
           for (const t of normalizedTypes) {
-            resultsQty += agg.actions[t] ?? 0;
+            resultQty += actionTotals[t] ?? 0;
           }
         }
       }
 
-      // fallback se não achou nada pelas regras do objective
-      if (resultsQty === 0) {
-        let bestType: string | null = null;
+      // fallback se não achou nada pelos tipos esperados
+      if (resultQty === 0) {
         let bestQty = 0;
-        for (const [t, qty] of Object.entries(agg.actions)) {
+        for (const qty of Object.values(actionTotals)) {
           if (qty > bestQty) {
             bestQty = qty;
-            bestType = t;
           }
         }
-        resultsQty = bestQty;
-        // não precisamos guardar bestType aqui pro card
+        resultQty = bestQty;
       }
 
-      if (resultsQty > 0) {
-        costPerResult = agg.spend / resultsQty;
-      } else {
-        costPerResult = null;
-      }
+      const costPerResult = resultQty > 0 ? spend / resultQty : null;
 
-      // montar lista de assets visuais
-      const assets: CampaignCreativeReport["assets"] = [];
-      const usedThumbs = new Set<string>();
-
-      const pushAsset = (
-        id: string,
-        label: string,
-        thumbnailUrl: string | null,
-        url: string | null,
-      ) => {
-        const dedupeKey = thumbnailUrl ?? url ?? `${id}-${label}`;
-        if (usedThumbs.has(dedupeKey)) return;
-        usedThumbs.add(dedupeKey);
-
-        assets.push({
-          id,
-          label,
-          thumbnailUrl,
-          url,
-        });
-      };
-
-      // Thumb padrão
-      if (meta?.thumbnail_url) {
-        pushAsset(
-          `${creativeId}-thumb`,
-          "Preview",
-          meta.thumbnail_url ?? null,
-          meta.thumbnail_url ?? null,
-        );
-      }
-
-      // Imagens do asset_feed_spec
-      const imgs = meta?.asset_feed_spec?.images ?? [];
-      imgs.forEach((image, index) => {
-        const url = image.url ?? null;
-        const label = image.hash
-          ? `Imagem ${image.hash}`
-          : `Imagem ${index + 1}`;
-        pushAsset(`${creativeId}-img-${index}`, label, url, url);
-      });
-
-      // Imagem do object_story_spec.link_data (ads de link)
-      const linkPic = meta?.object_story_spec?.link_data?.picture ?? null;
-      if (linkPic) {
-        pushAsset(
-          `${creativeId}-link-picture`,
-          "Link preview",
-          linkPic,
-          linkPic,
-        );
-      }
-
-      // Se não achou nenhuma imagem, coloca placeholder
-      if (assets.length === 0) {
-        pushAsset(`${creativeId}-fallback`, "Criativo", null, null);
-      }
+      const creativeId = adCreativeMap.get(adId) ?? null;
+      const creativeMeta = creativeId
+        ? creativeMetadataMap.get(creativeId)
+        : undefined;
+      const thumbnailUrl = this.pickCreativeThumbnail(creativeMeta);
 
       reports.push({
-        id: creativeId,
-        name: meta?.name ?? null,
-        thumbnailUrl: meta?.thumbnail_url ?? null,
-        assets,
-        performance: {
-          impressions: agg.impressions,
-          clicks: agg.clicks,
-          spend: agg.spend,
-          results: resultsQty,
+        ad_id: adId,
+        ad_name: adName,
+        creative_id: creativeId,
+        thumbnailUrl: thumbnailUrl ?? null,
+        metrics: {
+          impressions,
+          clicks,
+          spend,
+          ctr,
+          resultQty,
           costPerResult,
         },
       });
@@ -1706,10 +1609,41 @@ export class MetaGraphClient {
 
     return reports;
   }
+
+  /**
+   * Versão antiga, agregada por creative.
+   * Mantida só pra compatibilidade. Hoje retornamos [].
+   */
+  async fetchCampaignCreativeReports(
+    _accountId: string,
+    _campaignId: string,
+    _timeRange: TimeRange,
+  ): Promise<
+    Array<{
+      id: string;
+      name: string | null;
+      thumbnailUrl: string | null;
+      assets: Array<{
+        id: string;
+        label: string;
+        thumbnailUrl: string | null;
+        url: string | null;
+      }>;
+      performance: {
+        impressions: number;
+        clicks: number;
+        spend: number;
+        results: number;
+        costPerResult: number | null;
+      };
+    }>
+  > {
+    return [];
+  }
 }
 
 /* --------------------------------------------------
- * Builder principal do dashboard (contas, campanhas, totais)
+ * Builder principal do DASHBOARD
  * -------------------------------------------------- */
 
 type DashboardBuilderOptions = {
@@ -1744,11 +1678,9 @@ export async function fetchMetaDashboardMetrics(
     previousEndDate,
   } = options;
 
-  // intervalo atual
   const timeRange: TimeRange =
     startDate && endDate ? { since: startDate, until: endDate } : null;
 
-  // intervalo anterior pra comparação
   const previousRange: TimeRange =
     previousStartDate && previousEndDate
       ? { since: previousStartDate, until: previousEndDate }
@@ -1757,21 +1689,14 @@ export async function fetchMetaDashboardMetrics(
   const accountsResults: DashboardAccountMetrics[] = [];
   const totals = createEmptyTotals();
 
-  // cache de campanhas por conta pra reutilizar no previousTotals
   const campaignCache = new Map<number, GraphCampaign[]>();
 
-  /* -------------------------
-   * LOOP DAS CONTAS
-   * ------------------------- */
   for (const account of accounts) {
-    // campanhas dessa conta
     const campaigns = await client.fetchCampaigns(account.value);
     campaignCache.set(account.id, campaigns);
 
-    // insights nível adset (mais confiável pra resultado/objetivo)
     const adsetRows = await client.fetchAdsetInsights(account.value, timeRange);
 
-    // agrupa adsets por id e transforma em bundles
     const groupedAdsets = aggregateInsightRowsByAdset(adsetRows);
     const adsetsByCampaign = new Map<string, AdsetBundle[]>();
     for (const data of Array.from(groupedAdsets.values())) {
@@ -1782,22 +1707,17 @@ export async function fetchMetaDashboardMetrics(
       adsetsByCampaign.get(bundle.campaignId)!.push(bundle);
     }
 
-    // totais dessa conta
     const accountTotals = createEmptyTotals();
-
-    // campanhas que vão aparecer na tabela da conta
     const campaignEntries: DashboardCampaignMetrics[] = [];
 
     for (const campaign of campaigns) {
       const campaignId = campaign.id;
       if (!campaignId) continue;
 
-      // filtro por campanha específica
       if (campaignFilterSet && !campaignFilterSet.has(campaignId)) {
         continue;
       }
 
-      // filtro por objetivo da campanha
       const objectiveUpper = campaign.objective
         ? campaign.objective.toUpperCase()
         : null;
@@ -1808,7 +1728,6 @@ export async function fetchMetaDashboardMetrics(
         continue;
       }
 
-      // filtro por status (ACTIVE, PAUSED etc.)
       const statusUpper = campaign.status
         ? campaign.status.toUpperCase()
         : null;
@@ -1819,14 +1738,10 @@ export async function fetchMetaDashboardMetrics(
         continue;
       }
 
-      // bundles de adset só dessa campanha
       const adsetBundles = adsetsByCampaign.get(campaignId) ?? [];
-
-      // gera pacote consolidado
       const campaignBundle = buildCampaignBundle(campaign, adsetBundles);
       const metrics = campaignBundle.metrics;
 
-      // filtro por optimization_goal dominante (LEADS, MESSAGES, etc.)
       const dominantGoal =
         campaignBundle.resultado?.optimization_goal ?? null;
       const normalizedGoal = dominantGoal
@@ -1839,10 +1754,8 @@ export async function fetchMetaDashboardMetrics(
         continue;
       }
 
-      // acumula nos totais da conta
       addTotals(accountTotals, metrics);
 
-      // adiciona essa campanha ao resultado final
       campaignEntries.push({
         id: campaignId,
         name: campaign.name ?? null,
@@ -1853,8 +1766,6 @@ export async function fetchMetaDashboardMetrics(
       });
     }
 
-    // Se NÃO tem filtro nenhum e deu vazio (por ex. range sem gasto),
-    // a gente ainda lista as campanhas zeradas, pra UI não sumir tudo.
     const hasFilters =
       (campaignFilterSet && campaignFilterSet.size > 0) ||
       (objectiveFilterSet && objectiveFilterSet.size > 0);
@@ -1881,13 +1792,10 @@ export async function fetchMetaDashboardMetrics(
       }
     }
 
-    // ordena campanhas dessa conta por gasto desc
     campaignEntries.sort((a, b) => b.metrics.spend - a.metrics.spend);
 
-    // adiciona conta nos totais globais
     addTotals(totals, accountTotals);
 
-    // empurra conta na resposta
     accountsResults.push({
       id: account.id,
       name: account.name,
@@ -1897,16 +1805,11 @@ export async function fetchMetaDashboardMetrics(
     });
   }
 
-  // ordena contas por gasto desc
   accountsResults.sort((a, b) => b.metrics.spend - a.metrics.spend);
 
-  /* -------------------------
-   * previousTotals (período anterior)
-   * ------------------------- */
   let previousTotals = createEmptyTotals();
 
   if (previousRange) {
-    // mesmo esquema, mas só pra somar o agregado total anterior
     for (const account of accounts) {
       const campaigns = campaignCache.get(account.id);
       if (!campaigns) continue;
@@ -1930,7 +1833,6 @@ export async function fetchMetaDashboardMetrics(
         const campaignId = campaign.id;
         if (!campaignId) continue;
 
-        // filtros também valem pro previousTotals
         if (campaignFilterSet && !campaignFilterSet.has(campaignId)) {
           continue;
         }
