@@ -1,5 +1,10 @@
-import { createServer, type Server } from "http";
+﻿import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import {
+  MetaGraphClient,
+  fetchMetaDashboardMetrics,
+} from "./meta/graph";
+import type { MetricTotals as MetaMetricTotals } from "./meta/graph";
 import { pingDatabase } from "./db";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
@@ -8,12 +13,14 @@ import memorystore from "memorystore";
 import { z } from "zod";
 import type { Express, NextFunction, Request, Response } from "express";
 import type {
+  Campaign,
   InsertAudience,
   InsertAutomation,
   InsertCampaign,
   InsertIntegration,
   InsertResource,
   InsertUser,
+  Resource,
   User,
 } from "@shared/schema";
 import {
@@ -25,6 +32,7 @@ import {
   insertIntegrationSchema,
 } from "@shared/schema";
 import crypto from "crypto";
+import { differenceInCalendarDays, format, isValid, parseISO, subDays } from "date-fns";
 
 function setNoCacheHeaders(res: Response): void {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -163,6 +171,71 @@ function isAuthenticated(req: Request, res: Response, next: NextFunction) {
   res.status(401).json({ message: "Unauthorized" });
 }
 
+const DATE_PARAM_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const dashboardMetricsQuerySchema = z.object({
+  startDate: z.string().regex(DATE_PARAM_REGEX).optional(),
+  endDate: z.string().regex(DATE_PARAM_REGEX).optional(),
+});
+
+function normalizeQueryArray(value: unknown): string[] | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .flatMap((entry) => (typeof entry === "string" ? entry.split(",") : []))
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0);
+  }
+
+  return undefined;
+}
+
+function parseNumberQueryParam(value: unknown): number[] | undefined {
+  const entries = normalizeQueryArray(value);
+  if (!entries || entries.length === 0) {
+    return undefined;
+  }
+
+  const numbers = entries
+    .map((entry) => Number.parseInt(entry, 10))
+    .filter((num) => Number.isFinite(num));
+
+  return numbers.length > 0 ? numbers : undefined;
+}
+
+function parseStringQueryParam(value: unknown): string[] | undefined {
+  const entries = normalizeQueryArray(value);
+  if (!entries || entries.length === 0) {
+    return undefined;
+  }
+  return entries;
+}
+
+function emptyTotals(): MetaMetricTotals {
+  return {
+    spend: 0,
+    resultSpend: 0,
+    impressions: 0,
+    clicks: 0,
+    leads: 0,
+    results: 0,
+    costPerResult: null,
+  };
+}
+
+type MetaIntegrationConfig = {
+  accessToken?: string | null;
+};
+
 // Middleware to check if user is admin
 function isAdmin(req: Request, res: Response, next: NextFunction) {
   if (req.isAuthenticated()) {
@@ -259,6 +332,213 @@ export async function registerRoutes(app: Express): Promise<Server> {
       next(err);
     }
   });
+
+  app.get("/api/dashboard/metrics", isAuthenticated, async (req, res, next) => {
+    try {
+      const user = req.user as User;
+      const query = dashboardMetricsQuerySchema.parse(req.query);
+
+      if ((query.startDate && !query.endDate) || (!query.startDate && query.endDate)) {
+        return res
+          .status(400)
+          .json({ message: "Forneca startDate e endDate juntos ou nenhum deles." });
+      }
+
+      const accountIds = parseNumberQueryParam(req.query.accountId);
+      const campaignIdParams = parseStringQueryParam(req.query.campaignId);
+      const objectivesParam = parseStringQueryParam(req.query.objective);
+      const statusParam = parseStringQueryParam(req.query.status);
+
+      const allResources = await storage.getResourcesByTenant(user.tenantId);
+      const accountResources = allResources.filter((resource) => resource.type === "account");
+
+      const selectedAccounts =
+        accountIds && accountIds.length > 0
+          ? accountResources.filter((resource) => accountIds.includes(resource.id))
+          : accountResources;
+
+      if (selectedAccounts.length === 0) {
+        return res.json({
+          dateRange: {
+            start: query.startDate ?? null,
+            end: query.endDate ?? null,
+            previousStart: null,
+            previousEnd: null,
+          },
+          totals: emptyTotals(),
+          previousTotals: emptyTotals(),
+          accounts: [],
+        });
+      }
+
+      const integration = await storage.getIntegrationByProvider(user.tenantId, "Meta");
+      const metaConfig = (integration?.config ?? {}) as MetaIntegrationConfig;
+
+      if (!metaConfig.accessToken) {
+        return res.status(400).json({
+          message: "Integracao com Meta nao esta conectada para este tenant.",
+        });
+      }
+
+      const settings = await storage.getAppSettings();
+      if (!settings?.metaAppSecret) {
+        return res
+          .status(500)
+          .json({ message: "Meta app secret nao configurado." });
+      }
+
+      const campaignFilterSet =
+        campaignIdParams && campaignIdParams.length > 0
+          ? new Set(campaignIdParams.map(String))
+          : undefined;
+      const objectiveFilterSet =
+        objectivesParam && objectivesParam.length > 0
+          ? new Set(objectivesParam.map((value) => value.toUpperCase()))
+          : undefined;
+      const statusFilterSet =
+        statusParam && statusParam.length > 0
+          ? new Set(statusParam.map((value) => value.toUpperCase()))
+          : undefined;
+
+      let previousStart: string | null = null;
+      let previousEnd: string | null = null;
+
+      if (query.startDate && query.endDate) {
+        const startDate = parseISO(query.startDate);
+        const endDate = parseISO(query.endDate);
+        if (!isValid(startDate) || !isValid(endDate)) {
+          return res.status(400).json({ message: "Parametros de data invalidos." });
+        }
+        if (startDate > endDate) {
+          return res
+            .status(400)
+            .json({ message: "O startDate deve ser menor ou igual ao endDate" });
+        }
+
+        const rangeDays = differenceInCalendarDays(endDate, startDate) + 1;
+        const previousEndDate = subDays(startDate, 1);
+        const previousStartDate = subDays(previousEndDate, Math.max(rangeDays - 1, 0));
+        previousStart = format(previousStartDate, "yyyy-MM-dd");
+        previousEnd = format(previousEndDate, "yyyy-MM-dd");
+      }
+
+      const client = new MetaGraphClient(metaConfig.accessToken, settings.metaAppSecret);
+
+      const metrics = await fetchMetaDashboardMetrics({
+        accounts: selectedAccounts,
+        client,
+        campaignFilterSet,
+        objectiveFilterSet,
+        statusFilterSet,
+        startDate: query.startDate ?? undefined,
+        endDate: query.endDate ?? undefined,
+        previousStartDate: previousStart ?? undefined,
+        previousEndDate: previousEnd ?? undefined,
+      });
+
+      res.json({
+        dateRange: {
+          start: query.startDate ?? null,
+          end: query.endDate ?? null,
+          previousStart,
+          previousEnd,
+        },
+        totals: metrics.totals,
+        previousTotals: metrics.previousTotals,
+        accounts: metrics.accounts,
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.get(
+    "/api/meta/campaigns/:id/creatives",
+    isAuthenticated,
+    async (req, res, next) => {
+      try {
+        const user = req.user as User;
+        const campaignId = req.params.id;
+        const accountIdParam = req.query.accountId;
+
+        if (typeof accountIdParam !== "string" || accountIdParam.length === 0) {
+          return res.status(400).json({
+            message: "Parametro accountId obrigatorio.",
+          });
+        }
+
+        const startParam =
+          typeof req.query.startDate === "string" ? req.query.startDate : null;
+        const endParam =
+          typeof req.query.endDate === "string" ? req.query.endDate : null;
+
+        let timeRange: { since: string; until: string } | null = null;
+        if (startParam && endParam) {
+          const startDate = parseISO(startParam);
+          const endDate = parseISO(endParam);
+          if (!isValid(startDate) || !isValid(endDate)) {
+            return res.status(400).json({ message: "Parametros de data invalidos." });
+          }
+          if (startDate > endDate) {
+            return res
+              .status(400)
+              .json({ message: "O startDate deve ser menor ou igual ao endDate" });
+          }
+          timeRange = {
+            since: format(startDate, "yyyy-MM-dd"),
+            until: format(endDate, "yyyy-MM-dd"),
+          };
+        }
+
+        const allResources = await storage.getResourcesByTenant(user.tenantId);
+        const accountResources = allResources.filter(
+          (resource) => resource.type === "account",
+        );
+        const accountMatch = accountResources.find(
+          (resource) => resource.value === accountIdParam,
+        );
+
+        if (!accountMatch) {
+          return res.status(404).json({
+            message: "Conta nao encontrada ou nao pertence ao tenant atual.",
+          });
+        }
+
+        const integration = await storage.getIntegrationByProvider(
+          user.tenantId,
+          "Meta",
+        );
+        const metaConfig = (integration?.config ?? {}) as MetaIntegrationConfig;
+
+        if (!metaConfig.accessToken) {
+          return res.status(400).json({
+            message: "Integracao com Meta nao esta conectada para este tenant.",
+          });
+        }
+
+        const settings = await storage.getAppSettings();
+        if (!settings?.metaAppSecret) {
+          return res
+            .status(500)
+            .json({ message: "Meta app secret nao configurado." });
+        }
+
+        const client = new MetaGraphClient(
+          metaConfig.accessToken,
+          settings.metaAppSecret,
+        );
+        const creatives = await client.fetchCampaignCreativeReports(
+          accountIdParam,
+          campaignId,
+          timeRange,
+        );
+
+        res.json({ creatives });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
 
   // Get resources by type
   app.get("/api/resources/:type", isAuthenticated, async (req, res, next) => {
@@ -644,7 +924,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get webhook URL
       const settings = await storage.getAppSettings();
       if (!settings?.n8nWebhookUrl) {
-        return res.status(400).json({ message: "Webhook n8n não configurado. Configure em Admin > Configurações" });
+        return res.status(400).json({ message: "Webhook n8n nao configurado. Configure em Admin > Configuracoes" });
       }
 
       // Fetch resource details
@@ -845,7 +1125,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const errorJson = JSON.parse(errorText);
           if (errorJson.code === 404 || errorJson.message?.includes("not registered")) {
-            userMessage = "Webhook n8n não está ativo. No n8n, clique em 'Execute workflow' e tente novamente.";
+            userMessage = "Webhook n8n nao esta ativo. No n8n, clique em 'Execute workflow' e tente novamente.";
           }
         } catch (e) {
           // Keep default message if parsing fails
@@ -874,7 +1154,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get webhook URL
       const settings = await storage.getAppSettings();
       if (!settings?.n8nWebhookUrl) {
-        return res.status(400).json({ message: "Webhook n8n não configurado. Configure em Admin > Configurações" });
+        return res.status(400).json({ message: "Webhook n8n nao configurado. Configure em Admin > Configuracoes" });
       }
 
       // Extract data from request
@@ -1039,7 +1319,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         try {
           const errorJson = JSON.parse(errorText);
           if (errorJson.code === 404 || errorJson.message?.includes("not registered")) {
-            userMessage = "Webhook n8n não está ativo. No n8n, clique em 'Execute workflow' e tente novamente.";
+            userMessage = "Webhook n8n nao esta ativo. No n8n, clique em 'Execute workflow' e tente novamente.";
           }
         } catch (e) {
           // Keep default message if parsing fails
@@ -1822,3 +2102,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   return httpServer;
 }
+
+
+
