@@ -1,18 +1,19 @@
 ﻿"use client";
 
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Loader2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Loader2, X, Image as ImageIcon } from "lucide-react";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
-/* -------------------------------------------------
- * Tipos compartilhados (os mesmos do dashboard)
- * ------------------------------------------------- */
+/* ------------------------------------------
+ * Tipos herdados do Dashboard
+ * ------------------------------------------ */
 
 type MetricTotals = {
   spend: number;
@@ -24,42 +25,36 @@ type MetricTotals = {
   costPerResult: number | null;
 };
 
-type CampaignAdsetResumo = {
-  adset_id: string;
-  adset_name: string | null;
-  optimization_goal: string | null;
-  action_type: string | null;
-  label: string;
-  quantidade: number;
-  custo_por_resultado: number | null;
-  spend: number;
-  impressions: number;
-  clicks: number;
-};
-
-type ResultadoDetalhe = {
-  tipo: string;
-  label: string;
-  quantidade: number;
-  custo_por_resultado: number | null;
-};
-
-type ResultadoCampanha = {
-  label: string;
-  quantidade: number | null;
-  custo_por_resultado: number | null;
-  optimization_goal?: string | null;
-  detalhes?: ResultadoDetalhe[];
-  adsets?: CampaignAdsetResumo[];
-};
-
 export type DashboardCampaignMetrics = {
   id: string;
   name: string | null;
   objective: string | null;
   status: string | null;
   metrics: MetricTotals;
-  resultado?: ResultadoCampanha;
+  resultado?: {
+    label: string;
+    quantidade: number | null;
+    custo_por_resultado: number | null;
+    optimization_goal?: string | null;
+    detalhes?: Array<{
+      tipo: string;
+      label: string;
+      quantidade: number;
+      custo_por_resultado: number | null;
+    }>;
+    adsets?: Array<{
+      adset_id: string;
+      adset_name: string | null;
+      optimization_goal: string | null;
+      action_type: string | null;
+      label: string;
+      quantidade: number;
+      custo_por_resultado: number | null;
+      spend: number;
+      impressions: number;
+      clicks: number;
+    }>;
+  };
 };
 
 export type CampaignHeaderSnapshot = {
@@ -70,330 +65,84 @@ export type CampaignHeaderSnapshot = {
   ctr: number | null;
 };
 
-/* -------------------------------------------------
- * Tipos específicos de criativos
- * ------------------------------------------------- */
-
-interface CreativeAsset {
-  id: string;
-  label: string;
-  url: string | null;
+/* ------------------------------------------
+ * Tipo vindo do backend em /api/meta/campaigns/:id/creatives
+ * Cada item = 1 anúncio individual (ad)
+ * ------------------------------------------ */
+type CampaignAdReport = {
+  ad_id: string;
+  ad_name: string | null;
+  creative_id: string | null;
   thumbnailUrl: string | null;
-}
-
-interface CreativePerformance {
-  impressions: number;
-  clicks: number;
-  spend: number;
-  results: number;
-  costPerResult: number | null;
-}
-
-export interface CampaignCreative {
-  id: string;
-  name: string | null;
-  thumbnailUrl: string | null;
-  assets: CreativeAsset[];
-  performance: CreativePerformance;
-}
-
-type CampaignCreativesResponse = {
-  creatives: CampaignCreative[];
+  metrics: {
+    impressions: number;
+    clicks: number;
+    spend: number;
+    ctr: number | null;
+    resultQty: number;
+    costPerResult: number | null;
+  };
 };
 
-/* -------------------------------------------------
- * Helpers de formatação
- * ------------------------------------------------- */
-
-const currencyFormatter = new Intl.NumberFormat("pt-BR", {
-  style: "currency",
-  currency: "BRL",
-  maximumFractionDigits: 2,
-});
-
-const integerFormatter = new Intl.NumberFormat("pt-BR", {
-  maximumFractionDigits: 0,
-});
-
-function formatCurrency(value: number | null | undefined) {
-  if (value === null || value === undefined) return "N/D";
-  return currencyFormatter.format(value);
-}
-
-function formatInteger(value: number | null | undefined) {
-  if (value === null || value === undefined) return "N/D";
-  return integerFormatter.format(value);
-}
-
-function calcCTR(clicks: number, impressions: number): number | null {
-  if (!impressions || impressions <= 0) return null;
-  return (clicks / impressions) * 100;
-}
-
-function formatPercentage(value: number | null) {
-  if (value === null || !Number.isFinite(value)) return "—";
-  return `${value.toFixed(2)}%`;
-}
-
-// pega a primeira palavra do label da campanha (ex: "Conversas" -> "conversas")
-function getUnitFromLabel(label: string | undefined | null) {
-  if (!label) return "res";
-  const first = label.trim().split(/\s+/)[0] ?? "res";
-  return first.toLowerCase();
-}
-
-/**
- * Constrói o resumo da campanha usando SOMENTE dados que já vêm do dashboard.
- */
-function buildResumoCampanha(campaign: DashboardCampaignMetrics) {
-  const m = campaign.metrics;
-  const r = campaign.resultado;
-
-  let labelResultado = "Resultado";
-  let qtdResultado: number | null = null;
-  let custoResultado: number | null = null;
-
-  if (r && r.quantidade !== null) {
-    labelResultado = r.label || "Resultado";
-    qtdResultado = r.quantidade ?? null;
-    custoResultado = r.custo_por_resultado ?? null;
-  } else {
-    const rawQty =
-      (Number.isFinite(m.results) && m.results > 0 ? m.results : null) ??
-      (Number.isFinite(m.leads) && m.leads > 0 ? m.leads : null) ??
-      null;
-
-    qtdResultado = rawQty;
-    labelResultado = r?.label || "Resultado";
-
-    const fallbackCost =
-      m.costPerResult ?? (rawQty && rawQty > 0 ? m.resultSpend / rawQty : null);
-
-    custoResultado = fallbackCost ?? null;
-  }
-
-  const ctr = calcCTR(m.clicks, m.impressions);
-
-  return {
-    gasto: m.spend ?? 0,
-    labelResultado,
-    qtdResultado,
-    custoResultado,
-    ctr,
-  };
-}
-
-/* -------------------------------------------------
- * Subcomponentes de UI
- * ------------------------------------------------- */
-
-function StatItem({
-  label,
-  value,
-  helper,
-}: {
-  label: string;
-  value: string;
-  helper?: string;
-}) {
-  return (
-    <div className="flex flex-col text-right">
-      <span className="text-[0.6rem] font-medium uppercase tracking-wide text-muted-foreground/80">
-        {label}
-      </span>
-      <span className="text-sm font-semibold leading-tight text-foreground">
-        {value}
-        {helper ? (
-          <span className="ml-1 text-[0.6rem] font-normal text-muted-foreground/70">
-            {helper}
-          </span>
-        ) : null}
-      </span>
-    </div>
-  );
-}
-
-function DetailPill({
-  quantidade,
-  label,
-  custo,
-  unit,
-}: {
-  quantidade: number;
-  label: string;
-  custo: number | null | undefined;
-  unit: string;
-}) {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-1 text-[0.6rem] font-medium leading-none text-muted-foreground ring-1 ring-border/60">
-      <span className="text-[0.7rem] font-semibold text-foreground">
-        {quantidade.toLocaleString("pt-BR")}
-      </span>
-    </span>
-  );
-}
-
-function MetricRow({
-  title,
-  value,
-  accent,
-}: {
-  title: string;
-  value: string;
-  accent?: boolean;
-}) {
-  return (
-    <div className="flex flex-col">
-      <dt className="text-[0.6rem] font-medium uppercase tracking-wide text-muted-foreground/80">
-        {title}
-      </dt>
-      <dd
-        className={
-          "text-sm font-semibold leading-tight " +
-          (accent ? "text-foreground" : "text-foreground/90")
-        }
-      >
-        {value}
-      </dd>
-    </div>
-  );
-}
-
-/* -------------------------------------------------
- * Card de Criativo
- * ------------------------------------------------- */
-
-function CreativeBlock({
-  creative,
-  resultadoLabel,
-  resultadoQuantidadeFromDash,
-  custoPorResultadoFromDash,
-  unit,
-  detailRows,
-}: {
-  creative: CampaignCreative;
-  resultadoLabel: string;
-  resultadoQuantidadeFromDash: number | null;
-  custoPorResultadoFromDash: number | null;
-  unit: string;
-  detailRows: ResultadoDetalhe[];
-}) {
-  const ctr = calcCTR(
-    creative.performance.clicks,
-    creative.performance.impressions,
-  );
-
-  const mainAsset = creative.assets[0];
-
-  return (
-    <article className="group relative flex flex-col overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-card/80 to-card shadow-sm ring-1 ring-black/5 transition-colors hover:bg-card hover:shadow-lg hover:ring-black/10">
-      {/* BARRA SUPERIOR */}
-      <header className="flex items-start justify-between bg-muted/40/60 px-4 py-3 backdrop-blur-sm">
-        <div className="flex flex-col gap-1 pr-4">
-          <p className="max-w-[16rem] truncate text-sm font-semibold leading-tight text-foreground">
-            {creative.name ?? "Criativo sem nome"}
-          </p>
-          <p className="text-[0.65rem] font-mono leading-none text-muted-foreground/80">
-            ID: {creative.id}
-          </p>
-        </div>
-
-        {/* Badge do resultado principal da campanha */}
-        <div className="rounded-lg bg-background/60 px-2 py-1 text-right shadow-sm ring-1 ring-border/60">
-          <div className="text-[0.6rem] font-medium uppercase tracking-wide text-muted-foreground/80">
-            {resultadoLabel}
-          </div>
-          <div className="text-sm font-semibold leading-tight text-foreground">
-            {resultadoQuantidadeFromDash !== null
-              ? resultadoQuantidadeFromDash.toLocaleString("pt-BR")
-              : "N/D"}
-          </div>
-        </div>
-      </header>
-
-      {/* CORPO */}
-      <div className="grid gap-4 p-4 md:grid-cols-[auto,1fr]">
-        {/* PREVIEW VISUAL */}
-        <div className="flex flex-col items-center rounded-xl border border-border/60 bg-background/40 p-4 text-center ring-1 ring-black/5">
-          {mainAsset?.thumbnailUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={mainAsset.thumbnailUrl}
-              alt={mainAsset.label}
-              className="h-32 w-32 rounded-md object-cover shadow-sm ring-1 ring-border/80"
-            />
-          ) : (
-            <div className="flex h-32 w-32 items-center justify-center rounded-md border border-dashed border-border/60 text-[0.7rem] text-muted-foreground">
-              Preview
-            </div>
-          )}
-
-          <span className="mt-3 max-w-[8rem] truncate text-[0.7rem] text-muted-foreground/90">
-            {mainAsset?.label ?? "Preview"}
-          </span>
-        </div>
-
-        {/* MÉTRICAS DO CRIATIVO */}
-        <div className="flex flex-col rounded-xl bg-muted/10 p-4 text-[0.7rem] shadow-inner ring-1 ring-inset ring-border/40">
-          {/* GRID DE MÉTRICAS PRIMÁRIAS */}
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-4 font-mono text-foreground">
-            <MetricRow
-              title="Impressões"
-              value={creative.performance.impressions.toLocaleString("pt-BR")}
-            />
-
-            <MetricRow
-              title="Cliques"
-              value={creative.performance.clicks.toLocaleString("pt-BR")}
-            />
-
-            <MetricRow
-              title="Gasto"
-              value={creative.performance.spend.toLocaleString("pt-BR", {
-                style: "currency",
-                currency: "BRL",
-              })}
-            />
-
-            <MetricRow
-              title={`Custo/${unit}`}
-              value={
-                custoPorResultadoFromDash !== null
-                  ? custoPorResultadoFromDash.toLocaleString("pt-BR", {
-                      style: "currency",
-                      currency: "BRL",
-                    })
-                  : "N/D"
-              }
-              accent
-            />
-
-            <MetricRow title="CTR" value={formatPercentage(ctr)} />
-          </dl>
-
-          {/* DIVISOR */}
-        </div>
-      </div>
-    </article>
-  );
-}
-
-/* -------------------------------------------------
- * MODAL PRINCIPAL
- * ------------------------------------------------- */
-
-export interface CampaignCreativesDialogProps {
+/* ------------------------------------------
+ * Props
+ * ------------------------------------------ */
+interface CampaignCreativesDialogProps {
   open: boolean;
   onClose: () => void;
 
   campaign: DashboardCampaignMetrics | null;
-  account: string | null; // ID da conta ex: "act_123"
+  account: string | null; // ex: "act_1234"
   headerSnapshot: CampaignHeaderSnapshot | null;
 
-  startDate: string;
-  endDate: string;
+  startDate: string; // "yyyy-MM-dd"
+  endDate: string;   // "yyyy-MM-dd"
 }
 
+/* ------------------------------------------
+ * Helpers de formatação
+ * ------------------------------------------ */
+
+// R$ 55,56
+function formatMoney(value: number | null | undefined) {
+  if (value === null || value === undefined || isNaN(value)) return "—";
+  return value.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+// 5,3 mil / 320 / —
+function formatImpressions(n: number | null | undefined) {
+  if (n === null || n === undefined || isNaN(n)) return "—";
+  if (n >= 1000) {
+    // ex: 5300 -> "5,3 mil"
+    const milhares = n / 1000;
+    return `${milhares.toLocaleString("pt-BR", {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    })} mil`;
+  }
+  return n.toLocaleString("pt-BR");
+}
+
+// inteiro simples (Resultados, Cliques)
+function formatInt(n: number | null | undefined) {
+  if (n === null || n === undefined || isNaN(n)) return "—";
+  return n.toLocaleString("pt-BR");
+}
+
+// CTR 3.50%
+function formatCTR(v: number | null | undefined) {
+  if (v === null || v === undefined || isNaN(v)) return "—";
+  return `${v.toFixed(2)}%`;
+}
+
+/* ------------------------------------------
+ * Componente principal
+ * ------------------------------------------ */
 export function CampaignCreativesDialog({
   open,
   onClose,
@@ -403,174 +152,343 @@ export function CampaignCreativesDialog({
   startDate,
   endDate,
 }: CampaignCreativesDialogProps) {
-  const enabled = open && !!campaign && !!account;
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [creatives, setCreatives] = useState<CampaignAdReport[]>([]);
 
-  const { data, isLoading, isError, error, refetch } = useQuery<
-    CampaignCreativesResponse,
-    Error
-  >({
-    queryKey: [
-      "campaign-creatives",
-      campaign?.id,
-      account,
-      startDate,
-      endDate,
-    ],
-    enabled,
-    staleTime: 60 * 1000,
-    queryFn: async () => {
-      if (!campaign || !account) {
-        return { creatives: [] };
+  const canRequest = !!campaign?.id && !!account;
+
+  // Info de topo do modal (header principal)
+  const headerInfo = useMemo(() => {
+    if (!campaign || !headerSnapshot) return null;
+
+    return {
+      id: campaign.id,
+      name: campaign.name ?? `Campanha ${campaign.id}`,
+      objective: campaign.objective ?? null,
+      status: campaign.status ?? null,
+      spend: headerSnapshot.spend,
+      resultLabel: headerSnapshot.resultLabel,
+      resultQuantity: headerSnapshot.resultQuantity,
+      costPerResult: headerSnapshot.costPerResult,
+      ctr: headerSnapshot.ctr,
+    };
+  }, [campaign, headerSnapshot]);
+
+  // Carrega anúncios (criativos) quando abre
+  useEffect(() => {
+    if (!open || !canRequest) return;
+
+    async function loadCreatives() {
+      try {
+        setLoading(true);
+        setErrorMsg(null);
+
+        const params = new URLSearchParams({
+          accountId: account ?? "",
+          startDate,
+          endDate,
+        });
+
+        const res = await fetch(
+          `/api/meta/campaigns/${encodeURIComponent(
+            campaign!.id,
+          )}/creatives?` + params.toString(),
+        );
+
+        if (!res.ok) {
+          const text = await res.text();
+          try {
+            const maybeJson = JSON.parse(text);
+            setErrorMsg(
+              maybeJson?.message ||
+                `Erro ${res.status} ao carregar criativos.`,
+            );
+          } catch {
+            setErrorMsg(
+              "Não foi possível carregar os criativos. A API respondeu um erro inesperado.",
+            );
+          }
+          setCreatives([]);
+          return;
+        }
+
+        let data: any;
+        try {
+          data = await res.json();
+        } catch {
+          setErrorMsg(
+            "A API retornou um conteúdo não-JSON. Verifique se /api/meta/campaigns/:id/creatives está retornando JSON.",
+          );
+          setCreatives([]);
+          return;
+        }
+
+        if (!data || !Array.isArray(data.creatives)) {
+          setErrorMsg(
+            "Resposta inesperada da API. Campo 'creatives' ausente.",
+          );
+          setCreatives([]);
+          return;
+        }
+
+        setCreatives(data.creatives as CampaignAdReport[]);
+      } catch (err: any) {
+        setErrorMsg(
+          err?.message ?? "Erro desconhecido ao carregar criativos.",
+        );
+        setCreatives([]);
+      } finally {
+        setLoading(false);
       }
+    }
 
-      const params = new URLSearchParams({
-        accountId: account,
-        startDate,
-        endDate,
-      });
+    loadCreatives();
+  }, [open, canRequest, account, campaign, startDate, endDate]);
 
-      const res = await fetch(
-        `/api/meta/campaigns/${encodeURIComponent(
-          campaign.id,
-        )}/creatives?${params.toString()}`,
-      );
+  /* ------------------------------------------
+   * Render helpers
+   * ------------------------------------------ */
 
-      if (!res.ok) {
-        const msg = await res.text();
-        throw new Error(msg || "Falha ao carregar criativos desta campanha.");
-      }
+  function CreativeMetricsGrid({
+    spend,
+    impressions,
+    clicks,
+    results,
+    costPerResult,
+    ctr,
+  }: {
+    spend: number | null | undefined;
+    impressions: number | null | undefined;
+    clicks: number | null | undefined;
+    results: number | null | undefined;
+    costPerResult: number | null | undefined;
+    ctr: number | null | undefined;
+  }) {
+    const cells = [
+      { label: "Investimento", value: formatMoney(spend) },
+      { label: "Impressões", value: formatImpressions(impressions as number) },
+      { label: "Cliques", value: formatInt(clicks as number) },
+      { label: "CTR", value: formatCTR(ctr) },
+      { label: "Resultados", value: formatInt(results as number) },
+      { label: "Custo / Resultado", value: formatMoney(costPerResult) },
+    ];
 
-      return (await res.json()) as CampaignCreativesResponse;
-    },
-  });
+    return (
+      <div className="grid grid-cols-2 gap-3 border-t bg-muted/30 p-4 text-xs md:text-[0.8rem]">
+        {cells.map((cell, idx) => (
+          <div
+            key={idx}
+            className="rounded-md border bg-card px-3 py-2 text-left shadow-sm"
+          >
+            <div className="text-[0.65rem] font-medium text-muted-foreground leading-none">
+              {cell.label}
+            </div>
+            <div className="mt-1 text-sm font-semibold text-foreground leading-tight">
+              {cell.value}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
-  const resumo = useMemo(() => {
-    return campaign ? buildResumoCampanha(campaign) : null;
-  }, [campaign]);
+  function CreativeCard(item: CampaignAdReport) {
+    const m = item.metrics;
 
-  const detailRows = useMemo(() => {
-    const raw = campaign?.resultado?.detalhes ?? [];
-    return raw.filter((d) => d.quantidade && d.quantidade > 0);
-  }, [campaign]);
+    return (
+      <div className="flex flex-col overflow-hidden rounded-xl border bg-background shadow-sm">
+        {/* Header textual do criativo */}
+        <div className="border-b bg-card/40 p-4">
+          <div className="text-[0.8rem] font-semibold text-foreground leading-tight">
+            {item.ad_name
+              ? item.ad_name
+              : "Peça criativa veiculada nesse período"}
+          </div>
+          <div className="text-[0.7rem] text-muted-foreground leading-tight">
+            Peça criativa veiculada nesse período
+          </div>
+        </div>
 
-  const resultadoLabelFromDashboard =
-    campaign?.resultado?.label ?? resumo?.labelResultado ?? "Resultado";
+        {/* Preview grande da peça */}
+        <div className="flex items-center justify-center p-4">
+          <div className="flex h-48 w-48 items-center justify-center overflow-hidden rounded-md border bg-muted">
+            {item.thumbnailUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={item.thumbnailUrl}
+                alt="preview do criativo"
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <ImageIcon className="h-10 w-10 text-muted-foreground" />
+            )}
+          </div>
+        </div>
 
-  const resultadoQuantidadeFromDash = resumo?.qtdResultado ?? null;
-  const custoPorResultadoFromDash = resumo?.custoResultado ?? null;
-  const unitForDetailRows = getUnitFromLabel(resultadoLabelFromDashboard);
+        {/* KPIs do criativo */}
+        <CreativeMetricsGrid
+          spend={m.spend}
+          impressions={m.impressions}
+          clicks={m.clicks}
+          results={m.resultQty}
+          costPerResult={m.costPerResult}
+          ctr={m.ctr}
+        />
+      </div>
+    );
+  }
 
-  return (
-    <Dialog open={open} onOpenChange={(val) => (!val ? onClose() : null)}>
-      <DialogContent className="max-h-[90vh] w-[95vw] max-w-6xl overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-b from-background/95 to-background/80 p-0 shadow-2xl ring-1 ring-black/40 backdrop-blur-md">
-        {/* HEADER */}
-        <DialogHeader className="border-b border-border/60 bg-card/60 p-4 pb-3 backdrop-blur-md">
-          <DialogTitle className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-            {/* ESQUERDA: título e período */}
-            <div className="flex min-w-0 flex-col">
-              <span className="truncate text-base font-semibold leading-tight text-foreground md:text-lg">
-                {campaign?.name ?? "Campanha sem nome"}
-              </span>
+  /* ------------------------------------------
+   * Header do modal (topo)
+   * ------------------------------------------ */
 
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-[0.7rem] font-medium leading-none text-muted-foreground/80">
-                <span className="uppercase tracking-wide">
-                  {resultadoLabelFromDashboard}
-                </span>
-                <span className="text-muted-foreground/50">•</span>
-                <span className="font-mono">
-                  {startDate} → {endDate}
-                </span>
-              </div>
+  function ModalHeader() {
+    return (
+      <DialogHeader className="border-b p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex-1 space-y-3">
+            <div className="space-y-1">
+              <DialogTitle className="text-base font-semibold leading-tight text-foreground">
+                Desempenho das Peças Criativas
+              </DialogTitle>
 
-              {/* badges de breakdown de resultado principais no header */}
-              {detailRows.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {detailRows.map((detail) => (
-                    <DetailPill
-                      key={`${campaign?.id}-${detail.tipo ?? detail.label}`}
-                      quantidade={detail.quantidade}
-                      label={detail.label}
-                      custo={detail.custo_por_resultado}
-                      unit={getUnitFromLabel(detail.label)}
-                    />
-                  ))}
+              {headerInfo ? (
+                <>
+                  <div className="text-sm font-medium text-foreground leading-tight break-words">
+                    {headerInfo.name}
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 text-[0.7rem] leading-tight text-muted-foreground">
+                    {headerInfo.objective && (
+                      <Badge
+                        variant="outline"
+                        className="rounded-sm border px-2 py-0.5 text-[0.6rem] font-medium"
+                      >
+                        {headerInfo.objective}
+                      </Badge>
+                    )}
+                    {headerInfo.status && (
+                      <Badge
+                        variant="secondary"
+                        className="rounded-sm px-2 py-0.5 text-[0.6rem] font-medium"
+                      >
+                        {headerInfo.status}
+                      </Badge>
+                    )}
+                  </div>
+
+                  <div className="text-[0.7rem] leading-tight text-muted-foreground">
+                    Período analisado: {startDate} → {endDate}
+                  </div>
+                </>
+              ) : (
+                <div className="text-[0.7rem] leading-tight text-muted-foreground">
+                  Nenhuma campanha selecionada.
                 </div>
               )}
             </div>
 
-            {/* DIREITA: snapshot executivo */}
-            {resumo && (
-              <div className="min-w-[15rem] shrink-0 flex-col rounded-xl bg-background/60 p-4 shadow-sm ring-1 ring-border/60">
-                <div className="grid grid-cols-2 gap-x-6 gap-y-4 font-mono text-[0.7rem] text-foreground md:grid-cols-2">
-                  <StatItem
-                    label="Gasto"
-                    value={formatCurrency(resumo.gasto)}
-                  />
+            {/* KPIs gerais da campanha */}
+            {headerInfo && (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 text-[0.7rem] leading-tight">
+                <div className="rounded-md border bg-card px-2 py-2 shadow-sm">
+                  <div className="text-muted-foreground text-[0.6rem] font-medium leading-none">
+                    Investimento
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-foreground leading-tight">
+                    {formatMoney(headerInfo.spend)}
+                  </div>
+                </div>
 
-                  <StatItem
-                    label={resumo.labelResultado}
-                    value={formatInteger(resumo.qtdResultado)}
-                  />
+                <div className="rounded-md border bg-card px-2 py-2 shadow-sm">
+                  <div className="text-muted-foreground text-[0.6rem] font-medium leading-none">
+                    {headerInfo.resultLabel}
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-foreground leading-tight">
+                    {formatInt(headerInfo.resultQuantity)}
+                  </div>
+                </div>
 
-                  <StatItem
-                    label={`Custo/${unitForDetailRows}`}
-                    value={formatCurrency(resumo.custoResultado)}
-                  />
+                <div className="rounded-md border bg-card px-2 py-2 shadow-sm">
+                  <div className="text-muted-foreground text-[0.6rem] font-medium leading-none">
+                    Custo / Resultado
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-foreground leading-tight">
+                    {formatMoney(headerInfo.costPerResult)}
+                  </div>
+                </div>
 
-                  <StatItem
-                    label="CTR"
-                    value={formatPercentage(resumo.ctr)}
-                  />
+                <div className="rounded-md border bg-card px-2 py-2 shadow-sm">
+                  <div className="text-muted-foreground text-[0.6rem] font-medium leading-none">
+                    CTR
+                  </div>
+                  <div className="mt-1 text-sm font-semibold text-foreground leading-tight">
+                    {formatCTR(headerInfo.ctr)}
+                  </div>
                 </div>
               </div>
             )}
-          </DialogTitle>
-        </DialogHeader>
+          </div>
 
-        {/* BODY */}
-        <div className="max-h-[calc(90vh-8rem)] overflow-y-auto p-4">
-          {!enabled ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Carregando dados…
+          {/* Botão fechar */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            className="h-6 w-6 flex-shrink-0 rounded-full text-muted-foreground hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      </DialogHeader>
+    );
+  }
+
+  /* ------------------------------------------
+   * Render principal do modal
+   * ------------------------------------------ */
+
+  return (
+    <Dialog open={open} onOpenChange={(val) => !val && onClose()}>
+      <DialogContent className="max-h-[90vh] w-full max-w-4xl overflow-hidden p-0">
+        {/* HEADER */}
+        <ModalHeader />
+
+        {/* CONTEÚDO SCROLLÁVEL */}
+        <div className="max-h-[70vh] overflow-y-auto p-4">
+          {loading ? (
+            <div className="flex flex-col items-center justify-center gap-2 py-10 text-center text-sm text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              <span>Carregando criativos…</span>
             </div>
-          ) : isLoading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Carregando criativos…
+          ) : errorMsg ? (
+            <div className="rounded-md border border-destructive/50 bg-destructive/5 p-4 text-center text-sm text-destructive">
+              <div className="font-medium">
+                Não foi possível carregar os criativos
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                {errorMsg}
+              </div>
+              <div className="mt-3 text-[0.7rem] leading-tight text-muted-foreground">
+                Verifique se a conta selecionada realmente tem anúncios
+                veiculados nessa campanha no período informado
+                e se a integração Meta tem permissão de leitura de anúncios
+                e insights (por exemplo, ads_read e métricas de lead / mensagens).
+              </div>
             </div>
-          ) : isError ? (
-            <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive shadow-sm ring-1 ring-black/5">
-              <p className="mb-2">
-                {error?.message ?? "Não foi possível carregar os criativos."}
-              </p>
-              <button
-                type="button"
-                className="text-xs font-semibold underline"
-                onClick={() => refetch()}
-              >
-                Tentar novamente
-              </button>
+          ) : creatives.length === 0 ? (
+            <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
+              Nenhuma peça criativa veiculada nesse período.
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              {data?.creatives && data.creatives.length > 0 ? (
-                data.creatives.map((creative) => (
-                  <CreativeBlock
-                    key={creative.id}
-                    creative={creative}
-                    resultadoLabel={resultadoLabelFromDashboard}
-                    resultadoQuantidadeFromDash={resultadoQuantidadeFromDash}
-                    custoPorResultadoFromDash={custoPorResultadoFromDash}
-                    unit={unitForDetailRows}
-                    detailRows={detailRows}
-                  />
-                ))
-              ) : (
-                <section className="col-span-full rounded-2xl border border-border/60 bg-card/40 p-4 text-center text-sm text-muted-foreground shadow-sm ring-1 ring-black/5">
-                  Nenhum criativo encontrado para esta campanha no período.
-                </section>
-              )}
+            <div className="grid gap-4 md:grid-cols-2">
+              {creatives.map((item) => (
+                <CreativeCard
+                  key={item.ad_id ?? item.creative_id ?? Math.random().toString(36)}
+                  {...item}
+                />
+              ))}
             </div>
           )}
         </div>

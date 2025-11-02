@@ -1,7 +1,8 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+
 import { DateRange } from "react-day-picker";
 import {
   endOfMonth,
@@ -10,6 +11,7 @@ import {
   startOfMonth,
   subDays,
 } from "date-fns";
+
 import {
   CalendarIcon,
   ChevronsUpDown,
@@ -48,19 +50,14 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 
 import type { Campaign, Resource } from "@shared/schema";
 import { CampaignCreativesDialog } from "@/components/CampaignCreativesDialog";
 
-// -------------------------------------------------
-// Tipos e helpers
-// -------------------------------------------------
+/* -------------------------------------------------
+ * Tipos retornados pela API interna
+ * ------------------------------------------------- */
 
 type MetricTotals = {
   spend: number;
@@ -115,7 +112,7 @@ type CampaignHeaderSnapshot = {
 type DashboardAccountMetrics = {
   id: number;
   name: string;
-  value: string; // <- esse 'value' é seu act_xxx
+  value: string;
   metrics: MetricTotals;
   campaigns: DashboardCampaignMetrics[];
 };
@@ -132,45 +129,7 @@ type DashboardMetricsResponse = {
   accounts: DashboardAccountMetrics[];
 };
 
-type KPICardTrend = {
-  value: string;
-  positive: boolean;
-};
-
-type KPICardData = {
-  title: string;
-  value: string;
-  icon: typeof DollarSign;
-  trend?: KPICardTrend;
-};
-
-type DateRangeSelectorProps = {
-  value: DateRange | null;
-  onChange: (range: DateRange | null) => void;
-};
-
-type FilterOption = {
-  value: string;
-  label: string;
-  description?: string;
-};
-
-type CampaignFilterOption = FilterOption & {
-  accountId: number | null;
-  objective?: string | null;
-};
-
-type QuickRange = {
-  label: string;
-  range: DateRange;
-};
-
-type AccountMetricProps = {
-  label: string;
-  value: string;
-};
-
-const defaultTotals: MetricTotals = {
+const EMPTY_TOTALS: MetricTotals = {
   spend: 0,
   resultSpend: 0,
   impressions: 0,
@@ -179,6 +138,22 @@ const defaultTotals: MetricTotals = {
   results: 0,
   costPerResult: null,
 };
+
+/* -------------------------------------------------
+ * Tipos de usuário logado pra controle de permissão
+ * ------------------------------------------------- */
+
+type CurrentUser = {
+  id: number;
+  name: string;
+  email?: string;
+  role?: string;        // ex: "system_admin"
+  roles?: string[];     // ex: ["system_admin", "tenant_admin"]
+};
+
+/* -------------------------------------------------
+ * Helpers
+ * ------------------------------------------------- */
 
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -190,11 +165,81 @@ const integerFormatter = new Intl.NumberFormat("pt-BR", {
   maximumFractionDigits: 0,
 });
 
-const rangeFormatter = new Intl.DateTimeFormat("pt-BR", {
+const dateRangeFormatter = new Intl.DateTimeFormat("pt-BR", {
   day: "2-digit",
   month: "short",
   year: "numeric",
 });
+
+function formatCurrency(v: number | null | undefined) {
+  if (!v || !Number.isFinite(v)) return "R$ 0,00";
+  return currencyFormatter.format(v);
+}
+
+function formatInteger(v: number | null | undefined) {
+  if (!v || !Number.isFinite(v)) return "0";
+  return integerFormatter.format(v);
+}
+
+function formatPercent(v: number | null) {
+  if (v === null || !Number.isFinite(v)) return "—";
+  return `${v.toFixed(2)}%`;
+}
+
+function getCTR(clicks: number, impressions: number): number | null {
+  if (!impressions || impressions <= 0) return null;
+  return (clicks / impressions) * 100;
+}
+
+function buildDefaultRange(): DateRange {
+  const end = new Date();
+  const start = subDays(end, 29);
+  return { from: start, to: end };
+}
+
+function normalizeRange(range: DateRange | null): DateRange {
+  if (!range || !range.from) {
+    const def = buildDefaultRange();
+    return { from: def.from, to: def.to };
+  }
+  if (!range.to) {
+    return { from: range.from, to: range.from };
+  }
+  const fromTime = range.from.getTime();
+  const toTime = range.to.getTime();
+  return fromTime <= toTime
+    ? { from: range.from, to: range.to }
+    : { from: range.to, to: range.from };
+}
+
+function labelFromRange(r: DateRange): string {
+  if (!r.from || !r.to) return "Selecione um período";
+  const start = dateRangeFormatter.format(r.from).replace(/\./g, "");
+  const end = dateRangeFormatter.format(r.to).replace(/\./g, "");
+  return `${start} - ${end}`;
+}
+
+function calcTrend(
+  current: number | null,
+  previous: number | null,
+  invertGood = false,
+) {
+  if (
+    current === null ||
+    previous === null ||
+    !Number.isFinite(current) ||
+    !Number.isFinite(previous) ||
+    previous === 0
+  ) {
+    return undefined;
+  }
+  const delta = ((current - previous) / Math.abs(previous)) * 100;
+  if (!Number.isFinite(delta)) return undefined;
+  return {
+    value: `${Math.abs(delta).toFixed(1)}%`,
+    positive: invertGood ? delta <= 0 : delta >= 0,
+  };
+}
 
 const OBJECTIVE_LABELS: Record<string, string> = {
   LEAD: "Geração de Leads",
@@ -213,196 +258,97 @@ const STATUS_LABELS: Record<string, string> = {
   DISCARDED: "Descartada",
 };
 
-function getObjectiveLabel(value: string | null | undefined): string {
-  if (!value) return "";
-  const upper = value.toUpperCase();
+function getObjectiveLabel(v: string | null | undefined): string {
+  if (!v) return "";
+  const upper = v.toUpperCase();
   return OBJECTIVE_LABELS[upper] ?? upper;
 }
 
-function getStatusLabel(value: string | null | undefined): string {
-  if (!value) return "Status não informado";
-  const upper = value.toUpperCase();
+function getStatusLabel(v: string | null | undefined): string {
+  if (!v) return "Status não informado";
+  const upper = v.toUpperCase();
   return STATUS_LABELS[upper] ?? upper;
 }
 
-function formatCurrency(value: number): string {
-  return currencyFormatter.format(value);
-}
-
-function formatInteger(value: number): string {
-  return integerFormatter.format(value);
-}
-
-function formatPercentage(value: number | null): string {
-  if (value === null || !Number.isFinite(value)) {
-    return "-";
-  }
-  return `${value.toFixed(2)}%`;
-}
-
-function createDefaultRange(): DateRange {
-  const end = new Date();
-  const start = subDays(end, 29); // últimos 30 dias
-  return { from: start, to: end };
-}
-
-function formatRangeLabel(range: DateRange): string {
-  if (!range.from || !range.to) {
-    return "Selecione um período";
-  }
-  const start = rangeFormatter.format(range.from).replace(/\./g, "");
-  const end = rangeFormatter.format(range.to).replace(/\./g, "");
-  return `${start} - ${end}`;
-}
-
-function buildTrend(
-  current: number | null,
-  previous: number | null,
-  invert = false,
-): KPICardTrend | undefined {
-  if (
-    current === null ||
-    previous === null ||
-    !Number.isFinite(current) ||
-    !Number.isFinite(previous) ||
-    previous === 0
-  ) {
-    return undefined;
-  }
-
-  const change = ((current - previous) / Math.abs(previous)) * 100;
-  if (!Number.isFinite(change)) {
-    return undefined;
-  }
-
-  return {
-    value: `${Math.abs(change).toFixed(1)}%`,
-    positive: invert ? change <= 0 : change >= 0,
-  };
-}
-
-function calcCTR(clicks: number, impressions: number): number | null {
-  if (!impressions || impressions <= 0) return null;
-  return (clicks / impressions) * 100;
-}
-
-/**
- * Extrai o "resultado principal":
- * - Prefere `resultado` (vindo pronto do backend)
- * - Cai pro fallback em MetricTotals se não existir
- */
-function extractResultSummary(
+function summarizeResult(
   metrics: MetricTotals,
   resultado?: {
     label: string;
     quantidade: number | null;
     custo_por_resultado: number | null;
   },
-): {
-  label: string;
-  quantidade: number | null;
-  custo: number | null;
-} {
-  if (resultado) {
-    if (resultado.quantidade !== null) {
-      return {
-        label: resultado.label || "Resultado",
-        quantidade: resultado.quantidade,
-        custo: resultado.custo_por_resultado,
-      };
-    }
-
+) {
+  if (resultado && resultado.quantidade !== null) {
     return {
       label: resultado.label || "Resultado",
-      quantidade: null,
-      custo: resultado.custo_por_resultado,
+      quantidade: resultado.quantidade,
+      custo:
+        resultado.custo_por_resultado !== null
+          ? resultado.custo_por_resultado
+          : metrics.costPerResult,
     };
   }
 
-  // fallback quando não existe `resultado`
-  const rawQty =
-    (Number.isFinite(metrics.results) && metrics.results > 0
+  const qty =
+    (metrics.results && metrics.results > 0
       ? metrics.results
       : null) ??
-    (Number.isFinite(metrics.leads) && metrics.leads > 0
-      ? metrics.leads
-      : null) ??
+    (metrics.leads && metrics.leads > 0 ? metrics.leads : null) ??
     null;
 
-  const fallbackCost =
+  const cost =
     metrics.costPerResult ??
-    (rawQty && rawQty > 0 ? metrics.resultSpend / rawQty : null);
+    (qty && qty > 0 ? metrics.resultSpend / qty : null);
 
   return {
-    label: "Resultado",
-    quantidade: rawQty,
-    custo: fallbackCost ?? null,
+    label: resultado?.label || "Resultado",
+    quantidade: qty,
+    custo: cost ?? null,
   };
 }
 
-function AccountMetric({ label, value }: AccountMetricProps) {
+function buildCampaignHeaderSnapshot(
+  campaign: DashboardCampaignMetrics,
+): CampaignHeaderSnapshot {
+  const summary = summarizeResult(campaign.metrics, campaign.resultado);
+  const ctr = getCTR(
+    campaign.metrics.clicks,
+    campaign.metrics.impressions,
+  );
+  return {
+    spend: campaign.metrics.spend,
+    resultLabel: summary.label,
+    resultQuantity: summary.quantidade,
+    costPerResult: summary.custo,
+    ctr,
+  };
+}
+
+/* -------------------------------------------------
+ * Subcomponentes
+ * ------------------------------------------------- */
+
+type FilterOption = {
+  value: string;
+  label: string;
+  description?: string;
+};
+
+function AccountMetric({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
   return (
     <div>
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+      <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </p>
-      <p className="text-lg font-semibold">{value}</p>
+      <p className="text-lg font-semibold leading-tight">{value}</p>
     </div>
   );
-}
-
-function DateRangeSelector({ value, onChange }: DateRangeSelectorProps) {
-  const displayLabel =
-    value && value.from && value.to
-      ? formatRangeLabel(value)
-      : "Selecione um período";
-
-  return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <Button
-          variant="outline"
-          className={cn(
-            "w-full justify-start text-left font-normal",
-            (!value || !value.from || !value.to) && "text-muted-foreground",
-          )}
-        >
-          <CalendarIcon className="mr-2 h-4 w-4" />
-          <span>{displayLabel}</span>
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="p-0" align="end">
-        <Calendar
-          initialFocus
-          mode="range"
-          numberOfMonths={2}
-          selected={value ?? undefined}
-          disabled={{ after: new Date() }}
-          onSelect={(range) => {
-            if (!range?.from) {
-              onChange(null);
-              return;
-            }
-            onChange({
-              from: range.from,
-              to: range.to ?? range.from,
-            });
-          }}
-        />
-      </PopoverContent>
-    </Popover>
-  );
-}
-
-interface FilterComboboxProps {
-  label: string;
-  placeholder: string;
-  emptyLabel: string;
-  options: FilterOption[];
-  value: string | null;
-  onChange: (nextValue: string | null) => void;
-  testId: string;
-  className?: string;
 }
 
 function FilterCombobox({
@@ -414,38 +360,68 @@ function FilterCombobox({
   onChange,
   testId,
   className,
-}: FilterComboboxProps) {
+}: {
+  label: string;
+  placeholder: string;
+  emptyLabel: string;
+  options: FilterOption[];
+  value: string | null;
+  onChange: (next: string | null) => void;
+  testId: string;
+  className?: string;
+}) {
   const [open, setOpen] = useState(false);
-  const selected = options.find((option) => option.value === value);
+  const selected = options.find((o) => o.value === value);
 
   return (
     <div className={cn("flex w-full flex-col gap-1", className)}>
-      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
         {label}
       </span>
+
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
             role="combobox"
+            data-testid={testId}
             aria-expanded={open}
             className="w-full justify-between"
-            data-testid={testId}
           >
-            <span className="truncate">
+            <span className="truncate text-left">
               {selected ? (
-                selected.label
+                <>
+                  <span className="font-medium">{selected.label}</span>
+                  {selected.description && (
+                    <span className="ml-1 text-xs text-muted-foreground">
+                      — {selected.description}
+                    </span>
+                  )}
+                </>
               ) : (
-                <span className="text-muted-foreground">{placeholder}</span>
+                <span className="text-muted-foreground">
+                  {placeholder}
+                </span>
               )}
             </span>
-            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-60" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-[260px] p-0" align="start">
+
+        <PopoverContent
+          side="bottom"
+          align="start"
+          sideOffset={8}
+          className="z-50 w-[260px] p-0"
+        >
           <Command>
-            <CommandInput placeholder={`Buscar ${label.toLowerCase()}`} />
-            <CommandEmpty>{emptyLabel}</CommandEmpty>
+            <CommandInput
+              placeholder={`Buscar ${label.toLowerCase()}`}
+              className="text-sm"
+            />
+            <CommandEmpty className="py-6 text-center text-sm text-muted-foreground">
+              {emptyLabel}
+            </CommandEmpty>
             <CommandList>
               <CommandGroup>
                 <CommandItem
@@ -463,27 +439,34 @@ function FilterCombobox({
                   />
                   Todas
                 </CommandItem>
-                {options.map((option) => (
+
+                {options.map((opt) => (
                   <CommandItem
-                    key={option.value}
-                    value={option.value}
+                    key={opt.value}
+                    value={opt.value}
                     onSelect={() => {
-                      onChange(option.value);
+                      onChange(opt.value);
                       setOpen(false);
                     }}
                   >
                     <Check
                       className={cn(
                         "mr-2 h-4 w-4",
-                        value === option.value ? "opacity-100" : "opacity-0",
+                        value === opt.value
+                          ? "opacity-100"
+                          : "opacity-0",
                       )}
                     />
-                    <span className="truncate">{option.label}</span>
-                    {option.description && (
-                      <span className="ml-2 truncate text-xs text-muted-foreground">
-                        {option.description}
+                    <div className="flex flex-col">
+                      <span className="truncate font-medium text-sm leading-tight">
+                        {opt.label}
                       </span>
-                    )}
+                      {opt.description && (
+                        <span className="truncate text-xs text-muted-foreground leading-tight">
+                          {opt.description}
+                        </span>
+                      )}
+                    </div>
                   </CommandItem>
                 ))}
               </CommandGroup>
@@ -495,74 +478,526 @@ function FilterCombobox({
   );
 }
 
-// Snapshot rápido pra passar pro modal
-function buildCampaignHeaderSnapshot(
-  campaign: DashboardCampaignMetrics,
-): CampaignHeaderSnapshot {
-  const campSummary = extractResultSummary(
-    campaign.metrics,
-    campaign.resultado,
-  );
+// calendário atualizado com z-index e sem empurrar layout
+function DateRangePickerField({
+  value,
+  onChange,
+}: {
+  value: DateRange;
+  onChange: (r: DateRange | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const currentLabel = labelFromRange(value);
 
-  const ctr = calcCTR(
-    campaign.metrics.clicks,
-    campaign.metrics.impressions,
-  );
-
-  return {
-    spend: campaign.metrics.spend,
-    resultLabel: campSummary.label,
-    resultQuantity: campSummary.quantidade,
-    costPerResult: campSummary.custo,
-    ctr,
+  const handleSelect = (next: DateRange | undefined) => {
+    if (!next || !next.from) {
+      onChange(null);
+      return;
+    }
+    if (!next.to) {
+      const fixed = { from: next.from, to: next.from };
+      onChange(fixed);
+      return;
+    }
+    const normalized = normalizeRange(next);
+    onChange(normalized);
+    setOpen(false);
   };
+
+  return (
+    <div className="flex w-full flex-col gap-1">
+      <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        Período
+      </span>
+
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            variant="outline"
+            className="w-full justify-start text-left font-normal"
+          >
+            <CalendarIcon className="mr-2 h-4 w-4" />
+            <span className="truncate">{currentLabel}</span>
+            <ChevronsUpDown className="ml-auto h-4 w-4 opacity-60" />
+          </Button>
+        </PopoverTrigger>
+
+        <PopoverContent
+          side="bottom"
+          align="start"
+          sideOffset={8}
+          className="z-50 w-auto p-0"
+        >
+          <div className="flex flex-col gap-3 p-4">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Selecione o período
+            </div>
+
+            <Calendar
+              mode="range"
+              numberOfMonths={2}
+              selected={value}
+              disabled={{ after: new Date() }}
+              onSelect={handleSelect}
+            />
+
+            <div className="flex justify-between">
+              <Button
+                size="sm"
+                variant="outline"
+                className="text-xs"
+                onClick={() => {
+                  onChange(normalizeRange(buildDefaultRange()));
+                  setOpen(false);
+                }}
+              >
+                Voltar padrão
+              </Button>
+
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-xs"
+                onClick={() => {
+                  onChange(null);
+                  setOpen(false);
+                }}
+              >
+                Limpar período
+              </Button>
+            </div>
+          </div>
+        </PopoverContent>
+      </Popover>
+    </div>
+  );
 }
 
-// -------------------------------------------------
-// Componente principal
-// -------------------------------------------------
+/* -------------------------------------------------
+ * Página principal
+ * ------------------------------------------------- */
 
 export default function Dashboard() {
-  // RANGE PRINCIPAL
-  const fallbackRange = useMemo(() => createDefaultRange(), []);
-  const [dateRange, setDateRange] = useState<DateRange | null>(null);
+  // datas
+  const [rawRange, setRawRange] = useState<DateRange | null>(null);
+  const normalizedRange = useMemo(
+    () => normalizeRange(rawRange),
+    [rawRange],
+  );
 
-  // FILTROS
-  const [accountFilter, setAccountFilter] = useState<string | null>(null);
-  const [campaignFilter, setCampaignFilter] = useState<string | null>(null);
-  const [objectiveFilter, setObjectiveFilter] = useState<string | null>(null);
+  const resolvedFrom = normalizedRange.from!;
+  const resolvedTo = normalizedRange.to!;
+  const startDateStr = formatDate(resolvedFrom, "yyyy-MM-dd");
+  const endDateStr = formatDate(resolvedTo, "yyyy-MM-dd");
+  const periodLabel = labelFromRange(normalizedRange);
+
+  // filtros
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(
+    null,
+  );
+  const [campaignFilter, setCampaignFilter] = useState<string | null>(
+    null,
+  );
+  const [objectiveFilter, setObjectiveFilter] = useState<string | null>(
+    null,
+  );
   const [statusFilter, setStatusFilter] = useState<string | null>(null);
 
-  // CONTROLE DE UI
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const [showDebug, setShowDebug] = useState(false);
-
-  // CAMPANHA ABERTA NO MODAL
-  const [creativeDialogRef, setCreativeDialogRef] = useState<{
+  // modal criativos
+  const [creativeDialogInfo, setCreativeDialogInfo] = useState<{
     campaign: DashboardCampaignMetrics;
-    account: string; // valor real da conta (ex: act_123...)
-    headerSnapshot: CampaignHeaderSnapshot;
+    account: string;
+    header: CampaignHeaderSnapshot;
   } | null>(null);
 
-  // Resolver datas ativas
-  const resolvedFrom: Date = (dateRange?.from ?? fallbackRange.from)!;
-  const resolvedTo: Date =
-    (dateRange?.to ?? fallbackRange.to ?? fallbackRange.from)!;
-  const selectedStartDate = formatDate(resolvedFrom, "yyyy-MM-dd");
-  const selectedEndDate = formatDate(resolvedTo, "yyyy-MM-dd");
+  // debug toggle local
+  const [showDebug, setShowDebug] = useState(false);
 
-  // Query: contas vinculadas (resources)
-  const { data: resourcesData = [] } = useQuery<Resource[]>({
+  /* --------------------------------------
+   * Usuário logado (pra RBAC / permissões)
+   * -------------------------------------- */
+  const { data: me } = useQuery<CurrentUser>({
+    queryKey: ["/api/me"],
+  });
+
+  // apenas system_admin pode ver debug
+  const isSystemAdmin = useMemo(() => {
+    if (!me) return false;
+    if (me.role && me.role === "system_admin") return true;
+    if (Array.isArray(me.roles) && me.roles.includes("system_admin"))
+      return true;
+    return false;
+  }, [me]);
+
+  /* --------------------------------------
+   * Listagem de contas (resources)
+   * -------------------------------------- */
+  const { data: resources = [] } = useQuery<Resource[]>({
     queryKey: ["/api/resources"],
   });
 
-  // Query: campanhas conhecidas (catálogo interno)
-  const { data: campaignsData = [] } = useQuery<Campaign[]>({
+  const accountResources = useMemo(
+    () => resources.filter((r) => r.type === "account"),
+    [resources],
+  );
+
+  const accountLookup = useMemo(() => {
+    const map = new Map<number, { name: string; value: string }>();
+    for (const acc of accountResources) {
+      map.set(acc.id, { name: acc.name, value: acc.value });
+    }
+    return map;
+  }, [accountResources]);
+
+  const accountOptions: FilterOption[] = useMemo(
+    () =>
+      accountResources
+        .map((acc) => ({
+          value: String(acc.id),
+          label: acc.name,
+          description: acc.value,
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
+    [accountResources],
+  );
+
+  /* --------------------------------------
+   * Catálogo de campanhas local (fallback p/ combobox)
+   * -------------------------------------- */
+  const { data: campaignsCatalog = [] } = useQuery<Campaign[]>({
     queryKey: ["/api/campaigns"],
   });
 
-  // Presets de data rápidos
-  const quickRanges = useMemo<QuickRange[]>(() => {
+  /* --------------------------------------
+   * Query principal (só roda se tiver conta)
+   * -------------------------------------- */
+  const params = new URLSearchParams({
+    startDate: startDateStr,
+    endDate: endDateStr,
+  });
+  if (selectedAccountId) params.set("accountId", selectedAccountId);
+  if (campaignFilter) params.set("campaignId", campaignFilter);
+  if (objectiveFilter) params.set("objective", objectiveFilter);
+  if (statusFilter) params.set("status", statusFilter);
+
+  const endpoint = selectedAccountId
+    ? `/api/dashboard/metrics?${params.toString()}`
+    : null;
+
+  const {
+    data: metricsData,
+    isLoading,
+    isFetching,
+    isError,
+    error,
+    refetch,
+  } = useQuery<DashboardMetricsResponse, Error>({
+    queryKey: endpoint ? [endpoint] : ["dashboard-disabled"],
+    enabled: endpoint !== null,
+    queryFn: async () => {
+      if (!endpoint) throw new Error("Nenhuma conta selecionada.");
+      const res = await fetch(endpoint);
+      if (!res.ok) throw new Error("Erro ao carregar métricas.");
+      return res.json();
+    },
+  });
+
+  const accounts: DashboardAccountMetrics[] =
+    metricsData?.accounts ?? [];
+
+  /* --------------------------------------
+   * Opções dinâmicas dos filtros
+   * -------------------------------------- */
+
+  // campanhas disponíveis (API => prioridade / fallback => catálogo)
+  const campaignOptions: FilterOption[] = useMemo(() => {
+    const seen = new Set<string>();
+    const opts: FilterOption[] = [];
+    const filterAcc = selectedAccountId ?? null;
+
+    for (const acc of accounts) {
+      if (filterAcc && String(acc.id) !== filterAcc) continue;
+      for (const camp of acc.campaigns) {
+        if (!camp.id || seen.has(camp.id)) continue;
+        seen.add(camp.id);
+        const acctPiece = acc.name;
+        const objPiece = getObjectiveLabel(camp.objective);
+        opts.push({
+          value: camp.id,
+          label: camp.name ?? `Campanha ${camp.id}`,
+          description: [objPiece, acctPiece].filter(Boolean).join(" - "),
+        });
+      }
+    }
+
+    if (opts.length === 0 && campaignsCatalog.length > 0) {
+      for (const camp of campaignsCatalog) {
+        const accId = camp.accountId ?? null;
+        if (filterAcc && accId !== Number(filterAcc)) continue;
+
+        const lookup = accId ? accountLookup.get(accId) : undefined;
+        const acctPiece = lookup?.name;
+        const objPiece = getObjectiveLabel(camp.objective);
+
+        const idStr = String(camp.id);
+        if (seen.has(idStr)) continue;
+        seen.add(idStr);
+
+        opts.push({
+          value: idStr,
+          label: camp.name ?? `Campanha ${camp.id}`,
+          description: [objPiece, acctPiece].filter(Boolean).join(" - "),
+        });
+      }
+    }
+
+    return opts.sort((a, b) =>
+      a.label.localeCompare(b.label, "pt-BR"),
+    );
+  }, [accounts, campaignsCatalog, selectedAccountId, accountLookup]);
+
+  // se campanha selecionada não existe mais, limpa
+  useEffect(() => {
+    if (
+      campaignFilter &&
+      !campaignOptions.some((o) => o.value === campaignFilter)
+    ) {
+      setCampaignFilter(null);
+    }
+  }, [campaignFilter, campaignOptions]);
+
+  // objetivos
+  const objectiveOptions: FilterOption[] = useMemo(() => {
+    const seen = new Set<string>();
+    const opts: FilterOption[] = [];
+    const add = (raw?: string | null) => {
+      if (!raw) return;
+      const key = raw.toUpperCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      opts.push({
+        value: key,
+        label: getObjectiveLabel(key),
+      });
+    };
+
+    for (const acc of accounts) {
+      if (
+        selectedAccountId &&
+        String(acc.id) !== String(selectedAccountId)
+      )
+        continue;
+      for (const camp of acc.campaigns) {
+        add(camp.objective);
+      }
+    }
+
+    if (opts.length === 0 && campaignsCatalog.length > 0) {
+      for (const c of campaignsCatalog) {
+        if (
+          selectedAccountId &&
+          c.accountId !== Number(selectedAccountId)
+        )
+          continue;
+        add(c.objective ?? null);
+      }
+    }
+
+    return opts.sort((a, b) =>
+      a.label.localeCompare(b.label, "pt-BR"),
+    );
+  }, [accounts, campaignsCatalog, selectedAccountId]);
+
+  useEffect(() => {
+    if (
+      objectiveFilter &&
+      !objectiveOptions.some((o) => o.value === objectiveFilter)
+    ) {
+      setObjectiveFilter(null);
+    }
+  }, [objectiveFilter, objectiveOptions]);
+
+  // status
+  const statusOptions: FilterOption[] = useMemo(() => {
+    const seen = new Set<string>();
+    const opts: FilterOption[] = [];
+
+    for (const acc of accounts) {
+      for (const camp of acc.campaigns) {
+        const raw = camp.status ?? "";
+        if (!raw) continue;
+        const upper = raw.toUpperCase();
+        if (seen.has(upper)) continue;
+        seen.add(upper);
+        opts.push({
+          value: upper,
+          label: getStatusLabel(upper),
+        });
+      }
+    }
+
+    if (opts.length === 0) {
+      Object.keys(STATUS_LABELS).forEach((statusKey) => {
+        opts.push({
+          value: statusKey,
+          label: getStatusLabel(statusKey),
+        });
+      });
+    }
+
+    return opts.sort((a, b) =>
+      a.label.localeCompare(b.label, "pt-BR"),
+    );
+  }, [accounts]);
+
+  useEffect(() => {
+    if (
+      statusFilter &&
+      !statusOptions.some((o) => o.value === statusFilter)
+    ) {
+      setStatusFilter(null);
+    }
+  }, [statusFilter, statusOptions]);
+
+  /* --------------------------------------
+   * Chips de filtros ativos
+   * -------------------------------------- */
+  const activeFilterChips = useMemo(() => {
+    const chips: Array<{
+      label: string;
+      value: string;
+      onRemove: () => void;
+    }> = [];
+
+    if (selectedAccountId) {
+      const accOpt = accountOptions.find(
+        (o) => o.value === selectedAccountId,
+      );
+      chips.push({
+        label: "Conta",
+        value: accOpt?.label ?? `ID ${selectedAccountId}`,
+        onRemove: () => setSelectedAccountId(null),
+      });
+    }
+
+    if (campaignFilter) {
+      const campOpt = campaignOptions.find(
+        (o) => o.value === campaignFilter,
+      );
+      chips.push({
+        label: "Campanha",
+        value: campOpt?.label ?? `ID ${campaignFilter}`,
+        onRemove: () => setCampaignFilter(null),
+      });
+    }
+
+    if (objectiveFilter) {
+      const objOpt = objectiveOptions.find(
+        (o) => o.value === objectiveFilter,
+      );
+      chips.push({
+        label: "Objetivo",
+        value:
+          objOpt?.label ?? getObjectiveLabel(objectiveFilter),
+        onRemove: () => setObjectiveFilter(null),
+      });
+    }
+
+    if (statusFilter) {
+      const stOpt = statusOptions.find(
+        (o) => o.value === statusFilter,
+      );
+      chips.push({
+        label: "Status",
+        value:
+          stOpt?.label ?? getStatusLabel(statusFilter),
+        onRemove: () => setStatusFilter(null),
+      });
+    }
+
+    return chips;
+  }, [
+    selectedAccountId,
+    accountOptions,
+    campaignFilter,
+    campaignOptions,
+    objectiveFilter,
+    objectiveOptions,
+    statusFilter,
+    statusOptions,
+  ]);
+
+  const hasActiveFilters =
+    !!selectedAccountId ||
+    !!campaignFilter ||
+    !!objectiveFilter ||
+    !!statusFilter;
+
+  function clearAllFilters() {
+    setSelectedAccountId(null);
+    setCampaignFilter(null);
+    setObjectiveFilter(null);
+    setStatusFilter(null);
+    setCreativeDialogInfo(null);
+  }
+
+  /* --------------------------------------
+   * KPIs globais
+   * -------------------------------------- */
+  const kpis = useMemo(() => {
+    const totals = metricsData?.totals ?? EMPTY_TOTALS;
+    const previous = metricsData?.previousTotals ?? EMPTY_TOTALS;
+
+    const ctrNow = getCTR(totals.clicks, totals.impressions);
+    const ctrPrev = getCTR(previous.clicks, previous.impressions);
+
+    const resNow = summarizeResult(totals);
+    const resPrev = summarizeResult(previous);
+
+    const agoraQtd = resNow.quantidade ?? 0;
+    const antesQtd = resPrev.quantidade ?? 0;
+
+    const agoraCusto = resNow.custo ?? null;
+    const antesCusto = resPrev.custo ?? null;
+
+    return [
+      {
+        title: "Total Resultados",
+        value:
+          resNow.quantidade !== null && resNow.quantidade !== undefined
+            ? formatInteger(resNow.quantidade)
+            : "—",
+        icon: Users,
+        trend: calcTrend(agoraQtd, antesQtd),
+      },
+      {
+        title: "Custo por Resultado (médio)",
+        value:
+          agoraCusto !== null && agoraCusto !== undefined
+            ? formatCurrency(agoraCusto)
+            : "—",
+        icon: TrendingUp,
+        trend: calcTrend(agoraCusto, antesCusto, true),
+      },
+      {
+        title: "Total Gasto",
+        value: formatCurrency(totals.spend),
+        icon: DollarSign,
+        trend: calcTrend(totals.spend, previous.spend),
+      },
+      {
+        title: "CTR Média",
+        value: formatPercent(ctrNow),
+        icon: MousePointerClick,
+        trend: calcTrend(ctrNow, ctrPrev),
+      },
+    ];
+  }, [metricsData]);
+
+  /* --------------------------------------
+   * Quick ranges (Últimos 7/30/Este mês)
+   * -------------------------------------- */
+  const quickRanges = useMemo(() => {
     const now = new Date();
     return [
       {
@@ -589,441 +1024,328 @@ export default function Dashboard() {
     ];
   }, []);
 
-  // Só contas de anúncio
-  const accountResources = useMemo(
-    () => resourcesData.filter((resource) => resource.type === "account"),
-    [resourcesData],
-  );
-
-  // Opções de conta pro combobox
-  const accountOptions = useMemo<FilterOption[]>(() => {
-    return accountResources
-      .map((resource) => ({
-        value: String(resource.id), // id interno
-        label: resource.name,
-        description: resource.value, // id real Meta ex: act_123
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
-  }, [accountResources]);
-
-  // lookup rápido accountId interno -> { name, value }
-  const accountNameLookup = useMemo(() => {
-    const map = new Map<number, { name: string; value: string }>();
-    for (const resource of accountResources) {
-      map.set(resource.id, { name: resource.name, value: resource.value });
-    }
-    return map;
-  }, [accountResources]);
-
-  // Range efetivo (o que tá aplicado de fato)
-  const effectiveRange: DateRange = { from: resolvedFrom, to: resolvedTo };
-  const hasCustomRange = Boolean(dateRange?.from && dateRange?.to);
-  const dateRangeLabel = formatRangeLabel(effectiveRange);
-
-  // Contagem de filtros ativos
-  const hasActiveFilters = Boolean(
-    accountFilter ||
-      campaignFilter ||
-      objectiveFilter ||
-      statusFilter,
-  );
-  const filterCount = [
-    accountFilter,
-    campaignFilter,
-    objectiveFilter,
-    statusFilter,
-  ].filter(Boolean).length;
-  const filterButtonLabel =
-    filterCount > 0 ? `Filtros (${filterCount})` : "Filtros";
-
-  // reset dos filtros
-  const handleResetFilters = () => {
-    setAccountFilter(null);
-    setCampaignFilter(null);
-    setObjectiveFilter(null);
-    setStatusFilter(null);
-    setCreativeDialogRef(null);
-  };
-
-  // comparar ranges
-  const isRangeEqual = (a: DateRange, b: DateRange): boolean => {
+  function sameRange(a: DateRange, b: DateRange) {
     if (!a.from || !a.to || !b.from || !b.to) return false;
     return isSameDay(a.from, b.from) && isSameDay(a.to, b.to);
-  };
+  }
 
-  // aplicar range rápido
-  const applyQuickRange = (range: DateRange) => {
-    const fromDate: Date = range.from ?? new Date();
-    const toDate: Date = (range.to ?? range.from ?? fromDate) as Date;
-    setDateRange({
-      from: fromDate,
-      to: toDate,
-    });
-  };
+  function applyQuickRange(r: DateRange) {
+    const norm = normalizeRange(r);
+    setRawRange(norm);
+  }
 
-  // se os filtros ficarem ativos pela 1ª vez, abre o bloco Collapsible
-  const previousHasFiltersRef = useRef(hasActiveFilters);
-  useEffect(() => {
-    if (!previousHasFiltersRef.current && hasActiveFilters) {
-      setFiltersOpen(true);
-    }
-    previousHasFiltersRef.current = hasActiveFilters;
-  }, [hasActiveFilters]);
-
-  // Montar URL da API de métricas do dashboard
-  const params = new URLSearchParams({
-    startDate: formatDate(resolvedFrom, "yyyy-MM-dd"),
-    endDate: formatDate(resolvedTo, "yyyy-MM-dd"),
-  });
-  if (accountFilter) params.append("accountId", accountFilter);
-  if (campaignFilter) params.append("campaignId", campaignFilter);
-  if (objectiveFilter) params.append("objective", objectiveFilter);
-  if (statusFilter) params.append("status", statusFilter);
-
-  const metricsEndpoint = `/api/dashboard/metrics?${params.toString()}`;
-
-  // Query principal do dashboard
-  const {
-    data,
-    isLoading,
-    isFetching,
-    isError,
-    error,
-    refetch,
-  } = useQuery<DashboardMetricsResponse, Error>({
-    queryKey: [metricsEndpoint],
-    queryFn: async () => {
-      const res = await fetch(metricsEndpoint);
-      if (!res.ok) {
-        throw new Error("Erro ao carregar métricas do dashboard");
-      }
-      return res.json();
-    },
-  });
-
-  const accounts: DashboardAccountMetrics[] = data?.accounts ?? [];
-
-  const campaignOptions = useMemo<CampaignFilterOption[]>(() => {
-    const options: CampaignFilterOption[] = [];
-    const seen = new Set<string>();
-    const selectedAccount = accountFilter ?? null;
-
-    for (const account of accounts) {
-      const accountIdStr = String(account.id); // id interno
-      if (selectedAccount && accountIdStr !== selectedAccount) {
-        continue;
-      }
-
-      for (const campaign of account.campaigns) {
-        const campaignId = campaign.id;
-        if (!campaignId || seen.has(campaignId)) continue;
-        seen.add(campaignId);
-
-        const objective = campaign.objective?.toUpperCase() ?? null;
-        const descriptionParts: string[] = [];
-        if (objective) {
-          descriptionParts.push(getObjectiveLabel(objective));
-        }
-        descriptionParts.push(account.name);
-
-        options.push({
-          value: campaignId,
-          label: campaign.name ?? `Campanha ${campaignId}`,
-          description: descriptionParts.filter(Boolean).join(" - "),
-          accountId: account.id,
-          objective,
-        });
-      }
+  /* --------------------------------------
+   * tabela de contas/campanhas
+   * -------------------------------------- */
+  const renderAccountsTable = () => {
+    if (!endpoint) {
+      return (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            <span className="text-muted-foreground">
+              Selecione uma{" "}
+              <b className="text-foreground">Conta de anúncio</b>{" "}
+              para carregar os dados.
+            </span>
+          </CardContent>
+        </Card>
+      );
     }
 
-    // fallback pro catálogo local
-    if (options.length === 0 && campaignsData.length > 0) {
-      for (const campaign of campaignsData) {
-        const accountId = campaign.accountId ?? null;
-        if (selectedAccount && accountId !== Number(selectedAccount)) {
-          continue;
-        }
-
-        const objective = campaign.objective
-          ? campaign.objective.toUpperCase()
-          : null;
-        const accountInfo = accountId
-          ? accountNameLookup.get(accountId)
-          : undefined;
-
-        const descriptionParts: string[] = [];
-        if (objective) {
-          descriptionParts.push(getObjectiveLabel(objective));
-        }
-        if (accountInfo?.name) {
-          descriptionParts.push(accountInfo.name);
-        }
-
-        const idStr = String(campaign.id);
-        if (seen.has(idStr)) continue;
-        seen.add(idStr);
-
-        options.push({
-          value: idStr,
-          label: campaign.name ?? `Campanha ${campaign.id}`,
-          description: descriptionParts.filter(Boolean).join(" - "),
-          accountId,
-          objective,
-        });
-      }
+    if (isLoading && !metricsData) {
+      return (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            <div className="mb-3 flex items-center justify-center gap-2 text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>Carregando métricas…</span>
+            </div>
+            <div className="mx-auto h-3 w-1/2 animate-pulse rounded bg-muted/60" />
+          </CardContent>
+        </Card>
+      );
     }
 
-    return options.sort((a, b) =>
-      a.label.localeCompare(b.label, "pt-BR"),
+    if (isError) {
+      return (
+        <Card className="border-destructive/50 bg-destructive/5">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-sm font-semibold text-destructive">
+              <BarChart3 className="h-4 w-4" />
+              Falha ao carregar métricas
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {error?.message ??
+                "Ocorreu um erro inesperado ao buscar os dados."}
+            </p>
+            <Button variant="outline" onClick={() => refetch()}>
+              Tentar novamente
+            </Button>
+          </CardContent>
+        </Card>
+      );
+    }
+
+    if (!metricsData || accounts.length === 0) {
+      return (
+        <Card>
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
+            {hasActiveFilters
+              ? "Nenhum resultado encontrado para os filtros selecionados. Ajuste os filtros ou revise o período."
+              : "Nenhuma métrica encontrado para o período escolhido. Ajuste o filtro de datas ou verifique se esta conta possui dados sincronizados."}
+          </CardContent>
+        </Card>
+      );
+    }
+
+    return (
+      <>
+        {accounts.map((account) => {
+          const summary = summarizeResult(account.metrics);
+          const ctr = getCTR(
+            account.metrics.clicks,
+            account.metrics.impressions,
+          );
+
+          return (
+            <Card
+              key={account.id}
+              data-testid={`card-account-${account.id}`}
+            >
+              <CardHeader className="space-y-2">
+                <CardTitle className="text-lg font-semibold leading-tight">
+                  {account.name}
+                </CardTitle>
+                <p className="font-mono text-sm text-muted-foreground leading-tight">
+                  {account.value}
+                </p>
+              </CardHeader>
+
+              <CardContent className="space-y-6">
+                {/* resumo conta */}
+                <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+                  <AccountMetric
+                    label="Gasto"
+                    value={formatCurrency(account.metrics.spend)}
+                  />
+                  <AccountMetric
+                    label={summary.label}
+                    value={
+                      summary.quantidade !== null
+                        ? formatInteger(summary.quantidade)
+                        : "N/D"
+                    }
+                  />
+                  <AccountMetric
+                    label="Custo por resultado"
+                    value={
+                      summary.custo !== null
+                        ? formatCurrency(summary.custo)
+                        : "N/D"
+                    }
+                  />
+                  <AccountMetric
+                    label="CTR"
+                    value={formatPercent(ctr)}
+                  />
+                </div>
+
+                {/* tabela campanhas */}
+                {account.campaigns.length === 0 ? (
+                  <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+                    {hasActiveFilters
+                      ? "Nenhuma campanha corresponde aos filtros."
+                      : "Nenhuma campanha encontrada para essa conta no período."}
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b">
+                          <th className="px-4 py-3 text-left font-medium text-muted-foreground">
+                            Campanha
+                          </th>
+                          <th className="px-4 py-3 text-left font-medium text-muted-foreground">
+                            Objetivo
+                          </th>
+                          <th className="px-4 py-3 text-left font-medium text-muted-foreground">
+                            Status
+                          </th>
+                          <th className="px-4 py-3 text-right font-medium text-muted-foreground">
+                            Gasto
+                          </th>
+                          <th className="px-4 py-3 text-right font-medium text-muted-foreground">
+                            Resultado
+                          </th>
+                          <th className="px-4 py-3 text-right font-medium text-muted-foreground">
+                            Custo/Resultado
+                          </th>
+                          <th className="px-4 py-3 text-right font-medium text-muted-foreground">
+                            CTR
+                          </th>
+                          <th className="px-4 py-3 text-right font-medium text-muted-foreground"></th>
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {account.campaigns.map((camp) => {
+                          const res = summarizeResult(
+                            camp.metrics,
+                            camp.resultado,
+                          );
+                          const ctrCamp = getCTR(
+                            camp.metrics.clicks,
+                            camp.metrics.impressions,
+                          );
+
+                          const displayName =
+                            camp.name ?? `Campanha ${camp.id}`;
+                          const objLabel = getObjectiveLabel(
+                            camp.objective,
+                          );
+
+                          const rawStatus = camp.status ?? "";
+                          const statusLabel = rawStatus
+                            ? getStatusLabel(rawStatus)
+                            : null;
+                          const isActive =
+                            rawStatus.toLowerCase() === "active";
+
+                          return (
+                            <tr
+                              key={camp.id}
+                              className="border-b last:border-none hover:bg-muted/30"
+                            >
+                              <td className="px-4 py-4 align-top">
+                                <div className="flex flex-col">
+                                  <span className="font-medium leading-tight">
+                                    {displayName}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground leading-tight">
+                                    ID #{camp.id}
+                                  </span>
+                                </div>
+                              </td>
+
+                              <td className="px-4 py-4 align-top">
+                                {objLabel ? (
+                                  <Badge variant="outline">
+                                    {objLabel}
+                                  </Badge>
+                                ) : (
+                                  <span className="text-muted-foreground">
+                                    -
+                                  </span>
+                                )}
+                              </td>
+
+                              <td className="px-4 py-4 align-top">
+                                {statusLabel ? (
+                                  <Badge
+                                    variant={
+                                      isActive
+                                        ? "default"
+                                        : "secondary"
+                                    }
+                                  >
+                                    {statusLabel}
+                                  </Badge>
+                                ) : (
+                                  <span className="text-muted-foreground">
+                                    -
+                                  </span>
+                                )}
+                              </td>
+
+                              <td className="px-4 py-4 text-right font-mono align-top">
+                                {formatCurrency(camp.metrics.spend)}
+                              </td>
+
+                              <td className="px-4 py-4 text-right align-top">
+                                <div className="flex flex-col items-end">
+                                  <span className="text-[0.7rem] uppercase tracking-wide text-muted-foreground leading-tight">
+                                    {res.label}
+                                  </span>
+                                  <span className="font-semibold text-foreground leading-tight">
+                                    {res.quantidade !== null
+                                      ? formatInteger(res.quantidade)
+                                      : "N/D"}
+                                  </span>
+                                </div>
+                              </td>
+
+                              <td className="px-4 py-4 text-right font-mono align-top">
+                                {res.custo !== null
+                                  ? formatCurrency(res.custo)
+                                  : "N/D"}
+                              </td>
+
+                              <td className="px-4 py-4 text-right font-mono align-top">
+                                {formatPercent(ctrCamp)}
+                              </td>
+
+                              <td className="px-4 py-4 text-right align-top">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    setCreativeDialogInfo({
+                                      campaign: camp,
+                                      account: account.value,
+                                      header:
+                                        buildCampaignHeaderSnapshot(
+                                          camp,
+                                        ),
+                                    })
+                                  }
+                                >
+                                  Ver criativos
+                                </Button>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })}
+      </>
     );
-  }, [accounts, accountFilter, campaignsData, accountNameLookup]);
+  };
 
-  const campaignOptionsForCombobox = useMemo<FilterOption[]>(() => {
-    return campaignOptions.map(({ value, label, description }) => ({
-      value,
-      label,
-      description,
-    }));
-  }, [campaignOptions]);
-
-  const objectiveOptions = useMemo<FilterOption[]>(() => {
-    const seen = new Set<string>();
-    const options: FilterOption[] = [];
-    const selectedAccount = accountFilter ?? null;
-
-    const addObjective = (raw?: string | null) => {
-      if (!raw) return;
-      const key = raw.toUpperCase();
-      if (seen.has(key)) return;
-      seen.add(key);
-      options.push({
-        value: key,
-        label: getObjectiveLabel(key),
-      });
-    };
-
-    for (const account of accounts) {
-      if (selectedAccount && String(account.id) !== selectedAccount) {
-        continue;
-      }
-      for (const campaign of account.campaigns) {
-        addObjective(campaign.objective);
-      }
-    }
-
-    if (options.length === 0 && campaignsData.length > 0) {
-      for (const campaign of campaignsData) {
-        if (
-          selectedAccount &&
-          campaign.accountId !== Number(selectedAccount)
-        ) {
-          continue;
-        }
-        addObjective(campaign.objective);
-      }
-    }
-
-    return options.sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
-  }, [accounts, campaignsData, accountFilter]);
-
-  useEffect(() => {
-    if (!campaignFilter) return;
-    if (!campaignOptions.some((option) => option.value === campaignFilter)) {
-      setCampaignFilter(null);
-    }
-  }, [campaignFilter, campaignOptions]);
-
-  useEffect(() => {
-    if (!objectiveFilter) return;
-    if (!objectiveOptions.some((option) => option.value === objectiveFilter)) {
-      setObjectiveFilter(null);
-    }
-  }, [objectiveFilter, objectiveOptions]);
-
-  const statusOptions = useMemo<FilterOption[]>(() => {
-    const seen = new Set<string>();
-    const options: FilterOption[] = [];
-    for (const account of accounts) {
-      for (const campaign of account.campaigns) {
-        const status = campaign.status ? campaign.status.toUpperCase() : null;
-        if (!status || seen.has(status)) continue;
-        seen.add(status);
-        options.push({
-          value: status,
-          label: getStatusLabel(status),
-        });
-      }
-    }
-    if (options.length === 0) {
-      options.push(
-        ...Object.keys(STATUS_LABELS).map((key) => ({
-          value: key,
-          label: getStatusLabel(key),
-        })),
-      );
-    }
-    return options.sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
-  }, [accounts]);
-
-  useEffect(() => {
-    if (!statusFilter) return;
-    if (!statusOptions.some((option) => option.value === statusFilter)) {
-      setStatusFilter(null);
-    }
-  }, [statusFilter, statusOptions]);
-
-  // chips de filtros aplicados
-  const activeFilterChips = useMemo(() => {
-    const chips: Array<{
-      label: string;
-      value: string;
-      onRemove: () => void;
-    }> = [];
-
-    if (accountFilter) {
-      const account = accountOptions.find(
-        (option) => option.value === accountFilter,
-      );
-      chips.push({
-        label: "Conta",
-        value: account?.label ?? `ID ${accountFilter}`,
-        onRemove: () => setAccountFilter(null),
-      });
-    }
-
-    if (campaignFilter) {
-      const campaign = campaignOptions.find(
-        (option) => option.value === campaignFilter,
-      );
-      chips.push({
-        label: "Campanha",
-        value: campaign?.label ?? `ID ${campaignFilter}`,
-        onRemove: () => setCampaignFilter(null),
-      });
-    }
-
-    if (objectiveFilter) {
-      const objective = objectiveOptions.find(
-        (option) => option.value === objectiveFilter,
-      );
-      chips.push({
-        label: "Objetivo",
-        value: objective?.label ?? getObjectiveLabel(objectiveFilter),
-        onRemove: () => setObjectiveFilter(null),
-      });
-    }
-
-    if (statusFilter) {
-      const statusOption = statusOptions.find(
-        (option) => option.value === statusFilter,
-      );
-      chips.push({
-        label: "Status",
-        value: statusOption?.label ?? getStatusLabel(statusFilter),
-        onRemove: () => setStatusFilter(null),
-      });
-    }
-
-    return chips;
-  }, [
-    accountFilter,
-    accountOptions,
-    campaignFilter,
-    campaignOptions,
-    objectiveFilter,
-    objectiveOptions,
-    statusFilter,
-    statusOptions,
-  ]);
-
-  // KPIs do topo
-  const kpis: KPICardData[] = useMemo(() => {
-    const totals = data?.totals ?? defaultTotals;
-    const previous = data?.previousTotals ?? defaultTotals;
-
-    // Totais atuais
-    const totalSpend = totals.spend;
-    const totalClicks = totals.clicks;
-    const totalImpr = totals.impressions;
-    const totalCTR = calcCTR(totalClicks, totalImpr);
-
-    // Totais anteriores
-    const prevSpend = previous.spend;
-    const prevClicks = previous.clicks;
-    const prevImpr = previous.impressions;
-    const prevCTR = calcCTR(prevClicks, prevImpr);
-
-    // "resultado principal" atual e anterior
-    const derivedNow = extractResultSummary(totals);
-    const derivedPrev = extractResultSummary(previous);
-
-    const totalResultsNow = derivedNow.quantidade ?? 0;
-    const totalResultsPrev = derivedPrev.quantidade ?? 0;
-
-    const currentCpl = derivedNow.custo ?? null;
-    const previousCpl = derivedPrev.custo ?? null;
-
-    return [
-      {
-        title: "Total Gasto",
-        value: formatCurrency(totalSpend),
-        icon: DollarSign,
-        trend: buildTrend(totalSpend, prevSpend),
-      },
-      {
-        title: "Total Resultados",
-        value:
-          totalResultsNow !== null && totalResultsNow !== undefined
-            ? formatInteger(totalResultsNow)
-            : "—",
-        icon: Users,
-        trend: buildTrend(totalResultsNow, totalResultsPrev),
-      },
-      {
-        title: "Custo por Resultado (médio)",
-        value:
-          currentCpl !== null && currentCpl !== undefined
-            ? formatCurrency(currentCpl)
-            : "—",
-        icon: TrendingUp,
-        trend: buildTrend(
-          currentCpl ?? null,
-          previousCpl ?? null,
-          true, // custo menor é melhor
-        ),
-      },
-      {
-        title: "CTR Média",
-        value: formatPercentage(totalCTR),
-        icon: MousePointerClick,
-        trend: buildTrend(totalCTR, prevCTR),
-      },
-    ];
-  }, [data]);
-
+  /* --------------------------------------
+   * render principal
+   * -------------------------------------- */
   return (
     <>
       <div className="space-y-6 p-6">
-        {/* HEADER TOPO */}
+        {/* HEADER SUPERIOR */}
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          {/* LADO ESQUERDO */}
           <div className="space-y-1">
-            <h1 className="text-3xl font-semibold">Dashboard</h1>
-            <p className="text-muted-foreground">
-              Visão geral das contas e campanhas Meta Ads no período selecionado
+            <h1 className="text-3xl font-semibold leading-tight">
+              Dashboard
+            </h1>
+            <p className="text-sm text-muted-foreground leading-tight">
+              Visão geral das contas e campanhas Meta Ads no período
+              selecionado
             </p>
+
             <p className="text-[0.7rem] leading-tight text-muted-foreground">
               Período aplicado:{" "}
               <span className="font-medium text-foreground">
-                {dateRangeLabel}
-              </span>{" "}
-              {!hasCustomRange && "(padrão)"}
+                {periodLabel}
+              </span>
             </p>
           </div>
 
-          {/* LADO DIREITO */}
           <div className="flex flex-col items-start gap-3 sm:items-end">
-            {isFetching && (
+            {isFetching && endpoint && (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 <span>Atualizando dados…</span>
@@ -1035,489 +1357,220 @@ export default function Dashboard() {
                 Nova Campanha
               </Button>
 
-              <Button
-                variant={showDebug ? "default" : "outline"}
-                size="sm"
-                onClick={() => setShowDebug((s) => !s)}
-                className="flex items-center gap-1"
-              >
-                <Bug className="h-4 w-4" />
-                {showDebug ? "Esconder debug" : "Ver debug bruto"}
-              </Button>
+              {isSystemAdmin && (
+                <Button
+                  variant={showDebug ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setShowDebug((s) => !s)}
+                  className="flex items-center gap-1"
+                >
+                  <Bug className="h-4 w-4" />
+                  {showDebug ? "Ocultar debug" : "Ver debug bruto"}
+                </Button>
+              )}
             </div>
           </div>
         </div>
 
-        {/* BLOCO DE FILTROS */}
-        <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
-          <div className="flex flex-wrap items-center gap-2">
-            <CollapsibleTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="flex items-center gap-2"
-                data-testid="button-toggle-filters"
-              >
-                <Filter className="h-4 w-4" />
-                <span>{filterButtonLabel}</span>
-                <ChevronsUpDown className="h-4 w-4 opacity-60" />
-              </Button>
-            </CollapsibleTrigger>
-
-            {hasActiveFilters && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleResetFilters}
-                data-testid="button-clear-filters"
-              >
-                Limpar filtros
-              </Button>
-            )}
-
-            <div className="flex flex-wrap gap-2">
-              {activeFilterChips.map((chip) => (
-                <Badge
-                  key={`${chip.label}-${chip.value}`}
-                  variant="secondary"
-                  className="flex items-center gap-1 rounded-full px-3 py-1 text-xs"
-                >
-                  <span className="font-semibold uppercase tracking-tight text-muted-foreground">
-                    {chip.label}:
-                  </span>
-                  <span>{chip.value}</span>
-                  <button
-                    type="button"
-                    onClick={chip.onRemove}
-                    className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground transition hover:text-foreground focus:outline-none focus:text-foreground"
-                    aria-label={`Remover filtro ${chip.label.toLowerCase()}`}
+        {/* CARD DE FILTROS E KPIs */}
+        <Card>
+          <CardContent className="space-y-6 pt-6 relative">
+            {/* LINHA 1: Filtros ativos / limpar */}
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex items-center gap-2"
                   >
-                    <X className="h-3 w-3" />
-                  </button>
-                </Badge>
-              ))}
-            </div>
-          </div>
-
-          <div className="text-xs text-muted-foreground">
-            Período aplicado:{" "}
-            <span className="font-medium text-foreground">
-              {dateRangeLabel}
-            </span>{" "}
-            {!hasCustomRange && "(padrão)"}
-          </div>
-
-          <CollapsibleContent className="mt-4 space-y-4">
-            <Card>
-              <CardContent className="space-y-4 pt-6">
-                {/* atalhos de período */}
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Atalhos de período
-                  </span>
-                  {quickRanges.map((preset) => {
-                    const isActive = isRangeEqual(effectiveRange, preset.range);
-                    return (
-                      <Button
-                        key={preset.label}
-                        size="sm"
-                        variant={isActive ? "default" : "outline"}
-                        onClick={() => applyQuickRange(preset.range)}
-                        className="rounded-full"
-                      >
-                        {preset.label}
-                      </Button>
-                    );
-                  })}
-                </div>
-
-                {/* Linha de filtros detalhados */}
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
-                  {/* Período customizado */}
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      Período
+                    <Filter className="h-4 w-4" />
+                    <span>
+                      {hasActiveFilters
+                        ? `Filtros (${activeFilterChips.length})`
+                        : "Filtros"}
                     </span>
-                    <DateRangeSelector value={dateRange} onChange={setDateRange} />
-                  </div>
+                    <ChevronsUpDown className="h-4 w-4 opacity-60" />
+                  </Button>
 
-                  {/* Filtro Conta */}
-                  <FilterCombobox
-                    label="Conta de anúncio"
-                    placeholder="Todas as contas"
-                    emptyLabel="Nenhuma conta encontrada"
-                    options={accountOptions}
-                    value={accountFilter}
-                    onChange={setAccountFilter}
-                    testId="filter-account"
-                  />
+                  {hasActiveFilters && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearAllFilters}
+                      data-testid="button-clear-filters"
+                    >
+                      Limpar filtros
+                    </Button>
+                  )}
 
-                  {/* Filtro Campanha */}
-                  <FilterCombobox
-                    label="Campanha"
-                    placeholder="Todas as campanhas"
-                    emptyLabel="Nenhuma campanha encontrada"
-                    options={campaignOptionsForCombobox}
-                    value={campaignFilter}
-                    onChange={setCampaignFilter}
-                    testId="filter-campaign"
-                  />
+                  {activeFilterChips.map((chip) => (
+                    <Badge
+                      key={`${chip.label}-${chip.value}`}
+                      variant="secondary"
+                      className="flex items-center gap-1 rounded-full px-3 py-1 text-[0.7rem]"
+                    >
+                      <span className="font-semibold uppercase tracking-tight text-muted-foreground">
+                        {chip.label}:
+                      </span>
+                      <span className="truncate">{chip.value}</span>
+                      <button
+                        type="button"
+                        onClick={chip.onRemove}
+                        className="ml-1 inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground transition hover:text-foreground focus:outline-none"
+                        aria-label={`Remover filtro ${chip.label.toLowerCase()}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
 
-                  {/* Filtro Objetivo */}
-                  <FilterCombobox
-                    label="Objetivo"
-                    placeholder="Todos os objetivos"
-                    emptyLabel="Nenhum objetivo encontrado"
-                    options={objectiveOptions}
-                    value={objectiveFilter}
-                    onChange={setObjectiveFilter}
-                    testId="filter-objective"
-                  />
+                <div className="text-[0.7rem] leading-tight text-muted-foreground">
+                  Período aplicado:{" "}
+                  <span className="font-medium text-foreground">
+                    {periodLabel}
+                  </span>
+                </div>
+              </div>
+            </div>
 
-                  {/* Filtro Status */}
-                  <FilterCombobox
-                    label="Status da campanha"
-                    placeholder="Todos os status"
-                    emptyLabel="Status não encontrado"
-                    options={statusOptions}
-                    value={statusFilter}
-                    onChange={setStatusFilter}
-                    testId="filter-status"
+            {/* LINHA 2: atalhos + selects */}
+            <div className="flex flex-col gap-4">
+              {/* atalhos rápidos */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Atalhos de período
+                </span>
+
+                {quickRanges.map((preset) => {
+                  const isOn = sameRange(normalizedRange, preset.range);
+                  return (
+                    <Button
+                      key={preset.label}
+                      size="sm"
+                      variant={isOn ? "default" : "outline"}
+                      onClick={() => applyQuickRange(preset.range)}
+                      className="rounded-full text-xs"
+                    >
+                      {preset.label}
+                    </Button>
+                  );
+                })}
+              </div>
+
+              {/* filtros detalhados (grid responsiva) */}
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+                {/* Período */}
+                <div className="xl:col-span-2">
+                  <DateRangePickerField
+                    value={normalizedRange}
+                    onChange={setRawRange}
                   />
                 </div>
-              </CardContent>
-            </Card>
-          </CollapsibleContent>
-        </Collapsible>
 
-        {/* ESTADO DE ERRO GERAL */}
-        {isError ? (
-          <Card className="border-destructive/50 bg-destructive/5">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-destructive">
-                <BarChart3 className="h-4 w-4" />
-                Falha ao carregar métricas
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <p className="text-sm text-muted-foreground">
-                {error?.message ??
-                  "Ocorreu um erro inesperado ao buscar os dados."}
-              </p>
-              <Button variant="outline" onClick={() => refetch()}>
-                Tentar novamente
-              </Button>
-            </CardContent>
-          </Card>
-        ) : (
-          <>
-            {/* KPIs DO TOPO */}
+                {/* Conta (obrigatório pra fetch) */}
+                <FilterCombobox
+                  label="Conta de anúncio"
+                  placeholder="Selecione uma conta"
+                  emptyLabel="Nenhuma conta encontrada"
+                  options={accountOptions}
+                  value={selectedAccountId}
+                  onChange={(val) => {
+                    setSelectedAccountId(val);
+                    setCampaignFilter(null);
+                    setObjectiveFilter(null);
+                    setStatusFilter(null);
+                    setCreativeDialogInfo(null);
+                  }}
+                  testId="filter-account"
+                  className="xl:col-span-1"
+                />
+
+                {/* Campanha */}
+                <FilterCombobox
+                  label="Campanha"
+                  placeholder="Todas as campanhas"
+                  emptyLabel="Nenhuma campanha encontrada"
+                  options={campaignOptions}
+                  value={campaignFilter}
+                  onChange={setCampaignFilter}
+                  testId="filter-campaign"
+                  className="xl:col-span-1"
+                />
+
+                {/* Objetivo */}
+                <FilterCombobox
+                  label="Objetivo"
+                  placeholder="Todos os objetivos"
+                  emptyLabel="Nenhum objetivo encontrado"
+                  options={objectiveOptions}
+                  value={objectiveFilter}
+                  onChange={setObjectiveFilter}
+                  testId="filter-objective"
+                  className="xl:col-span-1"
+                />
+
+                {/* Status */}
+                <FilterCombobox
+                  label="Status da campanha"
+                  placeholder="Todos os status"
+                  emptyLabel="Status não encontrado"
+                  options={statusOptions}
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  testId="filter-status"
+                  className="xl:col-span-1"
+                />
+              </div>
+            </div>
+
+            {/* LINHA 3: KPIs */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
               {kpis.map((kpi) => (
-                <KPICard
+                <div
                   key={kpi.title}
-                  title={kpi.title}
-                  value={kpi.value}
-                  icon={kpi.icon}
-                  trend={kpi.trend}
-                />
+                  className="relative flex flex-col rounded-md border bg-card p-4 shadow-sm"
+                >
+                  <div className="absolute right-4 top-4 text-muted-foreground/60">
+                    <kpi.icon className="h-4 w-4" />
+                  </div>
+
+                  <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {kpi.title}
+                  </div>
+
+                  <div className="mt-2 text-2xl font-semibold leading-none tracking-tight">
+                    {kpi.value}
+                  </div>
+
+                  {kpi.trend && (
+                    <div
+                      className={cn(
+                        "mt-2 flex items-center gap-1 text-xs font-medium",
+                        kpi.trend.positive
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-red-600 dark:text-red-400",
+                      )}
+                    >
+                      <TrendingUp className="h-3.5 w-3.5" />
+                      <span>{kpi.trend.value}</span>
+                    </div>
+                  )}
+                </div>
               ))}
             </div>
+          </CardContent>
+        </Card>
 
-            {/* LOADING OU LISTA DE CONTAS */}
-            {!data && isLoading ? (
-              <Card>
-                <CardContent className="flex flex-col items-center gap-2 py-10 text-center text-sm text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Carregando métricas do período selecionado…</span>
-                </CardContent>
-              </Card>
-            ) : accounts.length === 0 ? (
-              <Card>
-                <CardContent className="py-10 text-center text-sm text-muted-foreground">
-                  {hasActiveFilters
-                    ? "Nenhum resultado encontrado para os filtros selecionados. Ajuste os filtros ou revise o período."
-                    : "Nenhuma métrica encontrada para o período escolhido. Ajuste o filtro de datas ou confira se as contas possuem dados sincronizados."}
-                </CardContent>
-              </Card>
-            ) : (
-              // LOOP DAS CONTAS
-              accounts.map((account) => {
-                const accountSummary = extractResultSummary(account.metrics);
+        {/* TABELA PRINCIPAL */}
+        {renderAccountsTable()}
 
-                const accountCtr = calcCTR(
-                  account.metrics.clicks,
-                  account.metrics.impressions,
-                );
-
-                return (
-                  <Card
-                    key={account.id}
-                    data-testid={`card-account-${account.id}`}
-                  >
-                    <CardHeader className="space-y-2">
-                      <CardTitle className="text-lg font-semibold">
-                        {account.name}
-                      </CardTitle>
-                      <p className="font-mono text-sm text-muted-foreground">
-                        {account.value}
-                      </p>
-                    </CardHeader>
-
-                    <CardContent className="space-y-6">
-                      {/* MÉTRICAS RESUMIDAS DA CONTA */}
-                      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-                        <AccountMetric
-                          label="Gasto"
-                          value={formatCurrency(account.metrics.spend)}
-                        />
-                        <AccountMetric
-                          label={accountSummary.label}
-                          value={
-                            accountSummary.quantidade !== null
-                              ? formatInteger(accountSummary.quantidade)
-                              : "N/D"
-                          }
-                        />
-                        <AccountMetric
-                          label="Custo por resultado"
-                          value={
-                            accountSummary.custo !== null
-                              ? formatCurrency(accountSummary.custo)
-                              : "N/D"
-                          }
-                        />
-                        <AccountMetric
-                          label="CTR"
-                          value={formatPercentage(accountCtr)}
-                        />
-                      </div>
-
-                      {/* TABELA DE CAMPANHAS DESSA CONTA */}
-                      {account.campaigns.length === 0 ? (
-                        <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                          {hasActiveFilters
-                            ? "Nenhuma campanha corresponde aos filtros selecionados."
-                            : "Nenhuma campanha cadastrada para esta conta no período selecionado."}
-                        </div>
-                      ) : (
-                        <div className="overflow-x-auto">
-                          <table className="w-full text-sm">
-                            <thead>
-                              <tr className="border-b">
-                                <th className="px-4 py-3 text-left font-medium text-muted-foreground">
-                                  Campanha
-                                </th>
-                                <th className="px-4 py-3 text-left font-medium text-muted-foreground">
-                                  Objetivo
-                                </th>
-                                <th className="px-4 py-3 text-left font-medium text-muted-foreground">
-                                  Status
-                                </th>
-                                <th className="px-4 py-3 text-right font-medium text-muted-foreground">
-                                  Gasto
-                                </th>
-                                <th className="px-4 py-3 text-right font-medium text-muted-foreground">
-                                  Resultado
-                                </th>
-                                <th className="px-4 py-3 text-right font-medium text-muted-foreground">
-                                  Custo/Resultado
-                                </th>
-                                <th className="px-4 py-3 text-right font-medium text-muted-foreground">
-                                  CTR
-                                </th>
-                                <th className="px-4 py-3 text-right font-medium text-muted-foreground">
-                                  {/* botão/ação */}
-                                </th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {account.campaigns.map((campaign) => {
-                                const campSummary = extractResultSummary(
-                                  campaign.metrics,
-                                  campaign.resultado,
-                                );
-
-                                const campaignCtr = calcCTR(
-                                  campaign.metrics.clicks,
-                                  campaign.metrics.impressions,
-                                );
-
-                                const displayName =
-                                  campaign.name ?? `Campanha ${campaign.id}`;
-
-                                const objectiveLabel = getObjectiveLabel(
-                                  campaign.objective,
-                                );
-
-                                const rawStatus = campaign.status ?? "";
-                                const statusLabel = rawStatus
-                                  ? getStatusLabel(rawStatus)
-                                  : null;
-                                const isActive =
-                                  rawStatus.toLowerCase() === "active";
-
-                                const detailRows = (() => {
-                                  const details =
-                                    campaign.resultado?.detalhes ?? [];
-                                  if (details.length <= 1) {
-                                    return details;
-                                  }
-                                  const merged = new Map<
-                                    string,
-                                    {
-                                      tipo: string;
-                                      label: string;
-                                      quantidade: number;
-                                      custo_por_resultado: number | null;
-                                    }
-                                  >();
-                                  for (const detail of details) {
-                                    const key =
-                                      detail.tipo ?? detail.label ?? "";
-                                    const current = merged.get(key);
-                                    if (current) {
-                                      current.quantidade += detail.quantidade;
-                                      if (
-                                        current.custo_por_resultado === null &&
-                                        detail.custo_por_resultado !== null
-                                      ) {
-                                        current.custo_por_resultado =
-                                          detail.custo_por_resultado;
-                                      }
-                                    } else {
-                                      merged.set(key, { ...detail });
-                                    }
-                                  }
-                                  return Array.from(merged.values());
-                                })();
-
-                                return (
-                                  <tr
-                                    key={campaign.id}
-                                    className="border-b last:border-none hover:bg-muted/30"
-                                    data-testid={`row-campaign-${campaign.id}`}
-                                  >
-                                    <td className="px-4 py-4">
-                                      <div className="flex flex-col">
-                                        <span className="font-medium">
-                                          {displayName}
-                                        </span>
-                                        <span className="text-xs text-muted-foreground">
-                                          ID #{campaign.id}
-                                        </span>
-                                      </div>
-                                    </td>
-
-                                    <td className="px-4 py-4">
-                                      {objectiveLabel ? (
-                                        <Badge variant="outline">
-                                          {objectiveLabel}
-                                        </Badge>
-                                      ) : (
-                                        <span className="text-muted-foreground">
-                                          -
-                                        </span>
-                                      )}
-                                    </td>
-
-                                    <td className="px-4 py-4">
-                                      {statusLabel ? (
-                                        <Badge
-                                          variant={
-                                            isActive ? "default" : "secondary"
-                                          }
-                                        >
-                                          {statusLabel}
-                                        </Badge>
-                                      ) : (
-                                        <span className="text-muted-foreground">
-                                          -
-                                        </span>
-                                      )}
-                                    </td>
-
-                                    <td className="px-4 py-4 text-right font-mono">
-                                      {formatCurrency(
-                                        campaign.metrics.spend,
-                                      )}
-                                    </td>
-
-                                    <td className="px-4 py-4 text-right">
-                                      <div className="flex flex-col items-end gap-1">
-                                        <span className="text-[0.7rem] uppercase tracking-wide text-muted-foreground">
-                                          {campSummary.label}
-                                        </span>
-                                        <span className="font-semibold text-foreground">
-                                          {campSummary.quantidade !== null
-                                            ? formatInteger(
-                                                campSummary.quantidade,
-                                              )
-                                            : "N/D"}
-                                        </span>
-
-                                        {detailRows.length > 0 && (
-                                          <div className="flex flex-wrap justify-end gap-2 text-[0.65rem] text-muted-foreground">
-                                            {detailRows.map((detail) => (
-                                              <span
-                                                key={`${campaign.id}-${detail.tipo ?? detail.label}`}
-                                                className="flex items-center gap-1"
-                                              >
-                                              </span>
-                                            ))}
-                                          </div>
-                                        )}
-                                      </div>
-                                    </td>
-
-                                    <td className="px-4 py-4 text-right font-mono">
-                                      {campSummary.custo !== null
-                                        ? formatCurrency(campSummary.custo)
-                                        : "N/D"}
-                                    </td>
-
-                                    <td className="px-4 py-4 text-right font-mono">
-                                      {formatPercentage(campaignCtr)}
-                                    </td>
-
-                                    <td className="px-4 py-4 text-right">
-                                      <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() =>
-                                          setCreativeDialogRef({
-                                            campaign,
-                                            account: account.value, // act_xxx
-                                            headerSnapshot:
-                                              buildCampaignHeaderSnapshot(
-                                                campaign,
-                                              ),
-                                          })
-                                        }
-                                      >
-                                        Ver criativos
-                                      </Button>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                );
-              })
-            )}
-          </>
-        )}
-
-        {/* DEBUG PANEL (opcional) */}
-        {showDebug && (
+        {/* DEBUG (somente system_admin) */}
+        {isSystemAdmin && showDebug && (
           <Card className="border-dashed">
             <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <CardTitle className="flex items-center gap-2 text-sm font-medium leading-tight">
                 <Bug className="h-4 w-4 text-muted-foreground" />
                 Debug / Payload cru
               </CardTitle>
@@ -1527,37 +1580,36 @@ export default function Dashboard() {
                 {JSON.stringify(
                   {
                     request: {
-                      startDate: formatDate(resolvedFrom, "yyyy-MM-dd"),
-                      endDate: formatDate(resolvedTo, "yyyy-MM-dd"),
-                      accountFilter,
-                      campaignFilter,
-                      objectiveFilter,
-                      statusFilter,
+                      startDate: startDateStr,
+                      endDate: endDateStr,
+                      accountId: selectedAccountId,
+                      campaignId: campaignFilter,
+                      objective: objectiveFilter,
+                      status: statusFilter,
                     },
-                    response: data ?? null,
+                    response: metricsData ?? null,
                   },
                   null,
                   2,
                 )}
               </pre>
               <p className="pt-2 text-[0.7rem] leading-tight text-muted-foreground">
-                Esses dados vêm direto da API interna do dashboard, já com
-                agregação por conta e campanha.
+                Esses dados vêm direto da API interna já agregada.
               </p>
             </CardContent>
           </Card>
         )}
       </div>
 
-      {/* MODAL DE CRIATIVOS */}
+      {/* MODAL: Criativos */}
       <CampaignCreativesDialog
-        open={!!creativeDialogRef}
-        onClose={() => setCreativeDialogRef(null)}
-        campaign={creativeDialogRef?.campaign ?? null}
-        account={creativeDialogRef?.account ?? null}
-        headerSnapshot={creativeDialogRef?.headerSnapshot ?? null}
-        startDate={selectedStartDate}
-        endDate={selectedEndDate}
+        open={!!creativeDialogInfo}
+        onClose={() => setCreativeDialogInfo(null)}
+        campaign={creativeDialogInfo?.campaign ?? null}
+        account={creativeDialogInfo?.account ?? null}
+        headerSnapshot={creativeDialogInfo?.header ?? null}
+        startDate={startDateStr}
+        endDate={endDateStr}
       />
     </>
   );

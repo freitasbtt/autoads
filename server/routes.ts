@@ -477,12 +477,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const startDate = parseISO(startParam);
           const endDate = parseISO(endParam);
           if (!isValid(startDate) || !isValid(endDate)) {
-            return res.status(400).json({ message: "Parametros de data invalidos." });
-          }
-          if (startDate > endDate) {
             return res
               .status(400)
-              .json({ message: "O startDate deve ser menor ou igual ao endDate" });
+              .json({ message: "Parametros de data invalidos." });
+          }
+          if (startDate > endDate) {
+            return res.status(400).json({
+              message: "O startDate deve ser menor ou igual ao endDate",
+            });
           }
           timeRange = {
             since: format(startDate, "yyyy-MM-dd"),
@@ -490,6 +492,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           };
         }
 
+        // valida se a conta realmente pertence ao tenant
         const allResources = await storage.getResourcesByTenant(user.tenantId);
         const accountResources = allResources.filter(
           (resource) => resource.type === "account",
@@ -504,15 +507,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
 
+        // integraçao meta / token
         const integration = await storage.getIntegrationByProvider(
           user.tenantId,
           "Meta",
         );
-        const metaConfig = (integration?.config ?? {}) as MetaIntegrationConfig;
+        const metaConfig = (integration?.config ?? {}) as {
+          accessToken?: string | null;
+        };
 
         if (!metaConfig.accessToken) {
           return res.status(400).json({
-            message: "Integracao com Meta nao esta conectada para este tenant.",
+            message:
+              "Integracao com Meta nao esta conectada para este tenant.",
           });
         }
 
@@ -523,22 +530,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
             .json({ message: "Meta app secret nao configurado." });
         }
 
+        // precisamos do objective da campanha para calcular 'resultado principal'
+        // (leads, conversas, vendas...) no relatório por anúncio
         const client = new MetaGraphClient(
           metaConfig.accessToken,
           settings.metaAppSecret,
         );
-        const creatives = await client.fetchCampaignCreativeReports(
+
+        const accountCampaigns = await client.fetchCampaigns(accountIdParam);
+        const thisCampaign = accountCampaigns.find(
+          (c) => c.id === campaignId,
+        );
+        const campaignObjective = thisCampaign?.objective ?? null;
+
+        // AGORA usamos a nova função que retorna por ANÚNCIO (ad)
+        const adReports = await client.fetchCampaignAdReports(
           accountIdParam,
           campaignId,
+          campaignObjective,
           timeRange,
         );
 
-        res.json({ creatives });
+        // respondemos no campo 'creatives' para manter compatibilidade
+        return res.json({
+          creatives: adReports,
+        });
       } catch (err) {
         next(err);
       }
     },
   );
+
 
   // Get resources by type
   app.get("/api/resources/:type", isAuthenticated, async (req, res, next) => {

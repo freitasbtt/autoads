@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, jsonb, serial, pgEnum, date as pgDate, numeric } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, jsonb, serial, pgEnum, date as pgDate, numeric, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -38,14 +38,24 @@ export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
 
 // Resources table - stores Meta Ads resources per tenant
-export const resources = pgTable("resources", {
-  id: serial("id").primaryKey(),
-  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
-  type: text("type").notNull(), // account, page, instagram, whatsapp, leadform, website
-  name: text("name").notNull(),
-  value: text("value").notNull(), // the actual ID or URL
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+export const resources = pgTable(
+  "resources",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+    type: text("type").notNull(),
+    name: text("name").notNull(),
+    value: text("value").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => {
+    return {
+      uniqueTenantResource: uniqueIndex("uniq_tenant_resource")
+        .on(table.tenantId, table.type, table.value),
+    };
+  }
+);
+
 
 export const insertResourceSchema = createInsertSchema(resources).omit({
   id: true,
