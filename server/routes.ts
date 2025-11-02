@@ -937,20 +937,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ? accountResource.value.replace(/\D+/g, "")
         : "";
 
+      const extractString = (value: unknown) =>
+        typeof value === "string" ? value.trim() : "";
+
       const creativeEntries = Array.isArray(campaign.creatives)
-        ? (campaign.creatives as Array<{ driveFolderId?: unknown }>)
+        ? (campaign.creatives as Array<Record<string, unknown>>)
         : [];
 
       const primaryDriveFolderFromCreative = creativeEntries
-        .map((creative) => {
-          const value = typeof creative?.driveFolderId === "string" ? creative.driveFolderId.trim() : "";
-          return value;
-        })
+        .map((creative) => extractString(creative["driveFolderId"]))
         .find((value) => value.length > 0);
+
+      const primaryCreativeEntry =
+        creativeEntries.find((creative) => {
+          const titleValue = extractString(creative["title"]);
+          const textValue = extractString(creative["text"]);
+          return titleValue.length > 0 || textValue.length > 0;
+        }) ?? creativeEntries[0];
+
+      const primaryCreativeTitle = extractString(primaryCreativeEntry?.["title"]);
+      const primaryCreativeText = extractString(primaryCreativeEntry?.["text"]);
 
       const driveFolderId =
         primaryDriveFolderFromCreative ||
-        (typeof campaign.driveFolderId === "string" ? campaign.driveFolderId : "");
+        (typeof campaign.driveFolderId === "string" ? campaign.driveFolderId.trim() : "");
 
       const tenant = await storage.getTenant(user.tenantId);
       const callbackBaseUrl = getPublicAppUrl(req).replace(/\/$/, "");
@@ -1076,12 +1086,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
 
-      const webhookPayload = {
-        body: {
-          data: {
+      const clientName = tenant?.name ?? `Tenant-${user.tenantId}`;
+      const adAccountValue = adAccountId || (accountResource ? accountResource.value : "");
+      const pageIdValue = pageResource ? pageResource.value : "";
+      const instagramIdValue = instagramResource ? instagramResource.value : "";
+      const leadFormIdValue = leadformResource ? leadformResource.value : "";
+      const leadFormNameValue = leadformResource?.name ?? "";
+      const whatsappIdValue = whatsappResource ? whatsappResource.value : "";
+      const campaignWebsite = extractString(campaign.websiteUrl);
+
+      const messageText = extractString(campaign.message) || primaryCreativeText;
+      const titleText = extractString(campaign.title) || primaryCreativeTitle;
+
+      const isAddCreativesFlow = adSetsPayload.length === 0;
+
+      const dataPayload = isAddCreativesFlow
+        ? {
+            action: "add_creatives" as const,
+            tenant_id: user.tenantId,
+            client: clientName,
+            ad_account_id: adAccountValue,
+            external_id: String(campaign.id),
+            campaign_name: extractString(campaign.name) || titleText,
+            objective: mappedObjective,
+            page_id: pageIdValue,
+            instagram_user_id: instagramIdValue,
+            lead_form_id: leadFormIdValue,
+            leadgen_form_id: leadFormIdValue,
+            drive_folder_id: driveFolderId || "",
+            message_text: messageText,
+            title_text: titleText,
+            whatsapp_number_id: whatsappIdValue,
+            website_url: campaignWebsite,
+            page_name: pageResource?.name ?? "",
+            instagram_name: instagramResource?.name ?? "",
+            whatsapp_name: whatsappResource?.name ?? "",
+            leadgen_form_name: leadFormNameValue,
+            lead_form_name: leadFormNameValue,
+            drive_folder_name: "",
+          }
+        : {
             action: "create_campaign" as const,
-            client: tenant?.name ?? `Tenant-${user.tenantId}`,
-            ad_account_id: adAccountId || (accountResource ? accountResource.value : ""),
+            tenant_id: user.tenantId,
+            client: clientName,
+            ad_account_id: adAccountValue,
             external_id: String(campaign.id),
             campaign: {
               name: campaign.name,
@@ -1091,15 +1139,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
               special_ad_categories: ["NONE"],
             },
             adsets: adSetsPayload,
-            page_id: pageResource ? pageResource.value : "",
-            instagram_user_id: instagramResource ? instagramResource.value : "",
-            leadgen_form_id: leadformResource ? leadformResource.value : "",
+            page_id: pageIdValue,
+            instagram_user_id: instagramIdValue,
+            lead_form_id: leadFormIdValue,
+            leadgen_form_id: leadFormIdValue,
             drive_folder_id: driveFolderId || "",
-            message_text: campaign.message || "",
-            title_text: campaign.title || "",
-            whatsapp_number_id: whatsappResource ? whatsappResource.value : "",
-            website_url: campaign.websiteUrl || "",
-          },
+            message_text: messageText,
+            title_text: titleText,
+            whatsapp_number_id: whatsappIdValue,
+            website_url: campaignWebsite,
+          };
+
+      const webhookPayload = {
+        body: {
+          data: dataPayload,
           meta: {
             request_id: requestId,
             callback_url: callbackUrl,
@@ -1174,7 +1227,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         whatsapp_number_id,
         whatsapp_name,
         leadgen_form_id,
+        lead_form_id,
         leadgen_form_name,
+        lead_form_name,
         website_url,
         drive_folder_id,
         drive_folder_name,
@@ -1230,6 +1285,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         accountResource?.value ??
         "";
 
+      const resolvedLeadFormId =
+        typeof leadgen_form_id !== "undefined" && leadgen_form_id !== null
+          ? leadgen_form_id
+          : lead_form_id;
+
+      const resolvedLeadFormName =
+        typeof leadgen_form_name === "string" && leadgen_form_name.trim().length > 0
+          ? leadgen_form_name
+          : typeof lead_form_name === "string"
+              ? lead_form_name
+              : "";
+
       const clientName =
         (typeof client === "string" && client.trim().length > 0
           ? client.trim()
@@ -1254,10 +1321,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
 
       const webhookPayload = {
-        body: {
-          data: {
-            action: "add_creatives" as const,
-            client: clientName,
+          body: {
+            data: {
+              action: "add_creatives" as const,
+              tenant_id: user.tenantId,
+              client: clientName,
             ad_account_id: sanitizedAdAccountId,
             external_id: outgoingExternalId,
             campaign_name:
@@ -1273,8 +1341,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
                 ? String(instagram_user_id)
                 : "",
             leadgen_form_id:
-              leadgen_form_id !== undefined && leadgen_form_id !== null
-                ? String(leadgen_form_id)
+              resolvedLeadFormId !== undefined && resolvedLeadFormId !== null
+                ? String(resolvedLeadFormId)
+                : "",
+            lead_form_id:
+              resolvedLeadFormId !== undefined && resolvedLeadFormId !== null
+                ? String(resolvedLeadFormId)
                 : "",
             drive_folder_id:
               drive_folder_id !== undefined && drive_folder_id !== null
@@ -1294,7 +1366,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             page_name: typeof page_name === "string" ? page_name : "",
             instagram_name: typeof instagram_name === "string" ? instagram_name : "",
             whatsapp_name: typeof whatsapp_name === "string" ? whatsapp_name : "",
-            leadgen_form_name: typeof leadgen_form_name === "string" ? leadgen_form_name : "",
+            leadgen_form_name: resolvedLeadFormName,
+            lead_form_name: resolvedLeadFormName,
             drive_folder_name: typeof drive_folder_name === "string" ? drive_folder_name : "",
           },
           meta: webhookMeta,
@@ -1337,10 +1410,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Receive status update from n8n
   app.post("/api/webhooks/n8n/status", async (req, res, next) => {
     try {
-      const { campaign_id, status, status_detail } = req.body;
+      const { campaign_id, external_id, status, status_detail } = req.body;
 
-      if (!campaign_id) {
-        return res.status(400).json({ message: "campaign_id is required" });
+      if (campaign_id && external_id && String(campaign_id) !== String(external_id)) {
+        return res
+          .status(400)
+          .json({ message: "campaign_id e external_id nao correspondem ao mesmo valor" });
       }
 
       if (!status) {
@@ -1355,19 +1430,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      const campaignIdentifier = external_id ?? campaign_id;
+      if (!campaignIdentifier) {
+        return res
+          .status(400)
+          .json({ message: "Envie campaign_id ou external_id para identificar a campanha" });
+      }
+
+      const parsedCampaignId = Number.parseInt(String(campaignIdentifier), 10);
+      if (!Number.isFinite(parsedCampaignId)) {
+        return res
+          .status(400)
+          .json({ message: "campaign_id/external_id deve ser numerico" });
+      }
+
       // Get campaign to verify it exists
-      const campaign = await storage.getCampaign(parseInt(campaign_id));
+      const campaign = await storage.getCampaign(parsedCampaignId);
       if (!campaign) {
         return res.status(404).json({ message: "Campaign not found" });
       }
 
       // Update campaign status
-      const updated = await storage.updateCampaign(parseInt(campaign_id), {
+      const updated = await storage.updateCampaign(parsedCampaignId, {
         status: status.toLowerCase(),
         statusDetail: status_detail || null,
       });
 
-      console.log(`[n8n-status] Campaign ${campaign_id} status updated to: ${status}`, status_detail || '');
+      console.log(
+        `[n8n-status] Campaign ${parsedCampaignId} status updated to: ${status}`,
+        status_detail || ""
+      );
 
       res.json({ 
         message: "Status updated successfully",
@@ -2102,6 +2194,3 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   return httpServer;
 }
-
-
-

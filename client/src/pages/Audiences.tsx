@@ -28,7 +28,7 @@ import { ChevronDown, Loader2, Plus, X } from "lucide-react";
 
 const MIN_AGE = 18;
 const MAX_AGE = 65;
-const DEFAULT_CITY_RADIUS = 15;
+const DEFAULT_CITY_RADIUS = 40;
 
 type AudienceCity = {
   key: string;

@@ -184,6 +184,10 @@ export default function CampaignForm() {
       return;
     }
 
+    const primaryCreative = creatives[0];
+    const primaryTitle = primaryCreative?.title?.trim() ?? "";
+    const primaryMessage = primaryCreative?.text?.trim() ?? "";
+
     const payload = {
       name: config.name,
       objective: config.objective,
@@ -193,6 +197,8 @@ export default function CampaignForm() {
       instagramId: config.instagramId ? Number(config.instagramId) : null,
       whatsappId: config.whatsappId ? Number(config.whatsappId) : null,
       leadformId: config.leadformId ? Number(config.leadformId) : null,
+      title: primaryTitle || undefined,
+      message: primaryMessage || undefined,
       adSets: adSets.map((adSet) => ({
         audienceId: Number(adSet.audienceId),
         budget: adSet.budget,

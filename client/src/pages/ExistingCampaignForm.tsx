@@ -141,10 +141,13 @@ export default function ExistingCampaignForm() {
       return;
     }
 
+    const normalizedTitle = title.trim();
+    const normalizedMessage = message.trim();
+
     // Create campaign as draft matching InsertCampaignSchema
     // Use the title as campaign name for better visibility
     const payload = {
-      name: title, // Use creative title as campaign name
+      name: normalizedTitle, // Use creative title as campaign name
       objective: selectedObjectives[0], // Use first objective as primary
       status: "draft",
       accountId: accountId ? Number(accountId) : undefined,
@@ -154,11 +157,13 @@ export default function ExistingCampaignForm() {
       leadformId: leadFormId ? Number(leadFormId) : undefined,
       websiteUrl: websiteUrl || undefined,
       driveFolderId: driveFolderId || undefined,
+      title: normalizedTitle || undefined,
+      message: normalizedMessage || undefined,
       adSets: [], // Empty for existing campaign form
       creatives: [
         {
-          title,
-          text: message,
+          title: normalizedTitle,
+          text: normalizedMessage,
           driveFolderId: driveFolderId,
         },
       ],
