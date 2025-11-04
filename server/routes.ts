@@ -234,6 +234,13 @@ function emptyTotals(): MetaMetricTotals {
 
 type MetaIntegrationConfig = {
   accessToken?: string | null;
+  encryptedAccessToken?: {
+    iv: string;
+    tag: string;
+    ciphertext: string;
+  } | null;
+  tokenType?: string | null;
+  expiresAt?: string | null;
 };
 
 // Middleware to check if user is admin
@@ -371,10 +378,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const integration = await storage.getIntegrationByProvider(user.tenantId, "Meta");
-      const metaConfig = (integration?.config ?? {}) as MetaIntegrationConfig;
-
-      if (!metaConfig.accessToken) {
+      const access = await getMetaAccess(user.tenantId);
+      if (!access) {
         return res.status(400).json({
           message: "Integracao com Meta nao esta conectada para este tenant.",
         });
@@ -422,7 +427,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         previousEnd = format(previousEndDate, "yyyy-MM-dd");
       }
 
-      const client = new MetaGraphClient(metaConfig.accessToken, settings.metaAppSecret);
+      const client = new MetaGraphClient(access.accessToken, settings.metaAppSecret);
 
       const metrics = await fetchMetaDashboardMetrics({
         accounts: selectedAccounts,
@@ -508,15 +513,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         // integraçao meta / token
-        const integration = await storage.getIntegrationByProvider(
-          user.tenantId,
-          "Meta",
-        );
-        const metaConfig = (integration?.config ?? {}) as {
-          accessToken?: string | null;
-        };
+        const access = await getMetaAccess(user.tenantId);
 
-        if (!metaConfig.accessToken) {
+        if (!access) {
           return res.status(400).json({
             message:
               "Integracao com Meta nao esta conectada para este tenant.",
@@ -533,7 +532,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // precisamos do objective da campanha para calcular 'resultado principal'
         // (leads, conversas, vendas...) no relatório por anúncio
         const client = new MetaGraphClient(
-          metaConfig.accessToken,
+          access.accessToken,
           settings.metaAppSecret,
         );
 
@@ -1100,6 +1099,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               geo_locations: geoLocations,
               flexible_spec: flexibleSpec,
               publisher_platforms: publisherPlatforms,
+              targeting_automation: {
+                advantage_audience: 0,
+              },
             },
             status: "PAUSED",
             start_time: startDate,
@@ -1876,26 +1878,302 @@ export async function registerRoutes(app: Express): Promise<Server> {
       .digest('hex');
   }
 
+  const META_TOKEN_ENCRYPTION_ALGORITHM = "aes-256-gcm";
+
+  function parseMetaTokenKey(raw: string): Buffer | null {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const attempts: Buffer[] = [];
+    const tryPush = (value: string, encoding: BufferEncoding) => {
+      try {
+        attempts.push(Buffer.from(value, encoding));
+      } catch {
+        // ignore malformed attempt
+      }
+    };
+
+    tryPush(trimmed, "base64");
+    tryPush(trimmed.replace(/-/g, "+").replace(/_/g, "/"), "base64");
+    tryPush(trimmed, "hex");
+
+    return attempts.find((candidate) => candidate.length === 32) ?? null;
+  }
+
+  const rawMetaTokenKey = (process.env.META_TOKEN_ENC_KEY ?? "").trim();
+  const parsedMetaTokenKey = parseMetaTokenKey(rawMetaTokenKey);
+  const isMetaTokenEncryptionEnabled = parsedMetaTokenKey !== null;
+
+  if (!isMetaTokenEncryptionEnabled) {
+    const hasValue = rawMetaTokenKey.length > 0;
+    const message = hasValue
+      ? "[meta] META_TOKEN_ENC_KEY definido, mas inválido; tokens da Meta serão armazenados sem criptografia."
+      : "[meta] META_TOKEN_ENC_KEY não definido; tokens da Meta serão armazenados sem criptografia.";
+    console.warn(message);
+  }
+
+  function getMetaTokenKey(): Buffer {
+    if (!isMetaTokenEncryptionEnabled || !parsedMetaTokenKey) {
+      throw new Error(
+        "META_TOKEN_ENC_KEY deve ser configurada com uma chave válida para criptografar tokens da Meta.",
+      );
+    }
+    return parsedMetaTokenKey;
+  }
+
+  function encryptMetaAccessToken(
+    plainToken: string,
+  ): MetaIntegrationConfig["encryptedAccessToken"] | null {
+    if (!isMetaTokenEncryptionEnabled) {
+      return null;
+    }
+
+    const key = getMetaTokenKey();
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv(META_TOKEN_ENCRYPTION_ALGORITHM, key, iv);
+    const ciphertext = Buffer.concat([cipher.update(plainToken, "utf8"), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+
+    return {
+      iv: iv.toString("base64"),
+      tag: authTag.toString("base64"),
+      ciphertext: ciphertext.toString("base64"),
+    };
+  }
+
+  function decryptMetaAccessToken(
+    payload: MetaIntegrationConfig["encryptedAccessToken"],
+  ): string | null {
+    if (!payload) {
+      return null;
+    }
+    const { iv, tag, ciphertext } = payload;
+    if (!iv || !tag || !ciphertext) {
+      return null;
+    }
+
+    if (!isMetaTokenEncryptionEnabled) {
+      console.warn(
+        "[meta] Token criptografado encontrado, mas META_TOKEN_ENC_KEY não está configurada; impossível descriptografar.",
+      );
+      return null;
+    }
+
+    try {
+      const key = getMetaTokenKey();
+      const decipher = crypto.createDecipheriv(
+        META_TOKEN_ENCRYPTION_ALGORITHM,
+        key,
+        Buffer.from(iv, "base64"),
+      );
+      decipher.setAuthTag(Buffer.from(tag, "base64"));
+      const decrypted = Buffer.concat([
+        decipher.update(Buffer.from(ciphertext, "base64")),
+        decipher.final(),
+      ]);
+      return decrypted.toString("utf8");
+    } catch (err) {
+      throw new Error(
+        err instanceof Error
+          ? `Falha ao descriptografar token Meta: ${err.message}`
+          : "Falha ao descriptografar token Meta",
+      );
+    }
+  }
+
+  function resolveMetaTokenExpiry(tokenData: Record<string, unknown>): string | null {
+    const toNumber = (raw: unknown): number | null => {
+      if (typeof raw === "number" && Number.isFinite(raw)) {
+        return raw;
+      }
+      if (typeof raw === "string" && raw.trim().length > 0) {
+        const parsed = Number.parseFloat(raw.trim());
+        if (Number.isFinite(parsed)) {
+          return parsed;
+        }
+      }
+      return null;
+    };
+
+    const toEpochIso = (raw: unknown): string | null => {
+      const numeric = toNumber(raw);
+      if (numeric === null) {
+        return null;
+      }
+      const milliseconds = numeric > 1_000_000_000_000 ? numeric : numeric * 1000;
+      const date = new Date(milliseconds);
+      if (Number.isNaN(date.getTime())) {
+        return null;
+      }
+      return date.toISOString();
+    };
+
+    const expiresInSeconds = toNumber(
+      tokenData["expires_in"] ?? tokenData["expiresIn"] ?? tokenData["expires"],
+    );
+    if (expiresInSeconds && expiresInSeconds > 0) {
+      const expiresAtDate = new Date(Date.now() + expiresInSeconds * 1000);
+      return expiresAtDate.toISOString();
+    }
+
+    const absoluteExpiry =
+      toEpochIso(tokenData["expires_at"]) ??
+      toEpochIso(tokenData["expiresAt"]) ??
+      toEpochIso(tokenData["data_access_expires_at"]) ??
+      toEpochIso(tokenData["dataAccessExpiresAt"]);
+
+    if (absoluteExpiry) {
+      return absoluteExpiry;
+    }
+
+    const expiresAtString = tokenData["expires_at"];
+    if (typeof expiresAtString === "string") {
+      const parsed = new Date(expiresAtString);
+      if (!Number.isNaN(parsed.getTime())) {
+        return parsed.toISOString();
+      }
+    }
+
+    return null;
+  }
+
   async function getMetaAccess(tenantId: number): Promise<{
     accessToken: string;
     appSecretProof?: string;
+    expiresAt?: string | null;
   } | null> {
     const integration = await storage.getIntegrationByProvider(tenantId, "Meta");
     if (!integration) {
       return null;
     }
-    const config = integration.config as Record<string, unknown>;
-    const accessToken = typeof config?.accessToken === "string" ? config.accessToken : undefined;
+
+    const config = (integration.config ?? {}) as MetaIntegrationConfig;
+    let accessToken: string | null = null;
+
+    if (config.encryptedAccessToken) {
+      try {
+        accessToken = decryptMetaAccessToken(config.encryptedAccessToken);
+      } catch (err) {
+        console.error(
+          `[meta] Erro ao descriptografar token para tenant ${tenantId}:`,
+          err,
+        );
+        throw err instanceof Error ? err : new Error(String(err));
+      }
+    }
+
+    if (!accessToken && typeof config.accessToken === "string" && config.accessToken.trim().length > 0) {
+      const legacyToken = config.accessToken.trim();
+      if (isMetaTokenEncryptionEnabled) {
+        try {
+          const encryptedPayload = encryptMetaAccessToken(legacyToken);
+          if (encryptedPayload) {
+            const { accessToken: _legacy, ...rest } = config;
+            const upgradedConfig: MetaIntegrationConfig = {
+              ...rest,
+              encryptedAccessToken: encryptedPayload,
+            };
+            await storage.updateIntegration(integration.id, {
+              config: upgradedConfig,
+            });
+            config.encryptedAccessToken = encryptedPayload;
+            delete (config as Record<string, unknown>).accessToken;
+          }
+        } catch (err) {
+          console.error(
+            `[meta] Falha ao migrar token Meta para armazenamento criptografado (tenant ${tenantId}):`,
+            err,
+          );
+          throw err instanceof Error ? err : new Error(String(err));
+        }
+      }
+      accessToken = legacyToken;
+    }
+
     if (!accessToken) {
       return null;
     }
+
     const settings = await storage.getAppSettings();
     const appSecretProof =
       settings?.metaAppSecret && settings.metaAppSecret.length > 0
         ? generateAppSecretProof(accessToken, settings.metaAppSecret)
         : undefined;
-    return { accessToken, appSecretProof };
+    const expiresAt =
+      typeof config.expiresAt === "string" && config.expiresAt.length > 0
+        ? config.expiresAt
+        : null;
+    return { accessToken, appSecretProof, expiresAt };
   }
+
+  app.get("/internal/meta/token", async (req, res, next) => {
+    try {
+      const configuredSecret = (process.env.INTERNAL_API_SECRET ?? "").trim();
+      if (!configuredSecret) {
+        return res
+          .status(500)
+          .json({ message: "Internal API secret nao configurado" });
+      }
+
+      const providedSecretHeader = req.get("x-internal-secret") ?? "";
+      const providedSecretQueryRaw = req.query.secret;
+      let providedSecretQuery = "";
+      if (Array.isArray(providedSecretQueryRaw)) {
+        providedSecretQuery = providedSecretQueryRaw[0] ?? "";
+      } else if (typeof providedSecretQueryRaw === "string") {
+        providedSecretQuery = providedSecretQueryRaw;
+      }
+
+      const providedSecret = providedSecretHeader || providedSecretQuery;
+      if (!providedSecret) {
+        return res
+          .status(401)
+          .json({ message: "Cabecalho x-internal-secret ausente" });
+      }
+
+      const expectedBuffer = Buffer.from(configuredSecret, "utf8");
+      const providedBuffer = Buffer.from(providedSecret, "utf8");
+      if (
+        expectedBuffer.length === 0 ||
+        providedBuffer.length !== expectedBuffer.length ||
+        !crypto.timingSafeEqual(providedBuffer, expectedBuffer)
+      ) {
+        return res.status(401).json({ message: "Nao autorizado" });
+      }
+
+      const tenantIdRaw = req.query.tenant_id ?? req.query.tenantId;
+      const tenantIdValue = Array.isArray(tenantIdRaw) ? tenantIdRaw[0] : tenantIdRaw;
+      if (!tenantIdValue) {
+        return res.status(400).json({ message: "tenant_id obrigatorio" });
+      }
+
+      const tenantId = Number.parseInt(String(tenantIdValue), 10);
+      if (!Number.isFinite(tenantId) || tenantId <= 0) {
+        return res
+          .status(400)
+          .json({ message: "tenant_id deve ser um inteiro positivo" });
+      }
+
+      const access = await getMetaAccess(tenantId);
+      if (!access) {
+        return res
+          .status(404)
+          .json({ message: "Integracao Meta nao configurada para este tenant" });
+      }
+
+      setNoCacheHeaders(res);
+      res.removeHeader("ETag");
+
+      res.json({
+        access_token: access.accessToken,
+        expires_at: access.expiresAt ?? null,
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
 
   // Initiate Meta OAuth flow
   app.get("/auth/meta", isAuthenticated, async (req, res) => {
@@ -1972,6 +2250,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const accessToken = tokenData.access_token;
+      const encryptedAccessToken = encryptMetaAccessToken(accessToken);
       const appSecretProof = generateAppSecretProof(accessToken, settings.metaAppSecret);
 
       // Fetch user's accounts
@@ -2032,10 +2311,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // This requires additional API calls with specific permissions
 
       // Save access token in integrations table for future use
+      const integrationConfig: MetaIntegrationConfig = {
+        tokenType: tokenData.token_type ?? null,
+        expiresAt: resolveMetaTokenExpiry(tokenData),
+      };
+
+      if (encryptedAccessToken) {
+        integrationConfig.encryptedAccessToken = encryptedAccessToken;
+      } else {
+        integrationConfig.accessToken = accessToken;
+      }
+
       const metaIntegration: InsertIntegration & { tenantId: number } = {
         tenantId,
         provider: "Meta",
-        config: { accessToken, tokenType: tokenData.token_type },
+        config: integrationConfig,
         status: "connected",
       };
       await storage.createIntegration(metaIntegration);
