@@ -1,4 +1,4 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -18,8 +18,19 @@ import Admin from "@/pages/Admin";
 import Login from "@/pages/Login";
 import NotFound from "@/pages/not-found";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { useEffect } from "react";
 
-function Router() {
+/** Rota “falsa” que apenas envia o usuário para o arquivo estático */
+function LandingRedirect() {
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    // se preferir SPA, troque por navigate("/landing.html", { replace: true })
+    window.location.assign("/landing.html");
+  }, [navigate]);
+  return null;
+}
+
+function PrivateRouter() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
@@ -44,7 +55,9 @@ function PublicRouter() {
   return (
     <Switch>
       <Route path="/login" component={Login} />
-      <Route path="/" component={Login} />
+      <Route path="/landing" component={LandingRedirect} />
+      {/* fallback público: manda para login */}
+      <Route component={Login} />
     </Switch>
   );
 }
@@ -70,10 +83,10 @@ function AppContent() {
   const style = {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "3rem",
-  };
+  } as React.CSSProperties;
 
   return (
-    <SidebarProvider style={style as React.CSSProperties}>
+    <SidebarProvider style={style}>
       <div className="flex h-screen w-full">
         <AppSidebar />
         <div className="flex flex-col flex-1">
@@ -82,7 +95,7 @@ function AppContent() {
             <h2 className="text-lg font-semibold">Meta Ads Campaign Manager</h2>
           </header>
           <main className="flex-1 overflow-auto">
-            <Router />
+            <PrivateRouter />
           </main>
         </div>
       </div>
@@ -90,7 +103,7 @@ function AppContent() {
   );
 }
 
-function App() {
+export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -102,5 +115,3 @@ function App() {
     </QueryClientProvider>
   );
 }
-
-export default App;

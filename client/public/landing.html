@@ -1,0 +1,798 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AutoAds | Growth cockpit para campanhas Meta-first</title>
+    <meta
+      name="description"
+      content="Landing AutoAds: plataforma unificada para criacao e operacao de campanhas Meta com governanca, automacoes e experiencia premium."
+    />
+    <meta property="og:title" content="AutoAds | Growth cockpit para campanhas Meta-first" />
+    <meta
+      property="og:description"
+      content="Automatize fluxos Meta Ads, mantenha conformidade e entregue criativos com agilidade. Pol&iacute;tica de Privacidade e Termos sempre acess&iacute;veis."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://seudominio.com/landing" />
+    <meta property="og:image" content="https://via.placeholder.com/1200x630.png?text=AutoAds" />
+    <style>
+      :root {
+        color-scheme: dark light;
+        --bg-900: #050b1c;
+        --bg-800: #0b1533;
+        --bg-700: #13234f;
+        --bg-600: #1d3170;
+        --accent-500: #6366f1;
+        --accent-400: #818cf8;
+        --accent-300: #a5b4fc;
+        --accent-soft: rgba(99, 102, 241, 0.12);
+        --meta-blue: #1877f2;
+        --meta-teal: #00a1c9;
+        --surface: rgba(13, 18, 40, 0.78);
+        --surface-strong: rgba(19, 26, 54, 0.92);
+        --stroke: rgba(120, 130, 190, 0.28);
+        --text-strong: #f8fafc;
+        --text-soft: #cbd5f5;
+        --text-muted: #8ea0d7;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+        background: radial-gradient(circle at top, var(--bg-700), var(--bg-900));
+        color: var(--text-strong);
+        line-height: 1.6;
+        position: relative;
+        overflow-x: hidden;
+      }
+      body::before,
+      body::after {
+        content: "";
+        position: fixed;
+        inset: -40%;
+        background: conic-gradient(from 45deg, rgba(99, 102, 241, 0.12), transparent 60%);
+        z-index: -2;
+        animation: spin-soft 18s linear infinite;
+      }
+      body::after {
+        background: radial-gradient(circle at 30% 20%, rgba(0, 161, 201, 0.16), transparent 55%);
+        animation: float 16s ease-in-out infinite alternate;
+      }
+      @keyframes spin-soft {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @keyframes float {
+        0% {
+          transform: translate3d(-12px, -20px, 0);
+        }
+        100% {
+          transform: translate3d(12px, 18px, 0);
+        }
+      }
+      a {
+        color: var(--accent-300);
+        text-decoration: none;
+        transition: color 0.2s ease, opacity 0.2s ease;
+      }
+      a:hover {
+        opacity: 0.85;
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        backdrop-filter: blur(20px);
+        background: rgba(6, 11, 28, 0.65);
+        border-bottom: 1px solid rgba(120, 130, 190, 0.22);
+      }
+      .wrap {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+      .nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 18px 0;
+      }
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        color: var(--text-strong);
+      }
+      .logo {
+        width: 44px;
+        height: 44px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, var(--accent-500), var(--meta-blue));
+        display: inline-grid;
+        place-items: center;
+        font-weight: 700;
+        font-size: 1.1rem;
+        box-shadow: 0 18px 28px -18px rgba(99, 102, 241, 0.75);
+      }
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        font-size: 0.95rem;
+        color: var(--text-muted);
+      }
+      .nav-links a {
+        position: relative;
+        padding: 6px 0;
+      }
+      .nav-links a::after {
+        content: "";
+        position: absolute;
+        inset: auto 0 0 0;
+        height: 2px;
+        background: linear-gradient(90deg, var(--accent-300), transparent);
+        transform: scaleX(0);
+        transform-origin: left;
+        transition: transform 0.2s ease;
+      }
+      .nav-links a:hover::after {
+        transform: scaleX(1);
+      }
+      main {
+        padding-bottom: 96px;
+      }
+      section {
+        padding: 96px 0;
+      }
+      .hero {
+        padding-top: 72px;
+        display: grid;
+        gap: 48px;
+        align-items: center;
+      }
+      @media (min-width: 960px) {
+        .hero {
+          grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+        }
+      }
+      h1 {
+        font-size: clamp(2.6rem, 6vw, 3.8rem);
+        line-height: 1.1;
+        margin: 0 0 18px;
+        color: var(--text-strong);
+        letter-spacing: -0.02em;
+      }
+      p.lead {
+        margin: 0 0 28px;
+        color: var(--text-soft);
+        font-size: clamp(1.1rem, 3vw, 1.3rem);
+      }
+      .tagline {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, rgba(24, 119, 242, 0.22), rgba(0, 161, 201, 0.18));
+        border: 1px solid rgba(59, 130, 246, 0.35);
+        font-size: 0.85rem;
+        color: var(--accent-300);
+        margin-bottom: 18px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        align-items: center;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 14px 22px;
+        border-radius: 14px;
+        font-weight: 600;
+        font-size: 1rem;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+        border: 1px solid transparent;
+      }
+      .btn-primary {
+        background: linear-gradient(135deg, var(--meta-blue), var(--accent-500));
+        color: #fff;
+        box-shadow: 0 20px 35px -18px rgba(99, 102, 241, 0.65);
+      }
+      .btn-primary:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 24px 40px -18px rgba(24, 119, 242, 0.55);
+      }
+      .btn-secondary {
+        color: var(--accent-300);
+        border-color: rgba(99, 102, 241, 0.35);
+        background: rgba(99, 102, 241, 0.08);
+      }
+      .btn-secondary:hover {
+        background: rgba(99, 102, 241, 0.12);
+        transform: translateY(-2px);
+      }
+      .hero-media {
+        position: relative;
+        border-radius: 32px;
+        border: 1px solid var(--stroke);
+        overflow: hidden;
+        box-shadow: 0 40px 80px -45px rgba(15, 30, 68, 0.85);
+        background: radial-gradient(circle at top left, rgba(24, 119, 242, 0.18), rgba(13, 18, 40, 0.88));
+        padding: 36px;
+      }
+      .hero-media::after {
+        content: "";
+        position: absolute;
+        inset: 18px;
+        border-radius: 24px;
+        border: 1px solid rgba(129, 140, 248, 0.25);
+        pointer-events: none;
+      }
+      .media-grid {
+        display: grid;
+        gap: 18px;
+      }
+      .media-card {
+        background: var(--surface);
+        border-radius: 20px;
+        border: 1px solid rgba(129, 140, 248, 0.15);
+        padding: 18px;
+        position: relative;
+        overflow: hidden;
+      }
+      .media-card::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(120deg, rgba(99, 102, 241, 0.22), transparent 55%);
+        opacity: 0;
+        transition: opacity 0.3s ease;
+      }
+      .media-card:hover::before {
+        opacity: 1;
+      }
+      .media-card h3 {
+        margin: 0 0 8px;
+        font-size: 1rem;
+        letter-spacing: 0.02em;
+      }
+      .media-card p {
+        margin: 0;
+        color: var(--text-muted);
+        font-size: 0.95rem;
+      }
+      .signal {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 0.85rem;
+        color: var(--text-muted);
+        margin-top: 18px;
+      }
+      .pulse {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--meta-teal);
+        position: relative;
+      }
+      .pulse::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        box-shadow: 0 0 0 0 rgba(0, 161, 201, 0.45);
+        animation: pulse-ring 2.4s linear infinite;
+      }
+      @keyframes pulse-ring {
+        0% {
+          opacity: 0.9;
+          transform: scale(1);
+        }
+        70% {
+          opacity: 0;
+          transform: scale(4);
+        }
+        100% {
+          opacity: 0;
+        }
+      }
+      .stats {
+        display: grid;
+        gap: 18px;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        margin-top: 48px;
+      }
+      .stats-card {
+        padding: 22px;
+        border-radius: 18px;
+        background: var(--surface-strong);
+        border: 1px solid rgba(129, 140, 248, 0.18);
+        box-shadow: inset 0 0 0 1px rgba(24, 119, 242, 0.08);
+      }
+      .stats-card strong {
+        display: block;
+        font-size: 1.8rem;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        color: var(--accent-300);
+      }
+      .section-heading {
+        max-width: 760px;
+        margin-bottom: 48px;
+      }
+      .section-heading h2 {
+        font-size: clamp(2rem, 4vw, 2.6rem);
+        margin: 0 0 16px;
+      }
+      .section-heading p {
+        margin: 0;
+        color: var(--text-soft);
+        font-size: 1.05rem;
+      }
+      .grid {
+        display: grid;
+        gap: 24px;
+      }
+      @media (min-width: 960px) {
+        .grid-cols-3 {
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+        }
+        .grid-cols-2 {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      .card {
+        padding: 28px;
+        border-radius: 22px;
+        background: rgba(13, 18, 40, 0.82);
+        border: 1px solid rgba(129, 140, 248, 0.16);
+        position: relative;
+        overflow: hidden;
+      }
+      .card::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(circle at top right, rgba(99, 102, 241, 0.18), transparent 55%);
+        opacity: 0;
+        transition: opacity 0.3s ease;
+      }
+      .card:hover::after {
+        opacity: 1;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 14px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(129, 140, 248, 0.25);
+        font-size: 0.85rem;
+        color: var(--accent-300);
+        margin-bottom: 14px;
+      }
+      ul.feature-list {
+        list-style: none;
+        padding: 0;
+        margin: 18px 0 0;
+        display: grid;
+        gap: 12px;
+      }
+      ul.feature-list li {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        color: var(--text-soft);
+      }
+      ul.feature-list li::before {
+        content: "\\2022";
+        color: var(--accent-300);
+        font-size: 0.75rem;
+        line-height: 1.6;
+      }
+      .compliance-grid {
+        display: grid;
+        gap: 28px;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      }
+      .timeline {
+        border-left: 1px dashed rgba(129, 140, 248, 0.35);
+        padding-left: 22px;
+        margin-top: 24px;
+        display: grid;
+        gap: 20px;
+      }
+      .timeline-item {
+        position: relative;
+      }
+      .timeline-item::before {
+        content: "";
+        position: absolute;
+        top: 4px;
+        left: -32px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, var(--meta-blue), var(--accent-500));
+        box-shadow: 0 0 0 6px rgba(99, 102, 241, 0.15);
+      }
+      .glow-card {
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.12), rgba(24, 119, 242, 0.08));
+        border: 1px solid rgba(129, 140, 248, 0.28);
+        box-shadow: 0 25px 45px -32px rgba(99, 102, 241, 0.6);
+      }
+      .workflow {
+        display: grid;
+        gap: 24px;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        margin-top: 32px;
+      }
+      .step {
+        padding: 24px;
+        border-radius: 18px;
+        border: 1px solid rgba(129, 140, 248, 0.18);
+        background: rgba(15, 22, 48, 0.8);
+      }
+      .step strong {
+        display: inline-block;
+        padding: 6px 12px;
+        border-radius: 999px;
+        background: rgba(99, 102, 241, 0.18);
+        color: var(--accent-300);
+        margin-bottom: 10px;
+        font-size: 0.85rem;
+      }
+      .testimonial-grid {
+        display: grid;
+        gap: 22px;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        margin-top: 36px;
+      }
+      .quote {
+        padding: 24px;
+        border-radius: 20px;
+        background: rgba(13, 18, 40, 0.78);
+        border: 1px solid rgba(99, 102, 241, 0.16);
+        position: relative;
+      }
+      .quote::before {
+        content: "\"";
+        position: absolute;
+        top: -10px;
+        left: 18px;
+        font-size: 52px;
+        color: rgba(129, 140, 248, 0.25);
+      }
+      footer {
+        border-top: 1px solid rgba(120, 130, 190, 0.2);
+        background: rgba(6, 11, 28, 0.75);
+        backdrop-filter: blur(10px);
+        padding: 28px 0;
+      }
+      footer .footer-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px;
+        margin-top: 12px;
+        color: var(--text-muted);
+        font-size: 0.95rem;
+      }
+      .notice {
+        margin-top: 22px;
+        font-size: 0.85rem;
+        color: var(--text-muted);
+      }
+      @media (max-width: 720px) {
+        .nav-links {
+          display: none;
+        }
+        header {
+          border-bottom: 1px solid rgba(120, 130, 190, 0.16);
+        }
+        section {
+          padding: 72px 0;
+        }
+        .hero {
+          padding-top: 48px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="wrap nav">
+        <a class="brand" href="#">
+          <span class="logo">AA</span>
+          <span>AutoAds</span>
+        </a>
+        <nav class="nav-links">
+          <a href="#produto">Produto</a>
+          <a href="#conformidade">Conformidade</a>
+          <a href="#fluxo">Fluxo</a>
+          <a href="#depoimentos">Clientes</a>
+          <a href="/privacy.html" target="_blank" rel="noopener noreferrer">Privacy</a>
+          <a href="/terms.html" target="_blank" rel="noopener noreferrer">Terms</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="wrap hero" id="topo">
+        <div>
+          <span class="tagline">Meta-first Performance</span>
+          <h1>Campanhas conectadas, governan&ccedil;a impec&aacute;vel e cria&ccedil;&atilde;o em tempo real</h1>
+          <p class="lead">
+            AutoAds &eacute; o cockpit completo para squads de growth que operam Meta Ads. Planeje, aprove, dispare automa&ccedil;&otilde;es e
+            acompanhe resultados em um painel inspirado nas melhores pr&aacute;ticas do Meta Blueprint.
+          </p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="/login">Entrar na plataforma</a>
+            <a class="btn btn-secondary" href="#produto">Explorar recursos</a>
+            <div class="signal">
+              <span class="pulse"></span>
+              <span>Integra&ccedil;&atilde;o verificada com Graph API v18.0</span>
+            </div>
+          </div>
+
+          <div class="stats">
+            <div class="stats-card">
+              <strong>+38%</strong>
+              <span>Crescimento m&eacute;dio em leads com fluxos automatizados</span>
+            </div>
+            <div class="stats-card">
+              <strong>12 hrs</strong>
+              <span>Economia semanal em processos repetitivos</span>
+            </div>
+            <div class="stats-card">
+              <strong>4 camadas</strong>
+              <span>Controles de governan&ccedil;a conforme exigidos pelo Meta</span>
+            </div>
+          </div>
+        </div>
+
+        <aside class="hero-media">
+          <div class="media-grid">
+            <article class="media-card">
+              <h3>Dashboard din&acirc;mico</h3>
+              <p>
+                Combine ROAS, custo por resultado e velocidade de aprova&ccedil;&otilde;es com filtros por objetivo Meta (Leads, Conversas,
+                Trafego).
+              </p>
+            </article>
+            <article class="media-card">
+              <h3>Storyboards de criativo</h3>
+              <p>Sincronize pastas do Drive, colete assets e gere briefing visual responsivo para squads internos ou parceiros.</p>
+            </article>
+            <article class="media-card">
+              <h3>Webhooks para n8n</h3>
+              <p>
+                Dispare workflows de publica&ccedil;&atilde;o, notifica&ccedil;&otilde;es de status e coleta de leads em pipelines CRM com monitoramento de
+                SLA.
+              </p>
+            </article>
+          </div>
+        </aside>
+      </section>
+
+      <section class="wrap" id="produto">
+        <div class="section-heading">
+          <h2>Blueprint para escala: recursos pensados para squads de performance</h2>
+          <p>
+            Constru&iacute;mos o AutoAds espelhando as diretrizes de Creative Shop e as exig&ecirc;ncias de compliance do Meta Ads Manager, para que
+            sua opera&ccedil;&atilde;o n&atilde;o precise reinventar fluxos a cada campanha.
+          </p>
+        </div>
+
+        <div class="grid grid-cols-3">
+          <article class="card">
+            <span class="badge">Insights em tempo real</span>
+            <h3>Mission Control com IA contextual</h3>
+            <p>
+              Detecte picos de gasto, sugira otimiza&ccedil;&otilde;es por objetivo e receba alertas proativos quando atingir limites definidos.
+            </p>
+            <ul class="feature-list">
+              <li>Mapeamento autom&aacute;tico de objetivos &rarr; Resultados Meta.</li>
+              <li>Sugest&otilde;es de copy baseadas em melhores pr&aacute;ticas do Meta Advantage.</li>
+              <li>Comparativo instant&acirc;neo por intervalos (D-1, D-7, D-28).</li>
+            </ul>
+          </article>
+
+          <article class="card">
+            <span class="badge">Opera&ccedil;&atilde;o assistida</span>
+            <h3>Fluxos conectados a n8n e webhook de status</h3>
+            <p>
+              Garanta rastreabilidade ponta a ponta: da aprova&ccedil;&atilde;o criativa ao retorno de status do Meta, com callback autom&aacute;tico para
+              cada campanha.
+            </p>
+            <ul class="feature-list">
+              <li>Webhook bidirecional para atualiza&ccedil;&atilde;o de status.</li>
+              <li>Templates de automa&ccedil;&atilde;o aproveitando nodes oficiais Meta.</li>
+              <li>Logs imut&aacute;veis e linha do tempo de cada execu&ccedil;&atilde;o.</li>
+            </ul>
+          </article>
+
+          <article class="card">
+            <span class="badge">Governan&ccedil;a</span>
+            <h3>Pol&iacute;ticas de acesso e trilhas de auditoria</h3>
+            <p>
+              Delegue responsabilidades com perfis distintos: system admin, tenant admin e membros com permiss&otilde;es customizadas.
+            </p>
+            <ul class="feature-list">
+              <li>Session Management com passport + bcrypt.</li>
+              <li>Relat&oacute;rio LGPD instant&acirc;neo para campanhas de lead.</li>
+              <li>Controle de pastas do Drive e contas conectadas ao tenant.</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="wrap" id="conformidade">
+        <div class="section-heading">
+          <h2>Conformidade Meta e LGPD sempre vis&iacute;vel</h2>
+          <p>
+            Transpar&ecirc;ncia &eacute; requisito para veicula&ccedil;&otilde;es em Lead Ads. O AutoAds mant&eacute;m Pol&iacute;tica de Privacidade, Termos e consentimentos
+            &agrave; dist&acirc;ncia de um clique.
+          </p>
+        </div>
+
+        <div class="compliance-grid">
+          <article class="card glow-card">
+            <h3>Centro de privacidade</h3>
+            <p>
+              Pol&iacute;tica e Termos foram constru&iacute;dos com refer&ecirc;ncias do Meta Privacy Center e LGPD, com linguagem clara e orientada a
+              titulares.
+            </p>
+            <div class="timeline">
+              <div class="timeline-item">
+                <strong>Mapeamento de dados</strong>
+                <p>Invent&aacute;rio de dados coletados (formul&aacute;rios, integra&ccedil;&otilde;es, cookies) com base legal definida.</p>
+              </div>
+              <div class="timeline-item">
+                <strong>Sinaliza&ccedil;&otilde;es proativas</strong>
+                <p>Banner de consentimento, refer&ecirc;ncias cruzadas e contatos do DPO prontos para portais Meta.</p>
+              </div>
+              <div class="timeline-item">
+                <strong>Direito do titular</strong>
+                <p>Fluxos para revis&atilde;o, exclus&atilde;o ou portabilidade em at&eacute; 15 dias corridos.</p>
+              </div>
+            </div>
+          </article>
+
+          <article class="card">
+            <h3>Checklist de conformidade</h3>
+            <ul class="feature-list">
+              <li>Links exigidos pelo Meta fixos no cabe&ccedil;alho e rodap&eacute;.</li>
+              <li>Registro de consentimento para integra&ccedil;&otilde;es WhatsApp Business e Instagram.</li>
+              <li>Indicadores de reten&ccedil;&atilde;o e descarte seguro de dados.</li>
+              <li>Pol&iacute;tica de cookies enxuta focada em cookies essenciais e m&eacute;tricas agregadas.</li>
+            </ul>
+            <div class="notice">
+              Consulte: <a href="/privacy.html" target="_blank">Pol&iacute;tica de Privacidade</a> &middot;
+              <a href="/terms.html" target="_blank">Termos de Uso</a>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="wrap" id="fluxo">
+        <div class="section-heading">
+          <h2>Fluxo operacional inspirado na Creative Guidance do Meta</h2>
+          <p>Do briefing ao go-live, veja como conectamos pessoas, dados e cria&ccedil;&atilde;o.</p>
+        </div>
+
+        <div class="workflow">
+          <div class="step">
+            <strong>1. Briefings vivos</strong>
+            <p>Centralize assets, moodboards e insights no painel para squads de conte&uacute;do.</p>
+          </div>
+          <div class="step">
+            <strong>2. Aprova&ccedil;&otilde;es com contexto</strong>
+            <p>Revis&otilde;es visuais, checklist de compliance e hist&oacute;rico de feedback centralizado.</p>
+          </div>
+          <div class="step">
+            <strong>3. Publica&ccedil;&atilde;o nativa</strong>
+            <p>Acionamento direto do webhook AutoAds &rarr; Meta + n8n com acompanhamento de status em tempo real.</p>
+          </div>
+          <div class="step">
+            <strong>4. Otimiza&ccedil;&atilde;o cont&iacute;nua</strong>
+            <p>Painel compara per&#237;odos, objetivos e resultados. Sugest&otilde;es de testes A/B com um clique.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="wrap" id="depoimentos">
+        <div class="section-heading">
+          <h2>Times que j&aacute; elevaram sua opera&ccedil;&atilde;o com AutoAds</h2>
+          <p>
+            Desde tech leads at&eacute; squads de aquisi&ccedil;&atilde;o em ag&ecirc;ncias Meta Business Partner, inspira&ccedil;&otilde;es do blueprint est&atilde;o espalhadas
+            pela comunidade.
+          </p>
+        </div>
+
+        <div class="testimonial-grid">
+          <article class="quote">
+            <p>
+              "Implementamos governan&ccedil;a multi-tenant sem fric&ccedil;&atilde;o. O webhook de status do n8n virou requisito nas sprints."
+            </p>
+            <strong>Laura A. &middot; Head de Growth em SaaS B2B</strong>
+          </article>
+          <article class="quote">
+            <p>
+              "A integra&ccedil;&atilde;o com Meta e Google Drive simplificou a gest&atilde;o de criativos. O time cria, revisa e publica em um mesmo
+              ambiente."
+            </p>
+            <strong>Thiago M. &middot; Diretor Cria&ccedil;&atilde;o em Partner Agency</strong>
+          </article>
+          <article class="quote">
+            <p>
+              "Os alertas proativos e a automa&ccedil;&atilde;o de status reduziram em 35% o tempo de resposta ao comercial em campanhas de leads."
+            </p>
+            <strong>Renata C. &middot; Squad Lead Performance</strong>
+          </article>
+        </div>
+      </section>
+
+      <section class="wrap" id="cta-final">
+        <div class="card glow-card" style="text-align: center;">
+          <h2 style="margin: 0 0 16px;">Pronto para acelerar suas campanhas Meta-first?</h2>
+          <p style="margin: 0 auto 28px; max-width: 620px; color: var(--text-soft);">
+            Conecte contas, inicie fluxos com n8n, acompanhe compliance e mantenha seu time na mesma cad&ecirc;ncia.
+            Tudo em um painel que respeita as melhores pr&aacute;ticas do Meta.
+          </p>
+          <div class="cta-row" style="justify-content: center;">
+            <a class="btn btn-primary" href="/login">Come&ccedil;ar agora</a>
+            <a class="btn btn-secondary" href="mailto:contato@autoads.com.br">Falar com especialista</a>
+          </div>
+          <div class="notice">
+            D&uacute;vidas sobre privacidade? Consulte a
+            <a href="/privacy.html" target="_blank">Pol&iacute;tica de Privacidade</a> e os
+            <a href="/terms.html" target="_blank">Termos de Uso</a>.
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <div>&copy; <span id="year">2025</span> AutoAds. Todos os direitos reservados.</div>
+        <div class="footer-links">
+          <a href="#produto">Recursos</a>
+          <a href="#conformidade">Conformidade</a>
+          <a href="#fluxo">Fluxo operacional</a>
+          <a href="/privacy.html" target="_blank">Pol&iacute;tica de Privacidade</a>
+          <a href="/terms.html" target="_blank">Termos de Uso</a>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      (function () {
+        try {
+          var yearEl = document.getElementById("year");
+          if (yearEl) {
+            yearEl.textContent = new Date().getFullYear().toString();
+          }
+        } catch (error) {
+          console.error("Falha ao atualizar ano:", error);
+        }
+      })();
+    </script>
+  </body>
+</html>

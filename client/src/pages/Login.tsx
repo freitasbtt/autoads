@@ -39,7 +39,7 @@ export default function Login() {
     } catch (error) {
       toast({
         title: "Erro no login",
-        description: error instanceof Error ? error.message : "Credenciais invalidas",
+        description: error instanceof Error ? error.message : "Credenciais inválidas",
         variant: "destructive",
       });
     } finally {
@@ -50,10 +50,13 @@ export default function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
-        <CardHeader>
+        <CardHeader className="space-y-1">
           <CardTitle className="text-2xl">Meta Ads Campaign Manager</CardTitle>
-          <CardDescription>Entre com suas credenciais para acessar a plataforma</CardDescription>
+          <CardDescription>
+            Entre com suas credenciais para acessar a plataforma
+          </CardDescription>
         </CardHeader>
+
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
@@ -69,6 +72,7 @@ export default function Login() {
                 disabled={isLoading}
               />
             </div>
+
             <div className="space-y-2">
               <Label htmlFor="password">Senha</Label>
               <Input
@@ -82,9 +86,37 @@ export default function Login() {
                 disabled={isLoading}
               />
             </div>
-            <Button type="submit" className="w-full" data-testid="button-login" disabled={isLoading}>
+
+            <Button
+              type="submit"
+              className="w-full"
+              data-testid="button-login"
+              disabled={isLoading}
+            >
               {isLoading ? "Entrando..." : "Entrar"}
             </Button>
+
+            {/* Aviso de consentimento + links exigidos pelo Meta */}
+            <p className="text-xs text-muted-foreground text-center leading-relaxed">
+              Ao continuar, você concorda com nossos{" "}
+              <a
+                href="/terms.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-4 hover:opacity-90"
+              >
+                Termos de Uso
+              </a>{" "}
+              e reconhece a{" "}
+              <a
+                href="/privacy.html"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-4 hover:opacity-90"
+              >
+                Política de Privacidade
+              </a>.
+            </p>
           </form>
         </CardContent>
       </Card>

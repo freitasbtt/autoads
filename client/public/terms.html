@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Termos de Uso | AutoAds</title>
+    <meta name="description" content="Termos de Uso da AutoAds Tecnologia Ltda. Condi&ccedil;&otilde;es para utiliza&ccedil;&atilde;o da plataforma." />
+    <style>
+      :root {
+        color-scheme: dark light;
+        --bg: #040b1c;
+        --panel: rgba(10, 16, 34, 0.88);
+        --card: rgba(15, 22, 46, 0.9);
+        --accent: #6366f1;
+        --accent-soft: rgba(99, 102, 241, 0.2);
+        --accent-strong: #a5b4fc;
+        --meta-blue: #1877f2;
+        --text: #f8fafc;
+        --text-soft: #d3dcff;
+        --text-muted: #8ea0d7;
+        --stroke: rgba(129, 140, 248, 0.26);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+        background: radial-gradient(circle at top, rgba(16, 24, 56, 0.55), var(--bg));
+        color: var(--text);
+        line-height: 1.65;
+        padding: 32px 24px 72px;
+        position: relative;
+        overflow-x: hidden;
+      }
+      body::before,
+      body::after {
+        content: "";
+        position: fixed;
+        inset: -35%;
+        background: conic-gradient(from 120deg, rgba(99, 102, 241, 0.18), transparent 60%);
+        filter: blur(2px);
+        z-index: -2;
+        animation: spin 28s linear infinite;
+      }
+      body::after {
+        background: radial-gradient(circle at 20% 20%, rgba(24, 119, 242, 0.14), transparent 55%);
+        animation: float 18s ease-in-out infinite alternate;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      @keyframes float {
+        0% {
+          transform: translate(-10px, -16px);
+        }
+        100% {
+          transform: translate(10px, 12px);
+        }
+      }
+      a {
+        color: var(--accent-strong);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      .wrap {
+        max-width: 880px;
+        margin: 0 auto;
+      }
+      header {
+        padding: 32px;
+        border-radius: 24px;
+        background: var(--panel);
+        border: 1px solid var(--stroke);
+        box-shadow: 0 24px 48px -36px rgba(10, 16, 34, 0.9);
+        display: grid;
+        gap: 18px;
+      }
+      .topline {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 700;
+        font-size: 1.1rem;
+        letter-spacing: 0.02em;
+      }
+      .logo {
+        width: 40px;
+        height: 40px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, var(--meta-blue), var(--accent));
+        display: inline-grid;
+        place-items: center;
+        box-shadow: 0 18px 30px -24px rgba(99, 102, 241, 0.85);
+      }
+      .pill {
+        padding: 8px 14px;
+        border-radius: 999px;
+        background: rgba(99, 102, 241, 0.14);
+        border: 1px solid rgba(129, 140, 248, 0.32);
+        color: var(--text-soft);
+        font-size: 0.85rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 0;
+        font-size: clamp(2.1rem, 4.5vw, 2.6rem);
+        line-height: 1.25;
+      }
+      .summary {
+        margin: 0;
+        color: var(--text-soft);
+        font-size: 1.05rem;
+      }
+      nav.links {
+        display: flex;
+        gap: 18px;
+        flex-wrap: wrap;
+        font-size: 0.95rem;
+        color: var(--text-muted);
+      }
+      section {
+        margin-top: 28px;
+        background: var(--card);
+        border-radius: 22px;
+        border: 1px solid var(--stroke);
+        padding: 26px;
+      }
+      h2 {
+        margin: 0 0 12px;
+        font-size: 1.6rem;
+      }
+      h3 {
+        margin: 20px 0 10px;
+        font-size: 1.25rem;
+      }
+      p {
+        margin: 0 0 14px;
+        color: var(--text-soft);
+      }
+      ul {
+        margin: 0 0 16px;
+        padding-left: 20px;
+        color: var(--text-soft);
+      }
+      ul li {
+        margin-bottom: 10px;
+      }
+      .grid {
+        display: grid;
+        gap: 18px;
+      }
+      @media (min-width: 720px) {
+        .grid-2 {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      .callout {
+        padding: 18px;
+        border-radius: 16px;
+        background: rgba(24, 119, 242, 0.14);
+        border: 1px solid rgba(24, 119, 242, 0.32);
+        color: var(--text);
+        margin: 18px 0;
+      }
+      footer {
+        margin-top: 42px;
+        color: var(--text-muted);
+        font-size: 0.95rem;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="topline">
+          <a class="brand" href="/">
+            <span class="logo">AA</span>
+            <span>AutoAds</span>
+          </a>
+          <span class="pill">Atualizados em 05 nov 2025</span>
+        </div>
+        <h1>Termos de Uso</h1>
+        <p class="summary">
+          Os presentes Termos regulam o acesso e uso da plataforma AutoAds, bem como das p&aacute;ginas associadas (incluindo esta landing e
+          integra&ccedil;&otilde;es Meta, Google Drive e n8n). Ao utilizar nossos servi&ccedil;os, voc&ecirc; concorda com estas condi&ccedil;&otilde;es e com a
+          <a href="/privacy.html">Pol&iacute;tica de Privacidade</a>.
+        </p>
+        <nav class="links">
+          <a href="#aceitacao">Aceita&ccedil;&atilde;o</a>
+          <a href="#contas">Contas</a>
+          <a href="#uso">Uso permitido</a>
+          <a href="#propriedade">Propriedade intelectual</a>
+          <a href="#responsabilidade">Responsabilidades</a>
+          <a href="#forense">Lei aplic&aacute;vel</a>
+        </nav>
+      </header>
+
+      <section id="aceitacao">
+        <h2>1. Aceita&ccedil;&atilde;o e elegibilidade</h2>
+        <p>
+          Ao criar conta, acessar ou usar o AutoAds, voc&ecirc; confirma que tem pelo menos 18 anos, possui poderes para representar sua empresa
+          (quando aplic&aacute;vel) e concorda em cumprir estes Termos, a Pol&iacute;tica de Privacidade e bases legais aplic&aacute;veis (LGPD, Marco Civil
+          da Internet e regras Meta Ads).
+        </p>
+        <p>
+          Caso n&atilde;o concorde com qualquer condi&ccedil;&atilde;o, n&atilde;o utilize a plataforma. Podemos solicitar documenta&ccedil;&atilde;o para valida&ccedil;&atilde;o de identidade ou
+          de propriedade de ativos Meta conectados.
+        </p>
+      </section>
+
+      <section id="contas">
+        <h2>2. Contas, autentica&ccedil;&atilde;o e comunica&ccedil;&otilde;es</h2>
+        <div class="grid grid-2">
+          <div>
+            <h3>Credenciais</h3>
+            <p>
+              Voc&ecirc; deve fornecer informa&ccedil;&otilde;es verdadeiras e mant&ecirc;-las atualizadas. As credenciais s&atilde;o pessoais e intransfer&iacute;veis. Notifique-nos
+              imediatamente em caso de uso n&atilde;o autorizado.
+            </p>
+            <p>
+              Utilizamos autentica&ccedil;&atilde;o via e-mail e senha (hash bcrypt). Sessions s&atilde;o protegidas por HTTPS e expiram conforme configura&ccedil;&otilde;es do
+              tenant.
+            </p>
+          </div>
+          <div>
+            <h3>Comunica&ccedil;&otilde;es</h3>
+            <p>
+              Ao se cadastrar, voc&ecirc; autoriza o envio de comunica&ccedil;&otilde;es relacionadas a onboarding, atualiza&ccedil;&otilde;es de produto, alertas operacionais e
+              campanhas de marketing. Voc&ecirc; pode cancelar comunica&ccedil;&otilde;es de marketing a qualquer momento via link de descadastro.
+            </p>
+            <p>
+              Para temas regulat&oacute;rios (mudan&ccedil;as nos Termos, incidentes de seguran&ccedil;a), o envio pode ser mantido independentemente do opt-out.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="uso">
+        <h2>3. Uso permitido e restri&ccedil;&otilde;es</h2>
+        <p>Voc&ecirc; concorda em:</p>
+        <ul>
+          <li>Utilizar a plataforma conforme as pol&iacute;ticas do Meta e demais provedores integrados.</li>
+          <li>Manter confidencialidade de dados de clientes, leads e integra&ccedil;&otilde;es.</li>
+          <li>Respeitar limites de uso definidos para APIs e automa&ccedil;&otilde;es.</li>
+          <li>Evitar uploads que violem direitos de terceiros (autorais, imagem, marca) ou leis aplic&aacute;veis.</li>
+        </ul>
+        <p>As seguintes condutas s&atilde;o proibidas:</p>
+        <ul>
+          <li>Engenharia reversa, scraping agressivo ou automa&ccedil;&atilde;o que comprometa disponibilidade.</li>
+          <li>Execu&ccedil;&atilde;o de campanhas que infrinjam pol&iacute;ticas Meta (conte&uacute;do sens&iacute;vel, discurso de &oacute;dio, pr&aacute;ticas enganosas etc.).</li>
+          <li>Compartilhar credenciais ou tentar acessar dados de outros tenants sem autoriza&ccedil;&atilde;o.</li>
+        </ul>
+        <div class="callout">
+          Viola&ccedil;&otilde;es podem resultar em suspens&atilde;o imediata da conta, remo&ccedil;&atilde;o de conte&uacute;do e comunica&ccedil;&atilde;o a plataformas integradas (Meta, Google
+          etc.), sem preju&iacute;zo de medidas legais.
+        </div>
+      </section>
+
+      <section id="propriedade">
+        <h2>4. Propriedade intelectual</h2>
+        <p>
+          Todos os direitos relacionados ao AutoAds (c&oacute;digo-fonte, design, fluxos, materiais de suporte) pertencem &agrave; AutoAds, exceto quando
+          indicado de forma diversa. Licenciamos o uso n&atilde;o exclusivo da plataforma durante a vig&ecirc;ncia do contrato.
+        </p>
+        <p>
+          Voc&ecirc; mant&eacute;m os direitos sobre seus dados e conte&uacute;dos enviados (criativos, briefings, integra&ccedil;&otilde;es). Ao usar o AutoAds, concede licen&ccedil;a para
+          trat&aacute;-los conforme nossa Pol&iacute;tica de Privacidade.
+        </p>
+      </section>
+
+      <section id="responsabilidade">
+        <h2>5. Responsabilidades e limita&ccedil;&otilde;es</h2>
+        <p>
+          O AutoAds &eacute; fornecido "no estado em que se encontra". Empregamos esfor&ccedil;os razo&aacute;veis para disponibilizar o servi&ccedil;o sem interrup&ccedil;&otilde;es,
+          contudo podem ocorrer manuten&ccedil;&otilde;es ou indisponibilidades por motivos t&eacute;cnicos.
+        </p>
+        <p>
+          Na m&aacute;xima medida permitida em lei, n&atilde;o responderemos por danos indiretos, lucros cessantes, perda de dados ou de oportunidades decorrentes do
+          uso ou impossibilidade de uso da plataforma. Nossa responsabilidade total est&aacute; limitada ao montante pago nos 12 meses anteriores ao
+          evento.
+        </p>
+        <p>
+          Voc&ecirc; &eacute; respons&aacute;vel por garantir que dados e integra&ccedil;&otilde;es cadastrados respeitem direitos de terceiros, legisla&ccedil;&otilde;es setoriais e pol&iacute;ticas dos
+          provedores conectados.
+        </p>
+      </section>
+
+      <section id="integracoes">
+        <h2>6. Integra&ccedil;&otilde;es e servi&ccedil;os de terceiros</h2>
+        <p>
+          O AutoAds integra-se a servi&ccedil;os como Meta Ads, WhatsApp Business, Google Drive e n8n. Cada servi&ccedil;o possui termos pr&oacute;prios. Ao conectar suas
+          contas, voc&ecirc; declara estar em conformidade com tais requisitos e autoriza o AutoAds a realizar opera&ccedil;&otilde;es necess&aacute;rias (coleta de tokens,
+          execu&ccedil;&atilde;o de webhooks e afins).
+        </p>
+        <p>
+          Podemos suspender integra&ccedil;&otilde;es se identificarmos risco de seguran&ccedil;a, viola&ccedil;&atilde;o de pol&iacute;ticas ou solicita&ccedil;&atilde;o de provedores terceiros.
+        </p>
+      </section>
+
+      <section id="plano">
+        <h2>7. Planos, faturamento e encerramento</h2>
+        <ul>
+          <li>Planos podem ser mensais ou anuais. Informaremos valores, tributos aplic&aacute;veis e condi&ccedil;&otilde;es de renova&ccedil;&atilde;o.</li>
+          <li>Voc&#234; pode solicitar cancelamento a qualquer momento; o acesso permanece at&eacute; o fim do ciclo contratado.</li>
+          <li>Em caso de inadimpl&ecirc;ncia superior a 15 dias, poderemos suspender o acesso at&eacute; regulariza&ccedil;&atilde;o.</li>
+          <li>Reservamo-nos o direito de descontinuar servi&ccedil;os mediante notifica&ccedil;&atilde;o pr&eacute;via com anteced&ecirc;ncia razo&aacute;vel.</li>
+        </ul>
+      </section>
+
+      <section id="forense">
+        <h2>8. Lei aplic&aacute;vel e foro</h2>
+        <p>
+          Estes Termos s&atilde;o regidos pela legisla&ccedil;&atilde;o brasileira. Para quest&otilde;es relativas a rela&ccedil;&otilde;es de consumo, fica eleito o foro do domic&iacute;lio do usu&aacute;rio
+          (art. 101, I, CDC). Nas demais hip&oacute;teses, o foro escolhido &eacute; o da comarca de Belo Horizonte - MG.
+        </p>
+      </section>
+
+      <section id="alteracoes">
+        <h2>9. Atualiza&ccedil;&otilde;es destes Termos</h2>
+        <p>
+          Poderemos atualizar estes Termos para refletir evolu&ccedil;&otilde;es do produto, exig&ecirc;ncias legais ou mudan&ccedil;as em integra&ccedil;&otilde;es. Divulgaremos aviso pr&eacute;vio em
+          nossa aplica&ccedil;&atilde;o e/ou por e-mail, indicando a data de entrada em vigor. O uso cont&iacute;nuo ap&oacute;s a data efetiva significa aceite das novas
+          condi&ccedil;&otilde;es.
+        </p>
+      </section>
+
+      <footer>
+        &copy; <span id="year">2025</span> AutoAds Tecnologia Ltda &middot;
+        <a href="mailto:legal@autoads.com.br">legal@autoads.com.br</a> &middot;
+        <a href="/privacy.html">Pol&iacute;tica de Privacidade</a>
+      </footer>
+    </div>
+
+    <script>
+      (function () {
+        try {
+          var yearEl = document.getElementById("year");
+          if (yearEl) {
+            yearEl.textContent = new Date().getFullYear().toString();
+          }
+        } catch (error) {
+          console.error("Falha ao atualizar ano:", error);
+        }
+      })();
+    </script>
+  </body>
+</html>
+

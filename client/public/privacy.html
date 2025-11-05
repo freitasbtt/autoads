@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pol&iacute;tica de Privacidade | AutoAds</title>
+    <meta
+      name="description"
+      content="Pol&iacute;tica de Privacidade da AutoAds. Saiba como tratamos dados pessoais em conformidade com LGPD e exig&ecirc;ncias Meta."
+    />
+    <style>
+      :root {
+        color-scheme: dark light;
+        --bg: #050b1c;
+        --bg-panel: rgba(12, 16, 36, 0.86);
+        --bg-card: rgba(18, 25, 54, 0.92);
+        --accent: #6366f1;
+        --accent-soft: rgba(99, 102, 241, 0.18);
+        --accent-strong: #818cf8;
+        --meta-blue: #1877f2;
+        --meta-cyan: #00a1c9;
+        --text: #f8fafc;
+        --text-soft: #ccd5ff;
+        --text-muted: #8e9bd2;
+        --stroke: rgba(129, 140, 248, 0.28);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+        background: radial-gradient(circle at top, rgba(17, 24, 56, 0.75), var(--bg));
+        color: var(--text);
+        line-height: 1.6;
+        padding: 32px 24px 64px;
+        position: relative;
+        overflow-x: hidden;
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: -30%;
+        background: conic-gradient(from 160deg, rgba(99, 102, 241, 0.18), transparent 65%);
+        filter: blur(2px);
+        z-index: -2;
+        animation: spin 24s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      a {
+        color: var(--accent-strong);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      .wrap {
+        max-width: 900px;
+        margin: 0 auto;
+      }
+      header {
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        margin-bottom: 32px;
+        background: var(--bg-panel);
+        border-radius: 24px;
+        padding: 32px;
+        border: 1px solid var(--stroke);
+        box-shadow: 0 22px 48px -32px rgba(15, 23, 42, 0.85);
+      }
+      .topline {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        font-weight: 700;
+        font-size: 1.1rem;
+        letter-spacing: 0.02em;
+      }
+      .logo {
+        width: 42px;
+        height: 42px;
+        border-radius: 14px;
+        background: linear-gradient(135deg, var(--meta-blue), var(--accent));
+        display: inline-grid;
+        place-items: center;
+        box-shadow: 0 16px 28px -22px rgba(99, 102, 241, 0.9);
+      }
+      .label-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 14px;
+        border-radius: 999px;
+        border: 1px solid rgba(129, 140, 248, 0.3);
+        background: rgba(99, 102, 241, 0.12);
+        color: var(--text-soft);
+        font-size: 0.85rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 0;
+        font-size: clamp(2.2rem, 5vw, 2.8rem);
+        line-height: 1.2;
+      }
+      .subtitle {
+        margin: 0;
+        color: var(--text-soft);
+        max-width: 640px;
+        font-size: 1.05rem;
+      }
+      .meta-links {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        font-size: 0.95rem;
+        color: var(--text-muted);
+      }
+      .panel {
+        background: var(--bg-card);
+        border-radius: 22px;
+        border: 1px solid var(--stroke);
+        padding: 28px;
+        margin-bottom: 24px;
+      }
+      h2 {
+        margin: 0 0 12px;
+        font-size: 1.6rem;
+      }
+      h3 {
+        margin: 0 0 8px;
+        font-size: 1.25rem;
+      }
+      p {
+        margin: 0 0 14px;
+        color: var(--text-soft);
+      }
+      ul {
+        margin: 0 0 14px 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 10px;
+      }
+      ul li {
+        padding-left: 18px;
+        position: relative;
+        color: var(--text-soft);
+      }
+      ul li::before {
+        content: "\\2022";
+        position: absolute;
+        left: 0;
+        top: 0;
+        font-size: 0.6rem;
+        color: var(--accent-strong);
+        transform: translateY(10px);
+      }
+      .grid {
+        display: grid;
+        gap: 18px;
+      }
+      @media (min-width: 720px) {
+        .grid-2 {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: 12px;
+        font-size: 0.85rem;
+        background: rgba(129, 140, 248, 0.15);
+        border: 1px solid rgba(129, 140, 248, 0.28);
+        color: var(--text-soft);
+        margin-bottom: 12px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 12px 0 18px;
+        font-size: 0.95rem;
+        background: rgba(11, 16, 36, 0.6);
+        border: 1px solid rgba(129, 140, 248, 0.18);
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      th,
+      td {
+        padding: 14px 16px;
+        text-align: left;
+        border-bottom: 1px solid rgba(129, 140, 248, 0.16);
+      }
+      th {
+        background: rgba(99, 102, 241, 0.14);
+        color: var(--text);
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+      tr:last-child td {
+        border-bottom: 0;
+      }
+      .callout {
+        padding: 18px;
+        border-radius: 16px;
+        background: rgba(24, 119, 242, 0.16);
+        border: 1px solid rgba(24, 119, 242, 0.32);
+        color: var(--text);
+      }
+      footer {
+        margin-top: 42px;
+        color: var(--text-muted);
+        font-size: 0.95rem;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="topline">
+          <a class="brand" href="/">
+            <span class="logo">AA</span>
+            <span>AutoAds</span>
+          </a>
+          <span class="label-pill">Atualizada em 05 nov 2025</span>
+        </div>
+        <h1>Pol&iacute;tica de Privacidade</h1>
+        <p class="subtitle">
+          Esta pol&iacute;tica descreve como a AutoAds Tecnologia Ltda trata dados pessoais coletados por meio de nossas landing pages,
+          integra&ccedil;&otilde;es e aplica&ccedil;&atilde;o, respeitando a LGPD (Lei n&ordm; 13.709/2018), o Marco Civil da Internet e as exig&ecirc;ncias de
+          transpar&ecirc;ncia para campanhas Meta (Facebook, Instagram e WhatsApp).
+        </p>
+        <div class="meta-links">
+          <a href="https://transparency.fb.com/policies/ad-standards/" target="_blank" rel="noopener noreferrer">
+            Refer&ecirc;ncia: Meta Advertising Standards
+          </a>
+          <a href="/terms.html">Termos de Uso</a>
+          <a href="mailto:privacidade@autoads.com.br">Contato do DPO</a>
+        </div>
+      </header>
+
+      <section class="panel">
+        <div class="badge">1. Quem somos</div>
+        <p>
+          Controlador: AutoAds Tecnologia Ltda (CNPJ 00.000.000/0001-00). Endere&ccedil;o: Rua Exemplo, 123, Belo Horizonte - MG.
+          Canal oficial do Encarregado (DPO): <a href="mailto:privacidade@autoads.com.br">privacidade@autoads.com.br</a>.
+        </p>
+        <p>
+          Base legal principal para coleta via formul&aacute;rios Meta Lead Ads: consentimento do titular. Em fluxos de onboarding e suporte,
+          tamb&eacute;m utilizamos execu&ccedil;&atilde;o de contrato e interesse leg&iacute;timo, sempre respeitando direitos fundamentais.
+        </p>
+      </section>
+
+      <section class="panel">
+        <div class="badge">2. Dados coletados</div>
+        <div class="grid grid-2">
+          <div>
+            <h3>Dados fornecidos pelo titular</h3>
+            <ul>
+              <li>Identifica&ccedil;&atilde;o e contato: nome, e-mail, telefone, empresa, cargo, segmento.</li>
+              <li>Prefer&ecirc;ncias de campanha, or&ccedil;amento estimado, objetivos (Leads, Vendas, Conversas).</li>
+              <li>Informa&ccedil;&otilde;es de integra&ccedil;&otilde;es (ID de conta Meta, p&aacute;ginas, n&uacute;mero WhatsApp Business).</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Dados observados/derivados</h3>
+            <ul>
+              <li>Logs de acesso, endere&ccedil;o IP, user agent e carimbos de data/hora.</li>
+              <li>Eventos de produto (cria&ccedil;&atilde;o de campanhas, execu&ccedil;&atilde;o de webhooks, atualiza&ccedil;&otilde;es de status).</li>
+              <li>M&eacute;tricas agregadas de navega&ccedil;&atilde;o (sem rastreamento individualizado).</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="badge">3. Finalidades e bases legais</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Finalidade</th>
+              <th>Base legal</th>
+              <th>Exemplo pr&aacute;tico</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Responder solicita&ccedil;&otilde;es de demonstra&ccedil;&atilde;o e onboarding.</td>
+              <td>Execu&ccedil;&atilde;o de contrato (art. 7&ordm;, V).</td>
+              <td>Contato comercial ap&oacute;s preenchimento de landing page.</td>
+            </tr>
+            <tr>
+              <td>Enviar comunicados sobre produtos e eventos.</td>
+              <td>Consentimento (art. 7&ordm;, I) com opt-out a qualquer momento.</td>
+              <td>E-mails com roadmap e convites para webinars Meta.</td>
+            </tr>
+            <tr>
+              <td>Monitorar seguran&ccedil;a, prevenir fraudes e cumprir auditorias Meta.</td>
+              <td>Interesse leg&iacute;timo (art. 7&ordm;, IX) e cumprimento legal.</td>
+              <td>Registro de acessos, logs de execu&ccedil;&otilde;es de webhook, trilha de auditoria.</td>
+            </tr>
+            <tr>
+              <td>Executar integra&ccedil;&otilde;es com Meta Graph API e n8n.</td>
+              <td>Execu&ccedil;&atilde;o de contrato e consentimento.</td>
+              <td>Enviar payloads com ID de campanha para processamento externo.</td>
+            </tr>
+          </tbody>
+        </table>
+        <p>
+          Caso utilizemos novos prop&oacute;sitos, notificaremos previamente os titulares e coletaremos novo consentimento quando exigido.
+        </p>
+      </section>
+
+      <section class="panel">
+        <div class="badge">4. Compartilhamento e operadores</div>
+        <p>
+          Compartilhamos dados apenas com parceiros necess&aacute;rios para entregar o servi&ccedil;o:
+        </p>
+        <ul>
+          <li>Meta Platforms, Inc. (contas de an&uacute;ncio, p&aacute;ginas, integra&ccedil;&otilde;es WhatsApp Business).</li>
+          <li>Google LLC (sincroniza&ccedil;&atilde;o de pastas Google Drive quando autorizada).</li>
+          <li>Provedores de infraestrutura, hospedagem e monitoramento (por exemplo, provedores cloud, n8n, provedores de e-mail).</li>
+          <li>Outros operadores eventuais sempre mediante contrato com clausulas de confidencialidade e prote&ccedil;&atilde;o de dados.</li>
+        </ul>
+        <p>
+          N&atilde;o comercializamos dados pessoais. Em caso de transfer&ecirc;ncia internacional, aplicamos medidas de conformidade e
+          salvaguardas contratuais.
+        </p>
+      </section>
+
+      <section class="panel">
+        <div class="badge">5. Reten&ccedil;&atilde;o e descarte</div>
+        <p>
+          Mantemos dados enquanto: (i) a rela&ccedil;&atilde;o contratual estiver vigente; (ii) houver obriga&ccedil;&otilde;es legais/regulat&oacute;rias; ou (iii) at&eacute;
+          revoga&ccedil;&atilde;o do consentimento em casos aplic&aacute;veis. Logs t&eacute;cnicos s&atilde;o armazenados por at&eacute; 6 meses, salvo necessidade de prazos
+          maiores para auditorias ou defesa de direitos.
+        </p>
+        <p>
+          O descarte &eacute; realizado com t&eacute;cnicas seguras (remo&ccedil;&atilde;o criptogr&aacute;fica/anonimiza&ccedil;&atilde;o). Backups seguem cronograma de expurgo controlado.
+        </p>
+      </section>
+
+      <section class="panel">
+        <div class="badge">6. Direitos do titular</div>
+        <div class="grid grid-2">
+          <div>
+            <h3>Voc&ecirc; pode solicitar</h3>
+            <ul>
+              <li>Confirma&ccedil;&atilde;o e acesso a dados tratados.</li>
+              <li>Corre&ccedil;&atilde;o, atualiza&ccedil;&atilde;o ou anonimiza&ccedil;&atilde;o.</li>
+              <li>Portabilidade e elimina&ccedil;&atilde;o (quando aplic&aacute;vel).</li>
+              <li>Informa&ccedil;&otilde;es sobre compartilhamentos realizados.</li>
+              <li>Revoga&ccedil;&atilde;o de consentimento e revis&atilde;o de decis&otilde;es automatizadas.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Como exercer</h3>
+            <p>
+              Envie solicita&ccedil;&otilde;es para <a href="mailto:privacidade@autoads.com.br">privacidade@autoads.com.br</a>.
+              Prazo padr&atilde;o de resposta: at&eacute; 15 dias corridos. Para pedidos complexos, informaremos eventual extens&atilde;o.
+            </p>
+            <p>
+              No caso de lead ads, o titular tamb&eacute;m pode revisar consentimentos diretamente nos Pain&eacute;is de Privacidade Meta conforme
+              orienta&ccedil;&atilde;o do pr&oacute;prio Meta.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="badge">7. Cookies e tecnologias similares</div>
+        <p>
+          Utilizamos cookies essenciais para autentica&ccedil;&atilde;o e manuten&ccedil;&atilde;o de sess&atilde;o. Opcionalmente, podemos usar m&eacute;tricas agregadas para
+          usabilidade do produto (por exemplo, Google Analytics com IP anonimizado). Voc&ecirc; pode gerenciar prefer&ecirc;ncias diretamente no
+          navegador.
+        </p>
+        <p class="callout">
+          O Meta exige que landing pages de lead ads indiquem claramente se existe coleta de cookies ou pixels. Sempre que utilizarmos
+          pixels Meta, exibiremos aviso espec&iacute;fico e ofereceremos op&ccedil;&atilde;o de consentimento.
+        </p>
+      </section>
+
+      <section class="panel">
+        <div class="badge">8. Seguran&ccedil;a da informa&ccedil;&atilde;o</div>
+        <ul>
+          <li>Criptografia em repouso e em tr&acirc;nsito (TLS 1.2+).</li>
+          <li>Controle de acesso baseado em fun&ccedil;&otilde;es (system admin, tenant admin, membro).</li>
+          <li>Auditorias peri&oacute;dicas de logs, testes de integra&ccedil;&otilde;es e monitoramento de incidentes.</li>
+          <li>Procedimentos de resposta a incidentes com notifica&ccedil;&atilde;o &agrave; Autoridade Nacional de Prote&ccedil;&atilde;o de Dados (ANPD), quando aplic&aacute;vel.</li>
+        </ul>
+      </section>
+
+      <section class="panel">
+        <div class="badge">9. Atualiza&ccedil;&otilde;es</div>
+        <p>
+          Esta pol&iacute;tica pode ser ajustada para refletir novas funcionalidades ou exig&ecirc;ncias legais. Manteremos o hist&oacute;rico de vers&otilde;es e
+          indicaremos a data da &uacute;ltima revis&atilde;o no topo desta p&aacute;gina. Mudan&ccedil;as relevantes ser&atilde;o comunicadas por e-mail ou notifica&ccedil;&otilde;es no produto.
+        </p>
+      </section>
+
+      <footer>
+        &copy; <span id="year">2025</span> AutoAds Tecnologia Ltda &middot;
+        <a href="mailto:privacidade@autoads.com.br">privacidade@autoads.com.br</a> &middot;
+        <a href="/terms.html">Termos de Uso</a>
+      </footer>
+    </div>
+
+    <script>
+      (function () {
+        try {
+          var yearEl = document.getElementById("year");
+          if (yearEl) {
+            yearEl.textContent = new Date().getFullYear().toString();
+          }
+        } catch (error) {
+          console.error("Falha ao atualizar ano:", error);
+        }
+      })();
+    </script>
+  </body>
+</html>

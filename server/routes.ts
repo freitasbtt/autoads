@@ -33,6 +33,16 @@ import {
 } from "@shared/schema";
 import crypto from "crypto";
 import { differenceInCalendarDays, format, isValid, parseISO, subDays } from "date-fns";
+// ESM: recria __filename / __dirname
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import express from "express";
+import { existsSync } from "node:fs";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+
 
 function setNoCacheHeaders(res: Response): void {
   res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
@@ -286,6 +296,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.use(passport.initialize());
   app.use(passport.session());
+
+  const publicDirCandidates = [
+    resolve(__dirname, "../client/public"),
+    resolve(__dirname, "../../client/public"),
+    resolve(__dirname, "../public"),
+    resolve(__dirname, "../../public"),
+    resolve(process.cwd(), "client/public"),
+    resolve(process.cwd(), "public"),
+  ];
+
+  const publicDir =
+    publicDirCandidates.find((candidate) => existsSync(candidate)) ??
+    publicDirCandidates[0];
+
+  app.use(
+    express.static(publicDir, {
+      index: false,
+      setHeaders(res: Response) {
+        setNoCacheHeaders(res);
+      },
+    })
+  );
+
+  const publicPages: Array<{ paths: string[]; file: string }> = [
+    { paths: ["/landing", "/landing.html"], file: "landing.html" },
+    { paths: ["/privacy", "/privacy.html"], file: "privacy.html" },
+    { paths: ["/terms", "/terms.html"], file: "terms.html" },
+  ];
+
+  for (const { paths, file } of publicPages) {
+    app.get(paths, (_req, res, next) => {
+      setNoCacheHeaders(res);
+      const filePath = resolve(publicDir, file);
+      if (process.env.DEBUG_STATIC === "true") {
+        console.info(`[static-public] Request for ${file} (${filePath})`);
+      }
+      if (!existsSync(filePath)) {
+        if (process.env.DEBUG_STATIC === "true") {
+          console.warn(`[static-public] File not found: ${filePath}`);
+        }
+        return next();
+      }
+      res.type("html");
+      return res.sendFile(filePath, (err) => {
+        if (err) {
+          return next(err);
+        }
+        if (process.env.DEBUG_STATIC === "true") {
+          console.info(`[static-public] Served ${file} from ${filePath}`);
+        }
+      });
+    });
+  }
+
+
 
   // ===== Authentication Routes =====
 
@@ -595,7 +660,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.user as User;
       const id = parseInt(req.params.id);
-      
+
       // Verify resource belongs to user's tenant
       const existing = await storage.getResource(id);
       if (!existing || existing.tenantId !== user.tenantId) {
@@ -616,7 +681,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.user as User;
       const id = parseInt(req.params.id);
-      
+
       // Verify resource belongs to user's tenant
       const existing = await storage.getResource(id);
       if (!existing || existing.tenantId !== user.tenantId) {
@@ -692,17 +757,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const body: any = await response.json();
       const results = Array.isArray(body?.data)
         ? body.data
-            .map((item: any) => ({
-              id: String(item?.key ?? item?.id ?? ""),
-              name: typeof item?.name === "string" ? item.name : "",
-              region:
-                typeof item?.region === "string"
-                  ? item.region
-                  : typeof item?.country_name === "string"
+          .map((item: any) => ({
+            id: String(item?.key ?? item?.id ?? ""),
+            name: typeof item?.name === "string" ? item.name : "",
+            region:
+              typeof item?.region === "string"
+                ? item.region
+                : typeof item?.country_name === "string"
                   ? item.country_name
                   : undefined,
-            }))
-            .filter((item: { id: string; name: string }) => item.id.length > 0 && item.name.length > 0)
+          }))
+          .filter((item: { id: string; name: string }) => item.id.length > 0 && item.name.length > 0)
         : [];
 
       setNoCacheHeaders(res);
@@ -754,11 +819,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const body: any = await response.json();
       const results = Array.isArray(body?.data)
         ? body.data
-            .map((item: any) => ({
-              id: String(item?.id ?? ""),
-              name: typeof item?.name === "string" ? item.name : "",
-            }))
-            .filter((item: { id: string; name: string }) => item.id.length > 0 && item.name.length > 0)
+          .map((item: any) => ({
+            id: String(item?.id ?? ""),
+            name: typeof item?.name === "string" ? item.name : "",
+          }))
+          .filter((item: { id: string; name: string }) => item.id.length > 0 && item.name.length > 0)
         : [];
 
       res.json(results);
@@ -773,7 +838,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.user as User;
       const id = parseInt(req.params.id);
       const audience = await storage.getAudience(id);
-      
+
       if (!audience || audience.tenantId !== user.tenantId) {
         return res.status(404).json({ message: "Audience not found" });
       }
@@ -806,7 +871,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.user as User;
       const id = parseInt(req.params.id);
-      
+
       // Verify audience belongs to user's tenant
       const existing = await storage.getAudience(id);
       if (!existing || existing.tenantId !== user.tenantId) {
@@ -827,7 +892,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.user as User;
       const id = parseInt(req.params.id);
-      
+
       // Verify audience belongs to user's tenant
       const existing = await storage.getAudience(id);
       if (!existing || existing.tenantId !== user.tenantId) {
@@ -860,7 +925,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = req.user as User;
       const id = parseInt(req.params.id);
       const campaign = await storage.getCampaign(id);
-      
+
       if (!campaign || campaign.tenantId !== user.tenantId) {
         return res.status(404).json({ message: "Campaign not found" });
       }
@@ -876,7 +941,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.user as User;
       const data = insertCampaignSchema.parse(req.body);
-      
+
       // Always create campaigns as draft - webhook will be sent manually via send-webhook endpoint
       const campaignValues: InsertCampaign & { tenantId: number } = {
         ...data,
@@ -896,7 +961,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.user as User;
       const id = parseInt(req.params.id);
-      
+
       // Verify campaign belongs to user's tenant
       const existing = await storage.getCampaign(id);
       if (!existing || existing.tenantId !== user.tenantId) {
@@ -917,7 +982,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.user as User;
       const id = parseInt(req.params.id);
-      
+
       // Verify campaign belongs to user's tenant
       const existing = await storage.getCampaign(id);
       if (!existing || existing.tenantId !== user.tenantId) {
@@ -936,7 +1001,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.user as User;
       const id = parseInt(req.params.id);
-      
+
       // Verify campaign belongs to user's tenant
       const campaign = await storage.getCampaign(id);
       if (!campaign || campaign.tenantId !== user.tenantId) {
@@ -1068,17 +1133,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const geoLocations =
             cityTargets.length > 0
               ? {
-                  cities: cityTargets,
-                }
+                cities: cityTargets,
+              }
               : undefined;
 
           const flexibleSpec =
             interestTargets.length > 0
               ? [
-                  {
-                    interests: interestTargets,
-                  },
-                ]
+                {
+                  interests: interestTargets,
+                },
+              ]
               : undefined;
 
           const optimizationGoalRaw = adSet["optimizationGoal"];
@@ -1124,53 +1189,53 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const dataPayload = isAddCreativesFlow
         ? {
-            action: "add_creatives" as const,
-            tenant_id: user.tenantId,
-            client: clientName,
-            ad_account_id: adAccountValue,
-            external_id: String(campaign.id),
-            campaign_name: extractString(campaign.name) || titleText,
-            objective: mappedObjective,
-            page_id: pageIdValue,
-            instagram_user_id: instagramIdValue,
-            lead_form_id: leadFormIdValue,
-            leadgen_form_id: leadFormIdValue,
-            drive_folder_id: driveFolderId || "",
-            message_text: messageText,
-            title_text: titleText,
-            whatsapp_number_id: whatsappIdValue,
-            website_url: campaignWebsite,
-            page_name: pageResource?.name ?? "",
-            instagram_name: instagramResource?.name ?? "",
-            whatsapp_name: whatsappResource?.name ?? "",
-            leadgen_form_name: leadFormNameValue,
-            lead_form_name: leadFormNameValue,
-            drive_folder_name: "",
-          }
+          action: "add_creatives" as const,
+          tenant_id: user.tenantId,
+          client: clientName,
+          ad_account_id: adAccountValue,
+          external_id: String(campaign.id),
+          campaign_name: extractString(campaign.name) || titleText,
+          objective: mappedObjective,
+          page_id: pageIdValue,
+          instagram_user_id: instagramIdValue,
+          lead_form_id: leadFormIdValue,
+          leadgen_form_id: leadFormIdValue,
+          drive_folder_id: driveFolderId || "",
+          message_text: messageText,
+          title_text: titleText,
+          whatsapp_number_id: whatsappIdValue,
+          website_url: campaignWebsite,
+          page_name: pageResource?.name ?? "",
+          instagram_name: instagramResource?.name ?? "",
+          whatsapp_name: whatsappResource?.name ?? "",
+          leadgen_form_name: leadFormNameValue,
+          lead_form_name: leadFormNameValue,
+          drive_folder_name: "",
+        }
         : {
-            action: "create_campaign" as const,
-            tenant_id: user.tenantId,
-            client: clientName,
-            ad_account_id: adAccountValue,
-            external_id: String(campaign.id),
-            campaign: {
-              name: campaign.name,
-              objective: mappedObjective,
-              buying_type: "AUCTION",
-              status: campaign.status ? campaign.status.toUpperCase() : "PAUSED",
-              special_ad_categories: ["NONE"],
-            },
-            adsets: adSetsPayload,
-            page_id: pageIdValue,
-            instagram_user_id: instagramIdValue,
-            lead_form_id: leadFormIdValue,
-            leadgen_form_id: leadFormIdValue,
-            drive_folder_id: driveFolderId || "",
-            message_text: messageText,
-            title_text: titleText,
-            whatsapp_number_id: whatsappIdValue,
-            website_url: campaignWebsite,
-          };
+          action: "create_campaign" as const,
+          tenant_id: user.tenantId,
+          client: clientName,
+          ad_account_id: adAccountValue,
+          external_id: String(campaign.id),
+          campaign: {
+            name: campaign.name,
+            objective: mappedObjective,
+            buying_type: "AUCTION",
+            status: campaign.status ? campaign.status.toUpperCase() : "PAUSED",
+            special_ad_categories: ["NONE"],
+          },
+          adsets: adSetsPayload,
+          page_id: pageIdValue,
+          instagram_user_id: instagramIdValue,
+          lead_form_id: leadFormIdValue,
+          leadgen_form_id: leadFormIdValue,
+          drive_folder_id: driveFolderId || "",
+          message_text: messageText,
+          title_text: titleText,
+          whatsapp_number_id: whatsappIdValue,
+          website_url: campaignWebsite,
+        };
 
       const webhookPayload = {
         body: {
@@ -1194,7 +1259,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!webhookResponse.ok) {
         const errorText = await webhookResponse.text();
         console.error("Failed to send webhook to n8n:", errorText);
-        
+
         // Parse error to provide better user feedback
         let userMessage = "Erro ao enviar webhook para n8n";
         try {
@@ -1205,7 +1270,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch (e) {
           // Keep default message if parsing fails
         }
-        
+
         return res.status(500).json({ message: userMessage });
       }
 
@@ -1225,7 +1290,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/webhooks/n8n", isAuthenticated, async (req, res, next) => {
     try {
       const user = req.user as User;
-      
+
       // Get webhook URL
       const settings = await storage.getAppSettings();
       if (!settings?.n8nWebhookUrl) {
@@ -1285,7 +1350,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           ? callback_url
           : undefined) ||
         (typeof incomingMeta["callback_url"] === "string" &&
-        (incomingMeta["callback_url"] as string).length > 0
+          (incomingMeta["callback_url"] as string).length > 0
           ? (incomingMeta["callback_url"] as string)
           : inferredCallbackUrl);
 
@@ -1316,8 +1381,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         typeof leadgen_form_name === "string" && leadgen_form_name.trim().length > 0
           ? leadgen_form_name
           : typeof lead_form_name === "string"
-              ? lead_form_name
-              : "";
+            ? lead_form_name
+            : "";
 
       const clientName =
         (typeof client === "string" && client.trim().length > 0
@@ -1343,19 +1408,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       };
 
       const webhookPayload = {
-          body: {
-            data: {
-              action: "add_creatives" as const,
-              tenant_id: user.tenantId,
-              client: clientName,
+        body: {
+          data: {
+            action: "add_creatives" as const,
+            tenant_id: user.tenantId,
+            client: clientName,
             ad_account_id: sanitizedAdAccountId,
             external_id: outgoingExternalId,
             campaign_name:
               (typeof campaign_name === "string" && campaign_name.length > 0
                 ? campaign_name
                 : undefined) || (typeof title_text === "string" && title_text.length > 0
-                ? title_text
-                : title ?? ""),
+                  ? title_text
+                  : title ?? ""),
             objective: objectiveOutcome,
             page_id: page_id !== undefined && page_id !== null ? String(page_id) : "",
             instagram_user_id:
@@ -1408,7 +1473,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!webhookResponse.ok) {
         const errorText = await webhookResponse.text();
         console.error("Failed to send webhook to n8n:", errorText);
-        
+
         // Parse error to provide better user feedback
         let userMessage = "Erro ao enviar webhook para n8n";
         try {
@@ -1419,7 +1484,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch (e) {
           // Keep default message if parsing fails
         }
-        
+
         return res.status(500).json({ message: userMessage });
       }
 
@@ -1447,8 +1512,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Validate status values
       const validStatuses = ["active", "error", "paused", "completed"];
       if (!validStatuses.includes(status.toLowerCase())) {
-        return res.status(400).json({ 
-          message: `Invalid status. Must be one of: ${validStatuses.join(", ")}` 
+        return res.status(400).json({
+          message: `Invalid status. Must be one of: ${validStatuses.join(", ")}`
         });
       }
 
@@ -1483,9 +1548,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         status_detail || ""
       );
 
-      res.json({ 
+      res.json({
         message: "Status updated successfully",
-        campaign: updated 
+        campaign: updated
       });
     } catch (err) {
       console.error("[n8n-status] Error updating campaign status:", err);
@@ -1511,7 +1576,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.user as User;
       const integration = await storage.getIntegrationByProvider(user.tenantId, req.params.provider);
-      
+
       if (!integration || integration.tenantId !== user.tenantId) {
         return res.status(404).json({ message: "Integration not found" });
       }
@@ -1526,13 +1591,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/integrations", isAuthenticated, async (req, res, next) => {
     try {
       const user = req.user as User;
-      
+
       // Prevent tenantId override in create/update
       const bodyData = insertIntegrationSchema.parse(req.body);
-      
+
       // Check if integration already exists
       const existing = await storage.getIntegrationByProvider(user.tenantId, bodyData.provider);
-      
+
       if (existing) {
         // Update existing
         const updated = await storage.updateIntegration(existing.id, bodyData);
@@ -1557,7 +1622,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = req.user as User;
       const id = parseInt(req.params.id);
-      
+
       // Verify integration belongs to user's tenant
       const existing = await storage.getIntegration(id);
       if (!existing || existing.tenantId !== user.tenantId) {
@@ -1600,7 +1665,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/admin/settings", isSystemAdmin, async (req, res, next) => {
     try {
       const settings = await storage.updateAppSettings(req.body);
-      
+
       // Never expose secrets to frontend
       if (settings) {
         res.json({
@@ -1906,11 +1971,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const user = req.user as User;
-      
+
       // Save user info in session for callback
       req.session.oauthUserId = user.id;
       req.session.oauthTenantId = user.tenantId;
-      
+
       await new Promise<void>((resolve, reject) => {
         req.session.save((err) => {
           if (err) reject(err);
@@ -1921,7 +1986,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const baseUrl = getPublicAppUrl(req);
       const redirectUri = `${baseUrl}/auth/meta/callback`;
       const scope = "ads_read,pages_read_engagement,instagram_basic,whatsapp_business_management,leads_retrieval";
-      
+
       const authUrl = `https://www.facebook.com/v18.0/dialog/oauth?` +
         `client_id=${settings.metaAppId}&` +
         `redirect_uri=${encodeURIComponent(redirectUri)}&` +
@@ -1939,7 +2004,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/auth/meta/callback", async (req, res) => {
     try {
       const { code, state } = req.query;
-      
+
       // Get user info from session
       const userId = req.session.oauthUserId;
       const tenantId = req.session.oauthTenantId;
@@ -1979,7 +2044,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         `access_token=${accessToken}&` +
         `appsecret_proof=${appSecretProof}&` +
         `fields=id,name`;
-        
+
       const accountsResponse = await fetch(accountsUrl);
       const accountsData: any = await accountsResponse.json();
 
@@ -2059,11 +2124,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const user = req.user as User;
-      
+
       // Save user info in session for callback
       req.session.oauthUserId = user.id;
       req.session.oauthTenantId = user.tenantId;
-      
+
       await new Promise<void>((resolve, reject) => {
         req.session.save((err) => {
           if (err) reject(err);
@@ -2074,7 +2139,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const baseUrl = getPublicAppUrl(req);
       const redirectUri = `${baseUrl}/auth/google/callback`;
       const scope = "https://www.googleapis.com/auth/drive.readonly";
-      
+
       const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
         `client_id=${settings.googleClientId}&` +
         `redirect_uri=${encodeURIComponent(redirectUri)}&` +
@@ -2094,7 +2159,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/auth/google/callback", async (req, res) => {
     try {
       const { code, state } = req.query;
-      
+
       // Get user info from session
       const userId = req.session.oauthUserId;
       const tenantId = req.session.oauthTenantId;
