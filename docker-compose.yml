@@ -6,9 +6,9 @@ services:
     image: postgres:16-alpine
     container_name: meta-ads-postgres
     environment:
-      POSTGRES_DB: metaads
-      POSTGRES_USER: metaads
-      POSTGRES_PASSWORD: metaads_password
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5433:5432"
     volumes:
@@ -33,8 +33,10 @@ services:
     environment:
       NODE_ENV: production
       PORT: 5000
-      DATABASE_URL: postgresql://metaads:metaads_password@postgres:5432/metaads
+      DATABASE_URL: ${DATABASE_URL}
       SESSION_SECRET: ${SESSION_SECRET}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+      META_TOKEN_ENC_KEY: ${META_TOKEN_ENC_KEY:-}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL}
       FORCE_HTTPS: ${FORCE_HTTPS:-false}
     depends_on:
