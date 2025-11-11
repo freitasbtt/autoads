@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Pol&iacute;tica de Privacidade | AutoAds</title>
+    <title>Pol&#237;tica de Privacidade | Orygo</title>
     <meta
       name="description"
-      content="Pol&iacute;tica de Privacidade da AutoAds. Saiba como tratamos dados pessoais em conformidade com LGPD e exig&ecirc;ncias Meta."
+      content="Pol&#237;tica de Privacidade da Orygo. Saiba como tratamos dados pessoais em nossos servi&#231;os de dados, IA e automa&#231;&#227;o."
     />
     <style>
       :root {
@@ -135,6 +135,10 @@
         padding: 28px;
         margin-bottom: 24px;
       }
+      .summary-panel {
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(7, 11, 32, 0.95));
+        border: 1px solid rgba(129, 140, 248, 0.4);
+      }
       h2 {
         margin: 0 0 12px;
         font-size: 1.6rem;
@@ -160,13 +164,27 @@
         color: var(--text-soft);
       }
       ul li::before {
-        content: "\\2022";
+        content: "\2022";
         position: absolute;
         left: 0;
         top: 0;
         font-size: 0.6rem;
         color: var(--accent-strong);
         transform: translateY(10px);
+      }
+      .detail-list {
+        margin: 0 0 14px 0;
+        padding: 0;
+        list-style: none;
+      }
+      .detail-list li {
+        padding-left: 0;
+      }
+      .detail-list li::before {
+        display: none;
+      }
+      .detail-list strong {
+        color: var(--text);
       }
       .grid {
         display: grid;
@@ -221,6 +239,13 @@
         border: 1px solid rgba(24, 119, 242, 0.32);
         color: var(--text);
       }
+      ol {
+        margin: 0 0 14px 20px;
+        color: var(--text-soft);
+      }
+      ol li {
+        margin-bottom: 6px;
+      }
       footer {
         margin-top: 42px;
         color: var(--text-muted);
@@ -234,191 +259,253 @@
       <header>
         <div class="topline">
           <a class="brand" href="/">
-            <img src="logo_orygo_vetor.svg"
-              width="166"
-              height="48"
-            />
+            <img src="logo_orygo_vetor.svg" width="166" height="48" alt="Logotipo Orygo" />
           </a>
-          <span class="label-pill">Atualizada em 07 nov 2025</span>
+          <span class="label-pill">Atualizada em 10 nov 2025</span>
         </div>
-        <h1>Pol&iacute;tica de Privacidade</h1>
+        <h1>Pol&#237;tica de Privacidade</h1>
         <p class="subtitle">
-          Esta pol&iacute;tica descreve como a AutoAds Tecnologia Ltda trata dados pessoais coletados por meio de nossas landing pages,
-          integra&ccedil;&otilde;es e aplica&ccedil;&atilde;o, respeitando a LGPD (Lei n&ordm; 13.709/2018), o Marco Civil da Internet e as exig&ecirc;ncias de
-          transpar&ecirc;ncia para campanhas Meta (Facebook, Instagram e WhatsApp).
+          A Orygo presta servi&#231;os de Dados, Intelig&#234;ncia Artificial (IA) e Automa&#231;&#227;o. Esta pol&#237;tica descreve como tratamos dados
+          pessoais em nossos sites, aplica&#231;&#245;es e integra&#231;&#245;es, incluindo plataformas da Meta (Facebook, Instagram e WhatsApp) e
+          produtos Google.
         </p>
         <div class="meta-links">
-          <a href="https://transparency.fb.com/policies/ad-standards/" target="_blank" rel="noopener noreferrer">
-            Refer&ecirc;ncia: Meta Advertising Standards
-          </a>
           <a href="/terms.html">Termos de Uso</a>
-          <a href="mailto:privacidade@autoads.com.br">Contato do DPO</a>
+          <a href="mailto:pedrofre18@gmail.com">Contato do DPO</a>
+          <a href="https://www.gov.br/anpd/pt-br" target="_blank" rel="noopener noreferrer">ANPD</a>
         </div>
       </header>
 
-      <section class="panel">
-        <div class="badge">1. Quem somos</div>
-        <p>
-          Controlador: AutoAds Tecnologia Ltda (CNPJ 00.000.000/0001-00). Endere&ccedil;o: Rua Exemplo, 123, Belo Horizonte - MG.
-          Canal oficial do Encarregado (DPO): <a href="mailto:privacidade@autoads.com.br">privacidade@autoads.com.br</a>.
-        </p>
-        <p>
-          Base legal principal para coleta via formul&aacute;rios Meta Lead Ads: consentimento do titular. Em fluxos de onboarding e suporte,
-          tamb&eacute;m utilizamos execu&ccedil;&atilde;o de contrato e interesse leg&iacute;timo, sempre respeitando direitos fundamentais.
-        </p>
+      <section class="panel summary-panel">
+        <div class="badge">Resumo em linguagem simples</div>
+        <ul>
+          <li>Usamos seus dados para prestar servi&#231;os de dados, IA e automa&#231;&#227;o, medir performance e melhorar nossos produtos.</li>
+          <li>Compartilhamos somente o necess&#225;rio com provedores (hospedagem, Meta, Google etc.) e n&#227;o vendemos seus dados.</li>
+          <li>Voc&#234; pode acessar, corrigir, portar ou excluir seus dados; para integra&#231;&#245;es Meta tamb&#233;m pode revogar permiss&#245;es no Facebook/Instagram.</li>
+        </ul>
+        <p>Encarregado (DPO): <a href="mailto:pedrofre18@gmail.com">pedrofre18@gmail.com</a>.</p>
       </section>
 
       <section class="panel">
-        <div class="badge">2. Dados coletados</div>
+        <div class="badge">1. Quem somos (Controlador)</div>
+        <p>A Orygo atua como controladora dos dados pessoais tratados nos servi&#231;os descritos nesta pol&#237;tica.</p>
+        <ul class="detail-list">
+          <li><strong>Controlador:</strong> Pedro Henrique Bittencourt de Freitas &#8211; Orygo.</li>
+          <li><strong>CNPJ:</strong> 49.044.958/0001-73 (Matriz) &#8211; Porte: ME.</li>
+          <li><strong>Endere&#231;o:</strong> Rua Metaluzina, n&#186; 495, compl. "Casa Casa", Bairro Vi&#250;va, Bar&#227;o de Cocais/MG, CEP 35970-000.</li>
+          <li><strong>E-mail do Encarregado (DPO):</strong> <a href="mailto:pedrofre18@gmail.com">pedrofre18@gmail.com</a>.</li>
+          <li><strong>Telefone:</strong> (31) 7115-5225.</li>
+        </ul>
+      </section>
+
+      <section class="panel">
+        <div class="badge">2. Escopo e a quem se aplica</div>
+        <p>Esta pol&#237;tica se aplica a:</p>
+        <ul>
+          <li>Clientes e usu&#225;rios que utilizam nossos servi&#231;os e integra&#231;&#245;es.</li>
+          <li>Visitantes dos sites, leads captados em formul&#225;rios e contatos de suporte.</li>
+          <li>Usu&#225;rios que conectam contas/plataformas (Meta, Google ou outras) &#224; Orygo.</li>
+        </ul>
+        <p>Ela n&#227;o se aplica a sites ou servi&#231;os de terceiros com pol&#237;ticas pr&#243;prias.</p>
+      </section>
+
+      <section class="panel">
+        <div class="badge">3. Quais dados coletamos</div>
         <div class="grid grid-2">
           <div>
-            <h3>Dados fornecidos pelo titular</h3>
+            <h3>3.1 Fornecidos diretamente por voc&#234;</h3>
             <ul>
-              <li>Identifica&ccedil;&atilde;o e contato: nome, e-mail, telefone, empresa, cargo, segmento.</li>
-              <li>Prefer&ecirc;ncias de campanha, or&ccedil;amento estimado, objetivos (Leads, Vendas, Conversas).</li>
-              <li>Informa&ccedil;&otilde;es de integra&ccedil;&otilde;es (ID de conta Meta, p&aacute;ginas, n&uacute;mero WhatsApp Business).</li>
+              <li>Nome, e-mail, telefone, empresa/CNPJ e cargo.</li>
+              <li>Credenciais limitadas para acesso ao painel (quando aplic&#225;vel).</li>
+              <li>Conte&#250;dos de mensagens e anexos enviados ao suporte.</li>
             </ul>
           </div>
           <div>
-            <h3>Dados observados/derivados</h3>
+            <h3>3.2 Coletados automaticamente</h3>
             <ul>
-              <li>Logs de acesso, endere&ccedil;o IP, user agent e carimbos de data/hora.</li>
-              <li>Eventos de produto (cria&ccedil;&atilde;o de campanhas, execu&ccedil;&atilde;o de webhooks, atualiza&ccedil;&otilde;es de status).</li>
-              <li>M&eacute;tricas agregadas de navega&ccedil;&atilde;o (sem rastreamento individualizado).</li>
+              <li>IP, dispositivo, sistema operacional, navegador, p&#225;ginas acessadas, datas/horas e cookies.</li>
+              <li>M&#233;tricas de navega&#231;&#227;o e performance (analytics, logs e telemetria).</li>
             </ul>
           </div>
+        </div>
+        <div>
+          <h3>3.3 Provenientes de integra&#231;&#245;es</h3>
+          <ul>
+            <li>Meta (Facebook/Instagram/WhatsApp): IDs de usu&#225;rios (app-scoped), p&#225;ginas ou ativos conectados, permiss&#245;es concedidas, IDs de contas de an&#250;ncios/Pixels, eventos, m&#233;tricas, tokens e expira&#231;&#245;es.</li>
+            <li>Google (Ads/Analytics/YouTube/Search Console): IDs de propriedades, m&#233;tricas, eventos e escopos autorizados.</li>
+            <li>CRMs, planilhas ou servi&#231;os em nuvem: dados comerciais necess&#225;rios para executar as automa&#231;&#245;es contratadas.</li>
+          </ul>
+          <p class="callout">Dados sens&#237;veis: a Orygo n&#227;o solicita nem trata dados sens&#237;veis (ex.: sa&#250;de, biometria) no curso regular dos servi&#231;os. Caso seja necess&#225;rio algum tratamento, solicitaremos consentimento espec&#237;fico.</p>
         </div>
       </section>
 
       <section class="panel">
-        <div class="badge">3. Finalidades e bases legais</div>
+        <div class="badge">4. Finalidades e bases legais (LGPD)</div>
         <table>
           <thead>
             <tr>
-              <th>Finalidade</th>
+              <th>Uso dos dados</th>
               <th>Base legal</th>
-              <th>Exemplo pr&aacute;tico</th>
+              <th>Exemplos</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td>Responder solicita&ccedil;&otilde;es de demonstra&ccedil;&atilde;o e onboarding.</td>
-              <td>Execu&ccedil;&atilde;o de contrato (art. 7&ordm;, V).</td>
-              <td>Contato comercial ap&oacute;s preenchimento de landing page.</td>
+              <td>Executar os servi&#231;os contratados (configurar integra&#231;&#245;es, ativar/otimizar campanhas, gerar relat&#243;rios, prestar suporte).</td>
+              <td>Execu&#231;&#227;o de contrato.</td>
+              <td>Onboarding t&#233;cnico, ajustes de automa&#231;&#245;es e atendimento ao cliente.</td>
             </tr>
             <tr>
-              <td>Enviar comunicados sobre produtos e eventos.</td>
-              <td>Consentimento (art. 7&ordm;, I) com opt-out a qualquer momento.</td>
-              <td>E-mails com roadmap e convites para webinars Meta.</td>
+              <td>Atender solicita&#231;&#245;es e comunica&#231;&#245;es operacionais.</td>
+              <td>Leg&#237;timo interesse.</td>
+              <td>Responder tickets, alertas e comunica&#231;&#245;es de manuten&#231;&#227;o.</td>
             </tr>
             <tr>
-              <td>Monitorar seguran&ccedil;a, prevenir fraudes e cumprir auditorias Meta.</td>
-              <td>Interesse leg&iacute;timo (art. 7&ordm;, IX) e cumprimento legal.</td>
-              <td>Registro de acessos, logs de execu&ccedil;&otilde;es de webhook, trilha de auditoria.</td>
+              <td>Mensurar performance e melhorar produtos (analytics, testes A/B, logs e telemetria).</td>
+              <td>Leg&#237;timo interesse.</td>
+              <td>Monitorar uso de funcionalidades, estabilidade e experi&#234;ncia.</td>
             </tr>
             <tr>
-              <td>Executar integra&ccedil;&otilde;es com Meta Graph API e n8n.</td>
-              <td>Execu&ccedil;&atilde;o de contrato e consentimento.</td>
-              <td>Enviar payloads com ID de campanha para processamento externo.</td>
+              <td>Marketing e relacionamento (envio de conte&#250;dos, convites e novidades).</td>
+              <td>Consentimento (revog&#225;vel).</td>
+              <td>Comunica&#231;&#245;es opt-in via e-mail ou canais selecionados.</td>
+            </tr>
+            <tr>
+              <td>Cumprir obriga&#231;&#245;es legais/regulat&#243;rias (fiscais, auditorias, antifraude).</td>
+              <td>Obriga&#231;&#227;o legal.</td>
+              <td>Reten&#231;&#227;o de documentos fiscais, preven&#231;&#227;o a uso indevido.</td>
+            </tr>
+            <tr>
+              <td>IA e automa&#231;&#227;o: desenvolver e operar modelos/rotinas com dados minimizados, preferencialmente pseudonimizados/anonimizados.</td>
+              <td>Execu&#231;&#227;o de contrato, leg&#237;timo interesse ou consentimento, conforme o caso.</td>
+              <td>Automatizar fluxos acordados sem usar dados de clientes para treinar modelos p&#250;blicos sem base legal adequada.</td>
             </tr>
           </tbody>
         </table>
-        <p>
-          Caso utilizemos novos prop&oacute;sitos, notificaremos previamente os titulares e coletaremos novo consentimento quando exigido.
-        </p>
       </section>
 
       <section class="panel">
-        <div class="badge">4. Compartilhamento e operadores</div>
-        <p>
-          Compartilhamos dados apenas com parceiros necess&aacute;rios para entregar o servi&ccedil;o:
-        </p>
+        <div class="badge">5. Tomada de decis&#227;o automatizada e perfilamento</div>
+        <p>Podemos aplicar regras, classifica&#231;&#245;es ou algoritmos para organizar leads, sugerir segmenta&#231;&#245;es ou disparar a&#231;&#245;es automatizadas (por exemplo, cria&#231;&#227;o de campanhas).</p>
+        <p>Voc&#234; pode solicitar revis&#227;o humana de decis&#245;es que afetem seus interesses ou contestar tratamentos automatizados.</p>
+      </section>
+
+      <section class="panel">
+        <div class="badge">6. Cookies e tecnologias semelhantes</div>
+        <p>Usamos:</p>
         <ul>
-          <li>Meta Platforms, Inc. (contas de an&uacute;ncio, p&aacute;ginas, integra&ccedil;&otilde;es WhatsApp Business).</li>
-          <li>Google LLC (sincroniza&ccedil;&atilde;o de pastas Google Drive quando autorizada).</li>
-          <li>Provedores de infraestrutura, hospedagem e monitoramento (por exemplo, provedores cloud, n8n, provedores de e-mail).</li>
-          <li>Outros operadores eventuais sempre mediante contrato com clausulas de confidencialidade e prote&ccedil;&atilde;o de dados.</li>
+          <li><strong>Essenciais:</strong> seguran&#231;a, autentica&#231;&#227;o e estabilidade do site.</li>
+          <li><strong>Anal&#237;ticos:</strong> compreender uso e aprimorar servi&#231;os.</li>
+          <li><strong>Funcionais/Marketing (quando aplic&#225;vel):</strong> lembrar prefer&#234;ncias e medir campanhas.</li>
         </ul>
-        <p>
-          N&atilde;o comercializamos dados pessoais. Em caso de transfer&ecirc;ncia internacional, aplicamos medidas de conformidade e
-          salvaguardas contratuais.
-        </p>
+        <p>Voc&#234; pode gerenciar cookies no navegador. Quando houver banner de consentimento, suas escolhas ser&#227;o respeitadas.</p>
       </section>
 
       <section class="panel">
-        <div class="badge">5. Reten&ccedil;&atilde;o e descarte</div>
-        <p>
-          Mantemos dados enquanto: (i) a rela&ccedil;&atilde;o contratual estiver vigente; (ii) houver obriga&ccedil;&otilde;es legais/regulat&oacute;rias; ou (iii) at&eacute;
-          revoga&ccedil;&atilde;o do consentimento em casos aplic&aacute;veis. Logs t&eacute;cnicos s&atilde;o armazenados por at&eacute; 6 meses, salvo necessidade de prazos
-          maiores para auditorias ou defesa de direitos.
-        </p>
-        <p>
-          O descarte &eacute; realizado com t&eacute;cnicas seguras (remo&ccedil;&atilde;o criptogr&aacute;fica/anonimiza&ccedil;&atilde;o). Backups seguem cronograma de expurgo controlado.
-        </p>
+        <div class="badge">7. Compartilhamento e operadores</div>
+        <p>Compartilhamos dados somente quando necess&#225;rio com provedores que atuam como operadores e seguem instru&#231;&#245;es contratuais:</p>
+        <ul>
+          <li>Infraestrutura: hospedagem, banco de dados, e-mail e monitoramento.</li>
+          <li>Plataformas Meta e Google quando a integra&#231;&#227;o for autorizada por voc&#234;.</li>
+          <li>Ferramentas de CRM, atendimento, faturamento e antifraude.</li>
+        </ul>
+        <p>N&#227;o vendemos dados pessoais. Em caso de exig&#234;ncia legal, poderemos compartilhar informa&#231;&#245;es com autoridades.</p>
       </section>
 
       <section class="panel">
-        <div class="badge">6. Direitos do titular</div>
+        <div class="badge">8. Transfer&#234;ncias internacionais</div>
+        <p>Alguns prestadores podem operar fora do Brasil. Nesses casos adotamos salvaguardas contratuais, t&#233;cnicas e organizacionais alinhadas &#224; LGPD.</p>
+      </section>
+
+      <section class="panel">
+        <div class="badge">9. Seguran&#231;a da informa&#231;&#227;o</div>
+        <ul>
+          <li>Criptografia em repouso e em tr&#226;nsito, autentica&#231;&#227;o forte e controle de acesso por perfis.</li>
+          <li>Princ&#237;pio do menor privil&#233;gio, revis&#227;o peri&#243;dica de permiss&#245;es e segrega&#231;&#227;o de ambientes.</li>
+          <li>Registro de auditoria, monitoramento de eventos e backups.</li>
+          <li>Planos de resposta a incidentes e comunica&#231;&#227;o imediata de suspeitas relevantes.</li>
+        </ul>
+        <p>Apesar dos esfor&#231;os, nenhum m&#233;todo &#233; 100% infal&#237;vel. Informe-nos sobre qualquer incidente ou suspeita.</p>
+      </section>
+
+      <section class="panel">
+        <div class="badge">10. Reten&#231;&#227;o e elimina&#231;&#227;o</div>
+        <ul>
+          <li>Mantemos dados enquanto necess&#225;rios para cumprir as finalidades desta pol&#237;tica e obriga&#231;&#245;es legais (ex.: documentos fiscais).</li>
+          <li>Dados operacionais de integra&#231;&#245;es permanecem ativos enquanto a conta estiver habilitada.</li>
+          <li>Ap&#243;s o t&#233;rmino das finalidades ou prazos legais, eliminamos ou anonimizamos os dados.</li>
+        </ul>
+      </section>
+
+      <section class="panel">
+        <div class="badge">11. Seus direitos (art. 18 da LGPD)</div>
         <div class="grid grid-2">
           <div>
-            <h3>Voc&ecirc; pode solicitar</h3>
+            <h3>Voc&#234; pode solicitar</h3>
             <ul>
-              <li>Confirma&ccedil;&atilde;o e acesso a dados tratados.</li>
-              <li>Corre&ccedil;&atilde;o, atualiza&ccedil;&atilde;o ou anonimiza&ccedil;&atilde;o.</li>
-              <li>Portabilidade e elimina&ccedil;&atilde;o (quando aplic&aacute;vel).</li>
-              <li>Informa&ccedil;&otilde;es sobre compartilhamentos realizados.</li>
-              <li>Revoga&ccedil;&atilde;o de consentimento e revis&atilde;o de decis&otilde;es automatizadas.</li>
+              <li>Confirma&#231;&#227;o do tratamento e acesso aos dados.</li>
+              <li>Corre&#231;&#227;o, atualiza&#231;&#227;o, anonimiza&#231;&#227;o ou portabilidade.</li>
+              <li>Elimina&#231;&#227;o, bloqueio ou oposi&#231;&#227;o a tratamentos baseados em leg&#237;timo interesse, quando cab&#237;vel.</li>
+              <li>Informa&#231;&#245;es sobre compartilhamentos e sobre a possibilidade de n&#227;o fornecer consentimento.</li>
+              <li>Revoga&#231;&#227;o de consentimento e revis&#227;o de decis&#245;es automatizadas.</li>
             </ul>
           </div>
           <div>
             <h3>Como exercer</h3>
-            <p>
-              Envie solicita&ccedil;&otilde;es para <a href="mailto:privacidade@autoads.com.br">privacidade@autoads.com.br</a>.
-              Prazo padr&atilde;o de resposta: at&eacute; 15 dias corridos. Para pedidos complexos, informaremos eventual extens&atilde;o.
-            </p>
-            <p>
-              No caso de lead ads, o titular tamb&eacute;m pode revisar consentimentos diretamente nos Pain&eacute;is de Privacidade Meta conforme
-              orienta&ccedil;&atilde;o do pr&oacute;prio Meta.
-            </p>
+            <p>Envie seu pedido para <a href="mailto:pedrofre18@gmail.com">pedrofre18@gmail.com</a> informando nome completo, e-mail e, quando envolver integra&#231;&#245;es, o ID/conta vinculada para localiza&#231;&#227;o segura dos registros.</p>
+            <p>Podemos solicitar comprova&#231;&#227;o de identidade sempre que necess&#225;rio para proteger os titulares. Respondemos em at&#233; 15 dias.</p>
           </div>
         </div>
       </section>
 
       <section class="panel">
-        <div class="badge">7. Cookies e tecnologias similares</div>
-        <p>
-          Utilizamos cookies essenciais para autentica&ccedil;&atilde;o e manuten&ccedil;&atilde;o de sess&atilde;o. Opcionalmente, podemos usar m&eacute;tricas agregadas para
-          usabilidade do produto (por exemplo, Google Analytics com IP anonimizado). Voc&ecirc; pode gerenciar prefer&ecirc;ncias diretamente no
-          navegador.
-        </p>
-        <p class="callout">
-          O Meta exige que landing pages de lead ads indiquem claramente se existe coleta de cookies ou pixels. Sempre que utilizarmos
-          pixels Meta, exibiremos aviso espec&iacute;fico e ofereceremos op&ccedil;&atilde;o de consentimento.
-        </p>
+        <div class="badge">12. Integra&#231;&#245;es com plataformas da Meta</div>
+        <p>Ao conectar p&#225;ginas, contas ou ativos Meta &#224; Orygo, tratamos:</p>
+        <ul>
+          <li>Identificadores concedidos (app-scoped user ID, p&#225;ginas, contas de an&#250;ncios, Pixels).</li>
+          <li>M&#233;tricas e eventos necess&#225;rios &#224;s automa&#231;&#245;es e relat&#243;rios contratados.</li>
+          <li>Tokens de acesso armazenados de forma cifrada e com controle de expira&#231;&#227;o.</li>
+        </ul>
+        <p>Voc&#234; pode revogar as permiss&#245;es a qualquer momento nas configura&#231;&#245;es da sua conta Meta (&quot;Apps e sites&quot;/&quot;Integra&#231;&#245;es comerciais&quot;). Ao revogar, deixamos de acessar novos dados e mantemos somente registros exigidos pelas leis aplic&#225;veis, conforme Se&#231;&#227;o 10.</p>
       </section>
 
       <section class="panel">
-        <div class="badge">8. Seguran&ccedil;a da informa&ccedil;&atilde;o</div>
-        <ul>
-          <li>Criptografia em repouso e em tr&acirc;nsito (TLS 1.2+).</li>
-          <li>Controle de acesso baseado em fun&ccedil;&otilde;es (system admin, tenant admin, membro).</li>
-          <li>Auditorias peri&oacute;dicas de logs, testes de integra&ccedil;&otilde;es e monitoramento de incidentes.</li>
-          <li>Procedimentos de resposta a incidentes com notifica&ccedil;&atilde;o &agrave; Autoridade Nacional de Prote&ccedil;&atilde;o de Dados (ANPD), quando aplic&aacute;vel.</li>
+        <div class="badge">13. Exclus&#227;o de dados do usu&#225;rio (Meta &#8211; User Data Deletion)</div>
+        <div class="grid grid-2">
+          <div>
+            <h3>Op&#231;&#227;o A &#8212; Solicitar por e-mail</h3>
+            <p>Envie e-mail para <a href="mailto:pedrofre18@gmail.com">pedrofre18@gmail.com</a> com o assunto &quot;Exclus&#227;o &#8211; App Meta (Orygo)&quot;, informando o e-mail cadastrado e, se poss&#237;vel, o app-scoped user ID ou p&#225;gina/conta vinculada. Ap&#243;s validarmos a identidade, eliminaremos ou anonimizaremos os dados associados e confirmaremos a conclus&#227;o em at&#233; 15 dias.</p>
+          </div>
+          <div>
+            <h3>Op&#231;&#227;o B &#8212; Iniciar pelo Facebook</h3>
+            <p>Acesse Configura&#231;&#245;es do Facebook &rarr; Apps e sites, selecione a integra&#231;&#227;o da Orygo e solicite a exclus&#227;o. Ao recebermos a notifica&#231;&#227;o, processaremos o pedido nos mesmos prazos do canal por e-mail.</p>
+          </div>
+        </div>
+        <p class="callout">Observa&#231;&#227;o: dados necess&#225;rios ao cumprimento de obriga&#231;&#245;es legais/regulat&#243;rias podem ser retidos pelo per&#237;odo exigido em lei (veja a Se&#231;&#227;o 10).</p>
+      </section>
+
+      <section class="panel">
+        <div class="badge">14. Crian&#231;as e adolescentes</div>
+        <p>Nossos servi&#231;os n&#227;o se destinam a menores de 18 anos. Se identificarmos dados coletados inadvertidamente de menores, adotaremos medidas para exclus&#227;o c&#233;lere.</p>
+      </section>
+
+      <section class="panel">
+        <div class="badge">15. Altera&#231;&#245;es desta pol&#237;tica</div>
+        <p>Podemos atualizar este documento para refletir mudan&#231;as legais, regulat&#243;rias ou operacionais. A vers&#227;o vigente estar&#225; sempre dispon&#237;vel neste endere&#231;o com a data de atualiza&#231;&#227;o. Altera&#231;&#245;es relevantes poder&#227;o ser comunicadas por e-mail ou aviso no produto.</p>
+      </section>
+
+      <section class="panel">
+        <div class="badge">16. Contato do Encarregado (DPO)</div>
+        <ul class="detail-list">
+          <li><strong>Respons&#225;vel:</strong> Orygo &#8211; Encarregado de Prote&#231;&#227;o de Dados.</li>
+          <li><strong>E-mail:</strong> <a href="mailto:pedrofre18@gmail.com">pedrofre18@gmail.com</a>.</li>
+          <li><strong>Endere&#231;o:</strong> Rua Metaluzina, n&#186; 495, Bairro Vi&#250;va, Bar&#227;o de Cocais/MG, CEP 35970-000.</li>
+          <li><strong>Telefone:</strong> (31) 97115-5225.</li>
         </ul>
       </section>
 
-      <section class="panel">
-        <div class="badge">9. Atualiza&ccedil;&otilde;es</div>
-        <p>
-          Esta pol&iacute;tica pode ser ajustada para refletir novas funcionalidades ou exig&ecirc;ncias legais. Manteremos o hist&oacute;rico de vers&otilde;es e
-          indicaremos a data da &uacute;ltima revis&atilde;o no topo desta p&aacute;gina. Mudan&ccedil;as relevantes ser&atilde;o comunicadas por e-mail ou notifica&ccedil;&otilde;es no produto.
-        </p>
-      </section>
-
       <footer>
-        &copy; <span id="year">2025</span> AutoAds Tecnologia Ltda &middot;
-        <a href="mailto:privacidade@autoads.com.br">privacidade@autoads.com.br</a> &middot;
-        <a href="/terms.html">Termos de Uso</a>
+        &copy; <span id="year">2025</span> Orygo &middot; <a href="mailto:pedrofre18@gmail.com">pedrofre18@gmail.com</a>
       </footer>
     </div>
 
