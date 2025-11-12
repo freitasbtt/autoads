@@ -96,6 +96,125 @@ function getPublicAppUrl(req: Request): string {
   return `${req.protocol}://${host}`;
 }
 
+function validateInternalRequest(req: Request): {
+  valid: boolean;
+  status?: number;
+  message?: string;
+} {
+  const configuredSecret = process.env.INTERNAL_API_SECRET;
+  if (!configuredSecret || configuredSecret.length === 0) {
+    return {
+      valid: false,
+      status: 500,
+      message: "Internal API secret not configured",
+    };
+  }
+
+  const headerSecret = req.get("x-internal-api-secret");
+  const querySecret =
+    typeof req.query.api_secret === "string" ? req.query.api_secret : undefined;
+  const providedSecret = headerSecret ?? querySecret;
+
+  if (providedSecret !== configuredSecret) {
+    return { valid: false, status: 401, message: "Unauthorized" };
+  }
+
+  return { valid: true };
+}
+
+const META_TOKEN_ENC_PREFIX = "enc.v1";
+let cachedMetaTokenKey: Buffer | null | undefined;
+
+function getMetaTokenEncryptionKey(): Buffer | null {
+  if (cachedMetaTokenKey !== undefined) {
+    return cachedMetaTokenKey;
+  }
+
+  const rawKey = process.env.META_TOKEN_ENC_KEY?.trim();
+  if (!rawKey) {
+    cachedMetaTokenKey = null;
+    return null;
+  }
+
+  const tryDecode = (value: string, encoding: BufferEncoding): Buffer | null => {
+    try {
+      const decoded = Buffer.from(value, encoding);
+      return decoded.length === 32 ? decoded : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const base64Key = tryDecode(rawKey, "base64");
+  if (base64Key) {
+    cachedMetaTokenKey = base64Key;
+    return base64Key;
+  }
+
+  if (rawKey.length === 32) {
+    const utf8Key = tryDecode(rawKey, "utf8");
+    if (utf8Key) {
+      cachedMetaTokenKey = utf8Key;
+      return utf8Key;
+    }
+  }
+
+  console.warn("META_TOKEN_ENC_KEY must decode to exactly 32 bytes (AES-256).");
+  cachedMetaTokenKey = null;
+  return null;
+}
+
+function encryptMetaAccessToken(token: string): string {
+  if (!token) {
+    return token;
+  }
+  const key = getMetaTokenEncryptionKey();
+  if (!key) {
+    return token;
+  }
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(token, "utf8"), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return [
+    META_TOKEN_ENC_PREFIX,
+    iv.toString("base64"),
+    authTag.toString("base64"),
+    encrypted.toString("base64"),
+  ].join(":");
+}
+
+function decryptMetaAccessToken(token?: string | null): string | null {
+  if (!token || token.length === 0) {
+    return null;
+  }
+  if (!token.startsWith(`${META_TOKEN_ENC_PREFIX}:`)) {
+    return token;
+  }
+  const key = getMetaTokenEncryptionKey();
+  if (!key) {
+    console.error("Encrypted Meta token stored but META_TOKEN_ENC_KEY is missing or invalid.");
+    return null;
+  }
+  const [, ivB64, tagB64, payloadB64] = token.split(":");
+  if (!ivB64 || !tagB64 || !payloadB64) {
+    console.error("Invalid encrypted Meta token format.");
+    return null;
+  }
+  try {
+    const iv = Buffer.from(ivB64, "base64");
+    const authTag = Buffer.from(tagB64, "base64");
+    const payload = Buffer.from(payloadB64, "base64");
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(authTag);
+    const decrypted = Buffer.concat([decipher.update(payload), decipher.final()]);
+    return decrypted.toString("utf8");
+  } catch (err) {
+    console.error("Failed to decrypt Meta token:", err);
+    return null;
+  }
+}
+
 const OBJECTIVE_OUTCOME_MAP: Record<string, string> = {
   LEAD: "OUTCOME_LEADS",
   LEADS: "OUTCOME_LEADS",
@@ -439,9 +558,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const integration = await storage.getIntegrationByProvider(user.tenantId, "Meta");
       const metaConfig = (integration?.config ?? {}) as MetaIntegrationConfig;
 
-      if (!metaConfig.accessToken) {
+      const metaAccessToken = decryptMetaAccessToken(metaConfig.accessToken ?? null);
+      if (!metaAccessToken) {
         return res.status(400).json({
-          message: "Integracao com Meta nao esta conectada para este tenant.",
+          message: "Integracao com Meta nao esta conectada ou token indisponivel para este tenant.",
         });
       }
 
@@ -487,7 +607,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         previousEnd = format(previousEndDate, "yyyy-MM-dd");
       }
 
-      const client = new MetaGraphClient(metaConfig.accessToken, settings.metaAppSecret);
+      const client = new MetaGraphClient(metaAccessToken, settings.metaAppSecret);
 
       const metrics = await fetchMetaDashboardMetrics({
         accounts: selectedAccounts,
@@ -581,10 +701,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           accessToken?: string | null;
         };
 
-        if (!metaConfig.accessToken) {
+        const metaAccessToken = decryptMetaAccessToken(metaConfig.accessToken ?? null);
+        if (!metaAccessToken) {
           return res.status(400).json({
             message:
-              "Integracao com Meta nao esta conectada para este tenant.",
+              "Integracao com Meta nao esta conectada ou token indisponivel para este tenant.",
           });
         }
 
@@ -598,7 +719,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // precisamos do objective da campanha para calcular 'resultado principal'
         // (leads, conversas, vendas...) no relatório por anúncio
         const client = new MetaGraphClient(
-          metaConfig.accessToken,
+          metaAccessToken,
           settings.metaAppSecret,
         );
 
@@ -1950,7 +2071,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return null;
     }
     const config = integration.config as Record<string, unknown>;
-    const accessToken = typeof config?.accessToken === "string" ? config.accessToken : undefined;
+    const storedToken =
+      typeof config?.accessToken === "string" ? config.accessToken : undefined;
+    if (!storedToken) {
+      return null;
+    }
+    const accessToken = decryptMetaAccessToken(storedToken);
     if (!accessToken) {
       return null;
     }
@@ -1961,6 +2087,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
         : undefined;
     return { accessToken, appSecretProof };
   }
+
+  app.get("/internal/meta/token", async (req, res) => {
+    try {
+      const validation = validateInternalRequest(req);
+      if (!validation.valid) {
+        return res
+          .status(validation.status ?? 401)
+          .json({ message: validation.message ?? "Unauthorized" });
+      }
+
+      const tenantIdParam = req.query.tenant_id;
+      if (typeof tenantIdParam !== "string" || tenantIdParam.trim().length === 0) {
+        return res.status(400).json({ message: "tenant_id is required" });
+      }
+
+      const tenantId = Number(tenantIdParam);
+      if (!Number.isInteger(tenantId) || tenantId <= 0) {
+        return res
+          .status(400)
+          .json({ message: "tenant_id must be a positive integer" });
+      }
+
+      const metaAccess = await getMetaAccess(tenantId);
+      if (!metaAccess) {
+        return res
+          .status(404)
+          .json({ message: "Meta integration not found for tenant" });
+      }
+
+      res.json({
+        tenantId,
+        accessToken: metaAccess.accessToken,
+        appSecretProof: metaAccess.appSecretProof ?? null,
+      });
+    } catch (err) {
+      console.error("Internal Meta token error:", err);
+      res.status(500).json({ message: "Failed to load Meta token" });
+    }
+  });
 
   // Initiate Meta OAuth flow
   app.get("/auth/meta", isAuthenticated, async (req, res) => {
@@ -2097,10 +2262,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // This requires additional API calls with specific permissions
 
       // Save access token in integrations table for future use
+      const storedAccessToken = encryptMetaAccessToken(accessToken);
       const metaIntegration: InsertIntegration & { tenantId: number } = {
         tenantId,
         provider: "Meta",
-        config: { accessToken, tokenType: tokenData.token_type },
+        config: { accessToken: storedAccessToken, tokenType: tokenData.token_type },
         status: "connected",
       };
       await storage.createIntegration(metaIntegration);
