@@ -26,6 +26,9 @@ interface Integration {
   provider: string; // "Meta" | "Google Drive" etc.
   config: any;
   status: string; // "connected" | "pending" etc.
+  createdAt?: string;
+  updatedAt?: string;
+  lastChecked?: string | null;
 }
 
 export default function Integrations() {
@@ -206,7 +209,17 @@ export default function Integrations() {
     isTesting: boolean;
     isDisconnecting: boolean;
   }) {
-    const connected = Boolean(integration);
+    const connected = Boolean(integration && integration.status === "connected");
+    const lastTokenSaved =
+      integration?.updatedAt && !Number.isNaN(Date.parse(integration.updatedAt))
+        ? new Date(integration.updatedAt).toLocaleString("pt-BR", {
+            day: "2-digit",
+            month: "short",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : null;
 
     return (
       <Card className="relative overflow-hidden">
@@ -224,9 +237,19 @@ export default function Integrations() {
               </CardDescription>
 
               {connected && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground pt-2">
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                  <span>Conectado com sucesso</span>
+                <div className="space-y-1 pt-2 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    <span>Conectado com sucesso</span>
+                  </div>
+                  {lastTokenSaved && (
+                    <div>
+                      Token salvo em{" "}
+                      <span className="font-semibold text-foreground">
+                        {lastTokenSaved}
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

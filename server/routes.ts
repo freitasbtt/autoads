@@ -953,6 +953,332 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+app.get("/api/meta/pages/:pageId/posts", isAuthenticated, async (req, res) => {
+  try {
+    const user = req.user as User;
+    const rawPageId =
+      typeof req.params.pageId === "string" ? req.params.pageId.trim() : "";
+
+    if (rawPageId.length === 0) {
+      return res.status(400).json({ message: "pageId obrigatorio" });
+    }
+
+    // --- Tratamento do limit ---
+    const limitParam = Array.isArray(req.query.limit)
+      ? req.query.limit[0]
+      : req.query.limit;
+    let limit = 20;
+    if (typeof limitParam === "string" && limitParam.trim().length > 0) {
+      const parsed = Number.parseInt(limitParam, 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        limit = Math.min(parsed, 50);
+      }
+    }
+
+    // --- 1) Buscar integração da Meta / User Token (via getMetaAccess) ---
+    const userAccess = await getMetaAccess(user.tenantId);
+
+    if (
+      !userAccess ||
+      typeof userAccess.accessToken !== "string" ||
+      userAccess.accessToken.trim().length === 0
+    ) {
+      console.error("Meta access inválido para tenant", user.tenantId, {
+        hasAccess: !!userAccess,
+        hasToken: !!userAccess?.accessToken,
+      });
+      return res.status(400).json({
+        message:
+          "Integracao com Meta nao configurada corretamente (token ausente ou invalido).",
+      });
+    }
+
+    const userAccessToken = userAccess.accessToken.trim();
+    const userAppSecretProof =
+      typeof userAccess.appSecretProof === "string" &&
+      userAccess.appSecretProof.trim().length > 0
+        ? userAccess.appSecretProof.trim()
+        : undefined;
+
+    console.debug("Meta user access obtido", {
+      tenantId: user.tenantId,
+      tokenPreview: userAccessToken.slice(0, 8),
+    });
+
+    // --- 2) Obter Page Access Token a partir do User Token ---
+    const pageDetailsUrl = new URL(
+      `https://graph.facebook.com/v18.0/${encodeURIComponent(rawPageId)}`,
+    );
+    pageDetailsUrl.searchParams.set("fields", "id,access_token");
+    pageDetailsUrl.searchParams.set("access_token", userAccessToken);
+    if (userAppSecretProof) {
+      pageDetailsUrl.searchParams.set("appsecret_proof", userAppSecretProof);
+    }
+
+    let pageDetailsResponse: globalThis.Response;
+    try {
+      pageDetailsResponse = await fetch(pageDetailsUrl);
+    } catch (networkError) {
+      console.error("Erro de rede ao obter Page Access Token:", {
+        error: networkError,
+        tenantId: user.tenantId,
+        pageId: rawPageId,
+      });
+      return res.status(502).json({
+        message:
+          "Falha de comunicacao com a Meta ao obter token da pagina. Tente novamente.",
+      });
+    }
+
+    const pageDetailsText = await pageDetailsResponse.text();
+    let pageDetailsBody: any = {};
+    try {
+      pageDetailsBody =
+        pageDetailsText.length > 0 ? JSON.parse(pageDetailsText) : {};
+    } catch (error) {
+      console.error("Parse error ao obter dados da pagina Meta:", {
+        error,
+        bodyTextPreview: pageDetailsText.slice(0, 200),
+      });
+      return res.status(500).json({
+        message:
+          "Falha ao interpretar resposta da Meta ao obter dados da pagina.",
+      });
+    }
+
+    if (!pageDetailsResponse.ok || pageDetailsBody?.error) {
+      const graphCode =
+        typeof pageDetailsBody?.error?.code === "number"
+          ? pageDetailsBody.error.code
+          : undefined;
+      const errorSubcode =
+        typeof pageDetailsBody?.error?.error_subcode === "number"
+          ? pageDetailsBody.error.error_subcode
+          : undefined;
+      const rawMessage =
+        typeof pageDetailsBody?.error?.message === "string"
+          ? pageDetailsBody.error.message
+          : undefined;
+
+      console.error("Falha ao obter Page Access Token:", {
+        status: pageDetailsResponse.status,
+        graphCode,
+        errorSubcode,
+        rawMessage,
+        body: pageDetailsBody,
+      });
+
+      let clientMessage =
+        rawMessage ||
+        "Falha ao obter dados da pagina na Meta. Verifique a integracao.";
+
+      if (graphCode === 190) {
+        clientMessage =
+          "Token de acesso da Meta expirado ou invalido. Reconfigure a integracao.";
+      }
+
+      const statusCode =
+        pageDetailsResponse.status && pageDetailsResponse.status >= 400
+          ? pageDetailsResponse.status
+          : 502;
+
+      return res
+        .status(statusCode)
+        .json({ message: clientMessage, graphCode, errorSubcode });
+    }
+
+    const pageAccessTokenRaw = pageDetailsBody?.access_token;
+    if (
+      typeof pageAccessTokenRaw !== "string" ||
+      pageAccessTokenRaw.trim().length === 0
+    ) {
+      console.error(
+        "Nao foi possivel obter access_token da pagina a partir do user token.",
+        {
+          tenantId: user.tenantId,
+          pageId: rawPageId,
+          body: pageDetailsBody,
+        },
+      );
+      return res.status(400).json({
+        message:
+          "Nao foi possivel obter o token da pagina. Verifique se o utilizador conectado tem permissao de administrador nesta pagina e se a app possui pages_read_engagement.",
+      });
+    }
+
+    const pageAccessToken = pageAccessTokenRaw.trim();
+
+    // --- 2.1) Gerar appsecret_proof especifico para o Page Token (opcional, mas recomendado) ---
+    const settings = await storage.getAppSettings();
+    const pageAppSecretProof =
+      settings?.metaAppSecret && settings.metaAppSecret.length > 0
+        ? generateAppSecretProof(pageAccessToken, settings.metaAppSecret)
+        : undefined;
+
+    console.debug("Page access token obtido com sucesso", {
+      tenantId: user.tenantId,
+      pageId: rawPageId,
+      tokenPreview: pageAccessToken.slice(0, 8),
+    });
+
+    // --- 3) Agora sim, chamar /{pageId}/posts com o Page Access Token ---
+    const postsUrl = new URL(
+      `https://graph.facebook.com/v18.0/${encodeURIComponent(rawPageId)}/posts`,
+    );
+    postsUrl.searchParams.set(
+      "fields",
+      [
+        "id",
+        "permalink_url",
+        "message",
+        "created_time",
+        "likes.limit(0).summary(true)",
+        "comments.limit(0).summary(true)",
+        "shares",
+      ].join(","),
+    );
+    postsUrl.searchParams.set("limit", String(limit));
+    postsUrl.searchParams.set("access_token", pageAccessToken);
+    if (pageAppSecretProof) {
+      postsUrl.searchParams.set("appsecret_proof", pageAppSecretProof);
+    }
+
+    let postsResponse: globalThis.Response;
+    try {
+      postsResponse = await fetch(postsUrl);
+    } catch (networkError) {
+      console.error("Erro de rede ao chamar Meta page posts:", {
+        error: networkError,
+        tenantId: user.tenantId,
+        pageId: rawPageId,
+      });
+      return res.status(502).json({
+        message: "Falha de comunicacao com a Meta ao carregar posts da pagina.",
+      });
+    }
+
+    const bodyText = await postsResponse.text();
+
+    let body: any = {};
+    try {
+      body = bodyText.length > 0 ? JSON.parse(bodyText) : {};
+    } catch (error) {
+      console.error("Meta page posts parse error:", {
+        error,
+        bodyTextPreview: bodyText.slice(0, 200),
+      });
+      return res
+        .status(500)
+        .json({ message: "Falha ao interpretar resposta da Meta" });
+    }
+
+    // --- Tratamento de erros do Graph API (token/permissão/etc) ---
+    if (!postsResponse.ok || body?.error) {
+      const graphCode =
+        typeof body?.error?.code === "number" ? body.error.code : undefined;
+      const errorSubcode =
+        typeof body?.error?.error_subcode === "number"
+          ? body.error.error_subcode
+          : undefined;
+      const errorType =
+        typeof body?.error?.type === "string" ? body.error.type : undefined;
+      const rawMessage =
+        typeof body?.error?.message === "string"
+          ? body.error.message
+          : undefined;
+
+      console.error("Meta page posts failed:", {
+        status: postsResponse.status,
+        graphCode,
+        errorSubcode,
+        errorType,
+        rawMessage,
+        body,
+      });
+
+      let clientMessage =
+        rawMessage || "Falha ao carregar posts da pagina na Meta.";
+
+      if (graphCode === 190) {
+        clientMessage =
+          "Token de acesso da pagina expirado ou invalido. Reconfigure a integracao ou renove as permissoes para esta pagina.";
+      }
+      if (graphCode === 200) {
+        clientMessage =
+          "Permissoes insuficientes para ler os posts desta pagina na Meta. Verifique as permissoes da app e do token da pagina.";
+      }
+
+      const statusCode =
+        postsResponse.status && postsResponse.status >= 400
+          ? postsResponse.status
+          : 502;
+
+      return res
+        .status(statusCode)
+        .json({ message: clientMessage, graphCode, errorSubcode });
+    }
+
+    // --- Normalização das contagens ---
+    const ensureCount = (value: unknown): number => {
+      if (typeof value === "number") {
+        return Number.isFinite(value) && value >= 0 ? value : 0;
+      }
+      if (typeof value === "string") {
+        const parsed = Number.parseInt(value, 10);
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+      }
+      return 0;
+    };
+
+    // --- Mapear posts para formato limpo ---
+    const posts = Array.isArray(body?.data)
+      ? body.data
+          .map((item: any) => {
+            const id = typeof item?.id === "string" ? item.id : "";
+            if (id.length === 0) {
+              return null;
+            }
+            const message =
+              typeof item?.message === "string" ? item.message : "";
+            const createdTime =
+              typeof item?.created_time === "string"
+                ? item.created_time
+                : "";
+            const likes = ensureCount(item?.likes?.summary?.total_count);
+            const comments = ensureCount(
+              item?.comments?.summary?.total_count,
+            );
+            const shares = ensureCount(item?.shares?.count);
+            const permalinkUrl =
+              typeof item?.permalink_url === "string"
+                ? item.permalink_url
+                : "";
+
+            return {
+              id,
+              message,
+              created_time: createdTime,
+              likes,
+              comments,
+              shares,
+              permalink_url: permalinkUrl,
+            };
+          })
+          .filter(Boolean)
+      : [];
+
+    setNoCacheHeaders(res);
+    res.removeHeader("ETag");
+    return res.json(posts);
+  } catch (err) {
+    console.error("Failed to load Meta page posts:", err);
+    return res
+      .status(500)
+      .json({ message: "Falha ao carregar posts da pagina." });
+  }
+});
+
+
   // Get single audience
   app.get("/api/audiences/:id", isAuthenticated, async (req, res, next) => {
     try {
@@ -1165,6 +1491,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const primaryCreativeTitle = extractString(primaryCreativeEntry?.["title"]);
       const primaryCreativeText = extractString(primaryCreativeEntry?.["text"]);
+      const primaryObjectStoryId =
+        creativeEntries
+          .map((creative) => extractString(creative["objectStoryId"]))
+          .find((value) => value.length > 0) ?? "";
+      const primaryPostId =
+        creativeEntries
+          .map((creative) => extractString(creative["postId"]))
+          .find((value) => value.length > 0) ?? "";
+      const primaryPermalinkUrl =
+        creativeEntries
+          .map((creative) => extractString(creative["permalinkUrl"]))
+          .find((value) => value.length > 0) ?? "";
+      const primaryCreativeMode =
+        creativeEntries
+          .map((creative) => extractString(creative["mode"]))
+          .find((value) => value.length > 0) ?? "";
+      const primaryPostMessage =
+        creativeEntries
+          .map((creative) => extractString(creative["postMessage"]))
+          .find((value) => value.length > 0) ?? "";
 
       const driveFolderId =
         primaryDriveFolderFromCreative ||
@@ -1303,8 +1649,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const whatsappIdValue = whatsappResource ? whatsappResource.value : "";
       const campaignWebsite = extractString(campaign.websiteUrl);
 
-      const messageText = extractString(campaign.message) || primaryCreativeText;
-      const titleText = extractString(campaign.title) || primaryCreativeTitle;
+      const messageText =
+        extractString(campaign.message) ||
+        primaryPostMessage ||
+        primaryCreativeText;
+      const titleText =
+        extractString(campaign.title) ||
+        primaryCreativeTitle ||
+        (primaryPostMessage.length > 0
+          ? primaryPostMessage.slice(0, 80)
+          : "");
 
       const isAddCreativesFlow = adSetsPayload.length === 0;
 
@@ -1332,6 +1686,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           leadgen_form_name: leadFormNameValue,
           lead_form_name: leadFormNameValue,
           drive_folder_name: "",
+          object_story_id: primaryObjectStoryId || undefined,
+          post_id: primaryPostId || undefined,
+          post_permalink: primaryPermalinkUrl || undefined,
+          creative_mode: primaryCreativeMode || undefined,
         }
         : {
           action: "create_campaign" as const,
@@ -1356,6 +1714,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title_text: titleText,
           whatsapp_number_id: whatsappIdValue,
           website_url: campaignWebsite,
+          object_story_id: primaryObjectStoryId || undefined,
+          post_id: primaryPostId || undefined,
+          post_permalink: primaryPermalinkUrl || undefined,
+          creative_mode: primaryCreativeMode || undefined,
         };
 
       const webhookPayload = {

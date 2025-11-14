@@ -1,10 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import {
   Select,
   SelectContent,
@@ -12,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -60,6 +67,23 @@ interface Creative {
   title: string;
   text: string;
   driveFolderId: string;
+  mode?: "manual" | "existing_post";
+  postId?: string;
+  objectStoryId?: string;
+  permalinkUrl?: string;
+  postMessage?: string;
+}
+
+type CreativeMode = "manual" | "existing_post";
+
+interface PagePostSummary {
+  id: string;
+  message: string;
+  created_time: string;
+  likes: number;
+  comments: number;
+  shares: number;
+  permalink_url: string;
 }
 
 export default function CampaignForm() {
@@ -89,6 +113,10 @@ export default function CampaignForm() {
   const [creatives, setCreatives] = useState<Creative[]>([
     { title: "", text: "", driveFolderId: "" },
   ]);
+  const [creativeMode, setCreativeMode] = useState<CreativeMode>("manual");
+  const [selectedPost, setSelectedPost] = useState<PagePostSummary | null>(
+    null
+  );
 
   // Fetch resources and audiences from API
   const { data: resources = [] } = useQuery<Resource[]>({
@@ -106,10 +134,53 @@ export default function CampaignForm() {
   const whatsapps = resources.filter((r) => r.type === "whatsapp");
   const leadforms = resources.filter((r) => r.type === "leadform");
   const driveFolders = resources.filter((r) => r.type === "drive_folder");
+  const selectedPageResource = pages.find(
+    (page) => String(page.id) === config.pageId
+  );
+  const selectedPageValue = selectedPageResource?.value ?? "";
+
+  const {
+    data: pagePosts = [],
+    isLoading: isLoadingPagePosts,
+    isError: isPagePostsError,
+    error: pagePostsError,
+    refetch: refetchPagePosts,
+  } = useQuery<PagePostSummary[]>({
+    queryKey: ["page-posts", selectedPageValue],
+    enabled: creativeMode === "existing_post" && Boolean(selectedPageValue),
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/meta/pages/${selectedPageValue}/posts?limit=20`,
+        {
+          credentials: "include",
+        }
+      );
+
+      if (!res.ok) {
+        const message = (await res.text()) || res.statusText;
+        throw new Error(message);
+      }
+
+      return (await res.json()) as PagePostSummary[];
+    },
+  });
+
+  useEffect(() => {
+    if (creativeMode !== "existing_post") {
+      setSelectedPost(null);
+    }
+  }, [creativeMode]);
+
+  useEffect(() => {
+    setSelectedPost(null);
+  }, [selectedPageValue]);
 
   // Add/Remove Ad Set
   const addAdSet = () => {
-    setAdSets([...adSets, { audienceId: "", budget: "", startDate: "", endDate: "" }]);
+    setAdSets([
+      ...adSets,
+      { audienceId: "", budget: "", startDate: "", endDate: "" },
+    ]);
   };
 
   const removeAdSet = (index: number) => {
@@ -135,7 +206,11 @@ export default function CampaignForm() {
     }
   };
 
-  const updateCreative = (index: number, field: keyof Creative, value: string) => {
+  const updateCreative = (
+    index: number,
+    field: keyof Creative,
+    value: string
+  ) => {
     const updated = [...creatives];
     updated[index][field] = value;
     setCreatives(updated);
@@ -151,6 +226,9 @@ export default function CampaignForm() {
   };
 
   const isStep3Valid = () => {
+    if (creativeMode === "existing_post") {
+      return Boolean(selectedPageValue && selectedPost);
+    }
     return creatives.every((creative) => creative.title && creative.text);
   };
 
@@ -177,16 +255,61 @@ export default function CampaignForm() {
   const handleSubmit = () => {
     if (!isStep3Valid()) {
       toast({
-        title: "Erro de validação",
-        description: "Preencha todos os campos obrigatórios dos criativos.",
+        title: "Erro de validacao",
+        description:
+          creativeMode === "existing_post"
+            ? "Selecione uma pagina e um post existente antes de continuar."
+            : "Preencha todos os campos obrigatorios dos criativos.",
         variant: "destructive",
       });
       return;
     }
 
     const primaryCreative = creatives[0];
-    const primaryTitle = primaryCreative?.title?.trim() ?? "";
-    const primaryMessage = primaryCreative?.text?.trim() ?? "";
+    const primaryTitle =
+      creativeMode === "manual" ? primaryCreative?.title?.trim() ?? "" : "";
+    const primaryMessage =
+      creativeMode === "manual" ? primaryCreative?.text?.trim() ?? "" : "";
+    const selectedPostMessage = selectedPost?.message?.trim() ?? "";
+    const selectedPostId = selectedPost?.id ?? "";
+    const selectedObjectStoryId =
+      creativeMode === "existing_post" && selectedPost && selectedPageValue
+        ? `${selectedPageValue}_${selectedPost.id}`
+        : "";
+
+    const creativePayload =
+      creativeMode === "existing_post" && selectedPost && selectedPageValue
+        ? [
+            {
+              mode: "existing_post",
+              postId: selectedPostId,
+              objectStoryId: selectedObjectStoryId,
+              permalinkUrl: selectedPost.permalink_url ?? "",
+              postMessage: selectedPost.message ?? "",
+              createdTime: selectedPost.created_time ?? "",
+              driveFolderId: null,
+              stats: {
+                likes: selectedPost.likes,
+                comments: selectedPost.comments,
+                shares: selectedPost.shares,
+              },
+            },
+          ]
+        : creatives.map((creative) => ({
+            title: creative.title,
+            text: creative.text,
+            driveFolderId: creative.driveFolderId || null,
+            mode: "manual",
+          }));
+
+    const finalTitle =
+      creativeMode === "existing_post"
+        ? selectedPostMessage || primaryTitle
+        : primaryTitle;
+    const finalMessage =
+      creativeMode === "existing_post"
+        ? selectedPostMessage || primaryMessage
+        : primaryMessage;
 
     const payload = {
       name: config.name,
@@ -197,8 +320,8 @@ export default function CampaignForm() {
       instagramId: config.instagramId ? Number(config.instagramId) : null,
       whatsappId: config.whatsappId ? Number(config.whatsappId) : null,
       leadformId: config.leadformId ? Number(config.leadformId) : null,
-      title: primaryTitle || undefined,
-      message: primaryMessage || undefined,
+      title: finalTitle || undefined,
+      message: finalMessage || undefined,
       adSets: adSets.map((adSet) => ({
         audienceId: Number(adSet.audienceId),
         budget: adSet.budget,
@@ -206,11 +329,7 @@ export default function CampaignForm() {
         endDate: adSet.endDate || null,
         optimizationGoal: config.optimizationGoal,
       })),
-      creatives: creatives.map((creative) => ({
-        title: creative.title,
-        text: creative.text,
-        driveFolderId: creative.driveFolderId || null,
-      })),
+      creatives: creativePayload,
     };
 
     createMutation.mutate(payload);
@@ -239,6 +358,35 @@ export default function CampaignForm() {
   const prevStep = () => {
     setCurrentStep(currentStep - 1);
   };
+
+  const formatPostDate = (isoString: string) => {
+    if (!isoString) return "-";
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) {
+      return "-";
+    }
+    return date.toLocaleString("pt-BR", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
+  const truncateMessage = (value: string, limit = 90) => {
+    if (!value) return "Sem texto";
+    return value.length > limit ? `${value.slice(0, limit)}...` : value;
+  };
+
+  const postsErrorMessage =
+    pagePostsError instanceof Error
+      ? pagePostsError.message
+      : "Nao foi possivel carregar os posts da pagina.";
+
+  const selectedObjectStoryPreview =
+    creativeMode === "existing_post" && selectedPost && selectedPageValue
+      ? `${selectedPageValue}_${selectedPost.id}`
+      : "";
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -290,7 +438,9 @@ export default function CampaignForm() {
               </Label>
               <Select
                 value={config.accountId}
-                onValueChange={(value) => setConfig({ ...config, accountId: value })}
+                onValueChange={(value) =>
+                  setConfig({ ...config, accountId: value })
+                }
               >
                 <SelectTrigger id="accountId" data-testid="select-account">
                   <SelectValue placeholder="Selecione a conta" />
@@ -352,7 +502,9 @@ export default function CampaignForm() {
                 <Label htmlFor="pageId">Página Facebook</Label>
                 <Select
                   value={config.pageId}
-                  onValueChange={(value) => setConfig({ ...config, pageId: value })}
+                  onValueChange={(value) =>
+                    setConfig({ ...config, pageId: value })
+                  }
                 >
                   <SelectTrigger id="pageId" data-testid="select-page">
                     <SelectValue placeholder="Selecione a página" />
@@ -371,14 +523,22 @@ export default function CampaignForm() {
                 <Label htmlFor="instagramId">Instagram</Label>
                 <Select
                   value={config.instagramId}
-                  onValueChange={(value) => setConfig({ ...config, instagramId: value })}
+                  onValueChange={(value) =>
+                    setConfig({ ...config, instagramId: value })
+                  }
                 >
-                  <SelectTrigger id="instagramId" data-testid="select-instagram">
+                  <SelectTrigger
+                    id="instagramId"
+                    data-testid="select-instagram"
+                  >
                     <SelectValue placeholder="Selecione o Instagram" />
                   </SelectTrigger>
                   <SelectContent>
                     {instagrams.map((instagram) => (
-                      <SelectItem key={instagram.id} value={String(instagram.id)}>
+                      <SelectItem
+                        key={instagram.id}
+                        value={String(instagram.id)}
+                      >
                         {instagram.name}
                       </SelectItem>
                     ))}
@@ -390,7 +550,9 @@ export default function CampaignForm() {
                 <Label htmlFor="whatsappId">WhatsApp</Label>
                 <Select
                   value={config.whatsappId}
-                  onValueChange={(value) => setConfig({ ...config, whatsappId: value })}
+                  onValueChange={(value) =>
+                    setConfig({ ...config, whatsappId: value })
+                  }
                 >
                   <SelectTrigger id="whatsappId" data-testid="select-whatsapp">
                     <SelectValue placeholder="Selecione o WhatsApp" />
@@ -409,7 +571,9 @@ export default function CampaignForm() {
                 <Label htmlFor="leadformId">Formulário de Leads</Label>
                 <Select
                   value={config.leadformId}
-                  onValueChange={(value) => setConfig({ ...config, leadformId: value })}
+                  onValueChange={(value) =>
+                    setConfig({ ...config, leadformId: value })
+                  }
                 >
                   <SelectTrigger id="leadformId" data-testid="select-leadform">
                     <SelectValue placeholder="Selecione o formulário" />
@@ -440,7 +604,12 @@ export default function CampaignForm() {
                     Defina público, orçamento e datas de veiculação
                   </CardDescription>
                 </div>
-                <Button onClick={addAdSet} variant="outline" size="sm" data-testid="button-add-adset">
+                <Button
+                  onClick={addAdSet}
+                  variant="outline"
+                  size="sm"
+                  data-testid="button-add-adset"
+                >
                   <Plus className="h-4 w-4 mr-2" />
                   Adicionar Conjunto
                 </Button>
@@ -448,7 +617,11 @@ export default function CampaignForm() {
             </CardHeader>
             <CardContent className="space-y-6">
               {adSets.map((adSet, index) => (
-                <div key={index} className="border rounded-lg p-4 space-y-4" data-testid={`adset-${index}`}>
+                <div
+                  key={index}
+                  className="border rounded-lg p-4 space-y-4"
+                  data-testid={`adset-${index}`}
+                >
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="font-semibold">Conjunto {index + 1}</h3>
                     {adSets.length > 1 && (
@@ -470,14 +643,22 @@ export default function CampaignForm() {
                       </Label>
                       <Select
                         value={adSet.audienceId}
-                        onValueChange={(value) => updateAdSet(index, "audienceId", value)}
+                        onValueChange={(value) =>
+                          updateAdSet(index, "audienceId", value)
+                        }
                       >
-                        <SelectTrigger id={`audience-${index}`} data-testid={`select-audience-${index}`}>
+                        <SelectTrigger
+                          id={`audience-${index}`}
+                          data-testid={`select-audience-${index}`}
+                        >
                           <SelectValue placeholder="Selecione o público" />
                         </SelectTrigger>
                         <SelectContent>
                           {audiences.map((audience) => (
-                            <SelectItem key={audience.id} value={String(audience.id)}>
+                            <SelectItem
+                              key={audience.id}
+                              value={String(audience.id)}
+                            >
                               {audience.name}
                             </SelectItem>
                           ))}
@@ -487,7 +668,8 @@ export default function CampaignForm() {
 
                     <div className="space-y-2">
                       <Label htmlFor={`budget-${index}`}>
-                        Orçamento (R$) <span className="text-destructive">*</span>
+                        Orçamento (R$){" "}
+                        <span className="text-destructive">*</span>
                       </Label>
                       <Input
                         id={`budget-${index}`}
@@ -495,29 +677,39 @@ export default function CampaignForm() {
                         type="number"
                         placeholder="0.00"
                         value={adSet.budget}
-                        onChange={(e) => updateAdSet(index, "budget", e.target.value)}
+                        onChange={(e) =>
+                          updateAdSet(index, "budget", e.target.value)
+                        }
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor={`startDate-${index}`}>Data de Início</Label>
+                      <Label htmlFor={`startDate-${index}`}>
+                        Data de Início
+                      </Label>
                       <Input
                         id={`startDate-${index}`}
                         data-testid={`input-start-date-${index}`}
                         type="date"
                         value={adSet.startDate}
-                        onChange={(e) => updateAdSet(index, "startDate", e.target.value)}
+                        onChange={(e) =>
+                          updateAdSet(index, "startDate", e.target.value)
+                        }
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor={`endDate-${index}`}>Data de Término</Label>
+                      <Label htmlFor={`endDate-${index}`}>
+                        Data de Término
+                      </Label>
                       <Input
                         id={`endDate-${index}`}
                         data-testid={`input-end-date-${index}`}
                         type="date"
                         value={adSet.endDate}
-                        onChange={(e) => updateAdSet(index, "endDate", e.target.value)}
+                        onChange={(e) =>
+                          updateAdSet(index, "endDate", e.target.value)
+                        }
                       />
                     </div>
                   </div>
@@ -532,91 +724,327 @@ export default function CampaignForm() {
       {currentStep === 3 && (
         <div className="space-y-4" data-testid="step-3-creatives">
           <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle>Criativos</CardTitle>
-                  <CardDescription>
-                    Defina título, texto e pasta do Google Drive
-                  </CardDescription>
-                </div>
-                <Button onClick={addCreative} variant="outline" size="sm" data-testid="button-add-creative">
-                  <Plus className="h-4 w-4 mr-2" />
-                  Adicionar Criativo
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {creatives.map((creative, index) => (
-                <div key={index} className="border rounded-lg p-4 space-y-4" data-testid={`creative-${index}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="font-semibold">Criativo {index + 1}</h3>
-                    {creatives.length > 1 && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => removeCreative(index)}
-                        data-testid={`button-remove-creative-${index}`}
-                      >
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    )}
+            <Tabs
+              value={creativeMode}
+              onValueChange={(value) => setCreativeMode(value as CreativeMode)}
+              className="w-full"
+            >
+              <CardHeader className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <CardTitle>Criativos</CardTitle>
+                    <CardDescription>
+                      Defina titulo, texto e pasta ou reutilize um post da
+                      pagina
+                    </CardDescription>
                   </div>
-
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor={`title-${index}`}>
-                        Título <span className="text-destructive">*</span>
-                      </Label>
-                      <Input
-                        id={`title-${index}`}
-                        data-testid={`input-title-${index}`}
-                        placeholder="Digite o título do anúncio"
-                        value={creative.title}
-                        onChange={(e) => updateCreative(index, "title", e.target.value)}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor={`text-${index}`}>
-                        Texto <span className="text-destructive">*</span>
-                      </Label>
-                      <Textarea
-                        id={`text-${index}`}
-                        data-testid={`input-text-${index}`}
-                        placeholder="Digite o texto do anúncio"
-                        value={creative.text}
-                        onChange={(e) => updateCreative(index, "text", e.target.value)}
-                        rows={4}
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor={`driveFolderId-${index}`}>Pasta Google Drive</Label>
-                      <Select
-                        value={creative.driveFolderId}
-                        onValueChange={(value) => updateCreative(index, "driveFolderId", value)}
-                      >
-                        <SelectTrigger id={`driveFolderId-${index}`} data-testid={`select-drive-folder-${index}`}>
-                          <SelectValue placeholder="Selecione a pasta" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {driveFolders.map((folder) => (
-                            <SelectItem key={folder.id} value={folder.value}>
-                              {folder.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
+                  {creativeMode === "manual" && (
+                    <Button
+                      onClick={addCreative}
+                      variant="outline"
+                      size="sm"
+                      data-testid="button-add-creative"
+                    >
+                      <Plus className="h-4 w-4 mr-2" />
+                      Adicionar Criativo
+                    </Button>
+                  )}
                 </div>
-              ))}
-            </CardContent>
+                <TabsList className="flex w-full flex-wrap gap-2">
+                  <TabsTrigger value="manual">Editor manual</TabsTrigger>
+                  <TabsTrigger value="existing_post">
+                    Use existing Page post (read-only)
+                  </TabsTrigger>
+                </TabsList>
+              </CardHeader>
+              <CardContent>
+                <TabsContent value="manual" className="space-y-6">
+                  {creatives.map((creative, index) => (
+                    <div
+                      key={index}
+                      className="border rounded-lg p-4 space-y-4"
+                      data-testid={`creative-${index}`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="font-semibold">Criativo {index + 1}</h3>
+                        {creatives.length > 1 && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => removeCreative(index)}
+                            data-testid={`button-remove-creative-${index}`}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        )}
+                      </div>
+
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <Label htmlFor={`title-${index}`}>
+                            Titulo <span className="text-destructive">*</span>
+                          </Label>
+                          <Input
+                            id={`title-${index}`}
+                            data-testid={`input-title-${index}`}
+                            placeholder="Digite o titulo do anuncio"
+                            value={creative.title}
+                            onChange={(e) =>
+                              updateCreative(index, "title", e.target.value)
+                            }
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor={`text-${index}`}>
+                            Texto <span className="text-destructive">*</span>
+                          </Label>
+                          <Textarea
+                            id={`text-${index}`}
+                            data-testid={`input-text-${index}`}
+                            placeholder="Digite o texto do anuncio"
+                            value={creative.text}
+                            onChange={(e) =>
+                              updateCreative(index, "text", e.target.value)
+                            }
+                            rows={4}
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor={`driveFolderId-${index}`}>
+                            Pasta Google Drive
+                          </Label>
+                          <Select
+                            value={creative.driveFolderId}
+                            onValueChange={(value) =>
+                              updateCreative(index, "driveFolderId", value)
+                            }
+                          >
+                            <SelectTrigger
+                              id={`driveFolderId-${index}`}
+                              data-testid={`select-drive-folder-${index}`}
+                            >
+                              <SelectValue placeholder="Selecione a pasta" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {driveFolders.map((folder) => (
+                                <SelectItem
+                                  key={folder.id}
+                                  value={folder.value}
+                                >
+                                  {folder.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </TabsContent>
+
+                <TabsContent value="existing_post" className="space-y-4">
+                  {!selectedPageValue ? (
+                    <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                      Selecione uma pagina no passo 1 para carregar os posts
+                      existentes.
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                        <div>
+                          Posts da pagina
+                          <span className="font-semibold">
+                            {selectedPageResource?.name ?? selectedPageValue}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => refetchPagePosts()}
+                            disabled={isLoadingPagePosts}
+                          >
+                            {isLoadingPagePosts
+                              ? "Atualizando..."
+                              : "Atualizar"}
+                          </Button>
+                          {selectedPageValue && (
+                            <Button asChild size="sm" variant="ghost">
+                              <a
+                                href={`https://www.facebook.com/${selectedPageValue}`}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Abrir pagina
+                              </a>
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      {isLoadingPagePosts ? (
+                        <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                          Carregando posts publicados...
+                        </div>
+                      ) : isPagePostsError ? (
+                        <div className="rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+                          {postsErrorMessage}
+                        </div>
+                      ) : pagePosts.length === 0 ? (
+                        <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                          Nenhum post encontrado para esta pagina.
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto rounded-md border">
+                          <table className="min-w-full divide-y text-sm">
+                            <thead>
+                              <tr className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
+                                <th className="px-3 py-2 font-medium">
+                                  Post ID
+                                </th>
+                                <th className="px-3 py-2 font-medium">
+                                  Mensagem
+                                </th>
+                                <th className="px-3 py-2 font-medium">
+                                  Criado em
+                                </th>
+                                <th className="px-3 py-2 font-medium">Likes</th>
+                                <th className="px-3 py-2 font-medium">
+                                  Comentarios
+                                </th>
+                                <th className="px-3 py-2 font-medium">
+                                  Compart.
+                                </th>
+                                <th className="px-3 py-2 font-medium">
+                                  Permalink
+                                </th>
+                                <th className="px-3 py-2 font-medium text-right">
+                                  Acao
+                                </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {pagePosts.map((post) => {
+                                const isSelected = selectedPost?.id === post.id;
+                                return (
+                                  <tr
+                                    key={post.id}
+                                    className={`border-b ${
+                                      isSelected ? "bg-primary/5" : ""
+                                    }`}
+                                  >
+                                    <td className="px-3 py-2 align-top text-xs font-mono">
+                                      {post.id}
+                                    </td>
+                                    <td className="px-3 py-2 align-top text-sm text-muted-foreground">
+                                      <div className="line-clamp-2">
+                                        {truncateMessage(post.message, 90)}
+                                      </div>
+                                    </td>
+                                    <td className="px-3 py-2 align-top text-xs">
+                                      {formatPostDate(post.created_time)}
+                                    </td>
+                                    <td className="px-3 py-2 align-top text-xs">
+                                      {post.likes}
+                                    </td>
+                                    <td className="px-3 py-2 align-top text-xs">
+                                      {post.comments}
+                                    </td>
+                                    <td className="px-3 py-2 align-top text-xs">
+                                      {post.shares}
+                                    </td>
+                                    <td className="px-3 py-2 align-top text-xs">
+                                      {post.permalink_url ? (
+                                        <Button
+                                          asChild
+                                          variant="link"
+                                          size="sm"
+                                          className="px-0 text-xs"
+                                        >
+                                          <a
+                                            href={post.permalink_url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                          >
+                                            Abrir
+                                          </a>
+                                        </Button>
+                                      ) : (
+                                        "-"
+                                      )}
+                                    </td>
+                                    <td className="px-3 py-2 align-top text-right">
+                                      <Button
+                                        variant={
+                                          isSelected ? "default" : "outline"
+                                        }
+                                        size="sm"
+                                        onClick={() => setSelectedPost(post)}
+                                      >
+                                        {isSelected
+                                          ? "Selecionado"
+                                          : "Selecionar"}
+                                      </Button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+
+                      {selectedPost && selectedObjectStoryPreview && (
+                        <div
+                          className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-2"
+                          data-testid="existing-post-preview"
+                        >
+                          <div className="text-sm font-semibold">
+                            Preview do post selecionado
+                          </div>
+                          <div className="text-sm text-muted-foreground">
+                            {selectedPost.message || "Post sem texto"}
+                          </div>
+                          <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                            <span>
+                              Criado:{" "}
+                              {formatPostDate(selectedPost.created_time)}
+                            </span>
+                            <span>Likes: {selectedPost.likes}</span>
+                            <span>Comentarios: {selectedPost.comments}</span>
+                            <span>Compart.: {selectedPost.shares}</span>
+                          </div>
+                          <div className="text-xs font-mono">
+                            object_story_id: {selectedObjectStoryPreview}
+                          </div>
+                          {selectedPost.permalink_url && (
+                            <Button
+                              asChild
+                              variant="link"
+                              size="sm"
+                              className="px-0"
+                            >
+                              <a
+                                href={selectedPost.permalink_url}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Abrir no Facebook
+                              </a>
+                            </Button>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </TabsContent>
+              </CardContent>
+            </Tabs>
           </Card>
         </div>
       )}
-
       {/* Navigation Buttons */}
       <div className="flex justify-between mt-6">
         <Button
