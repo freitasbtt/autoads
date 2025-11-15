@@ -1,5 +1,5 @@
-import Campaigns from "../../pages/Campaigns";
+import { CampaignsPage } from "@/features/campaigns";
 
 export default function CampaignsExample() {
-  return <Campaigns />;
+  return <CampaignsPage />;
 }

@@ -1,22 +1,21 @@
-ï»¿import { createServer, type Server } from "http";
-import { storage } from "./storage";
+import { createServer, type Server } from "http";
+import { storage } from "./modules/storage";
 import {
   MetaGraphClient,
   fetchMetaDashboardMetrics,
-} from "./meta/graph";
-import type { MetricTotals as MetaMetricTotals } from "./meta/graph";
+} from "./modules/meta";
+import type { MetricTotals as MetaMetricTotals } from "./modules/meta";
 import { pingDatabase } from "./db";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import session from "express-session";
 import memorystore from "memorystore";
 import { z } from "zod";
-import type { Express, NextFunction, Request, Response } from "express";
+import type { Express, Request, Response } from "express";
 import type {
   Campaign,
-  InsertAudience,
   InsertAutomation,
-  InsertCampaign,
+
   InsertIntegration,
   InsertResource,
   InsertUser,
@@ -25,10 +24,7 @@ import type {
 } from "@shared/schema";
 import {
   insertUserSchema,
-  insertResourceSchema,
-  insertAudienceSchema,
-  updateAudienceSchema,
-  insertCampaignSchema,
+
   insertIntegrationSchema,
 } from "@shared/schema";
 import crypto from "crypto";
@@ -38,18 +34,21 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { existsSync } from "node:fs";
+import { hashPassword, verifyPassword } from "./modules/auth/services/password.service";
+import { isAdminRole, isSystemAdminRole } from "./modules/auth/services/role.service";
+import { isAdmin, isAuthenticated, isSystemAdmin } from "./middlewares/auth";
+import { resourcesRouter } from "./modules/resources/routes";
+import { setNoCacheHeaders } from "./utils/cache";
+import { encryptMetaAccessToken, decryptMetaAccessToken } from "./modules/meta/utils/token";
+import { generateAppSecretProof } from "./modules/meta/utils/crypto";
+import { getMetaAccess } from "./modules/meta/services/access.service";
+import { audiencesRouter } from "./modules/audiences/routes";
+import { campaignsRouter, campaignWebhookRouter } from "./modules/campaigns/routes";
+import { integrationsRouter } from "./modules/integrations/routes";
+import { getPublicAppUrl } from "./utils/url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
-
-
-function setNoCacheHeaders(res: Response): void {
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
-  res.setHeader("Surrogate-Control", "no-store");
-}
 
 // Extend session data to include OAuth state
 declare module "express-session" {
@@ -60,41 +59,6 @@ declare module "express-session" {
 }
 
 const MemoryStore = memorystore(session);
-
-// Password hashing utilities
-import bcrypt from "bcryptjs";
-
-async function hashPassword(password: string): Promise<string> {
-  return await bcrypt.hash(password, 10);
-}
-
-async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  return await bcrypt.compare(password, hash);
-}
-
-const ADMIN_ROLES = new Set<User["role"]>(["system_admin", "tenant_admin"]);
-
-function isAdminRole(role: User["role"]): boolean {
-  return ADMIN_ROLES.has(role);
-}
-
-function isSystemAdminRole(role: User["role"]): boolean {
-  return role === "system_admin";
-}
-
-function getPublicAppUrl(req: Request): string {
-  const configured = process.env.PUBLIC_APP_URL?.trim();
-  if (configured && configured.length > 0) {
-    return configured.replace(/\/$/, "");
-  }
-
-  const host = req.get("host");
-  if (!host) {
-    throw new Error("Unable to determine host for OAuth redirects");
-  }
-
-  return `${req.protocol}://${host}`;
-}
 
 function validateInternalRequest(req: Request): {
   valid: boolean;
@@ -122,140 +86,7 @@ function validateInternalRequest(req: Request): {
   return { valid: true };
 }
 
-const META_TOKEN_ENC_PREFIX = "enc.v1";
-let cachedMetaTokenKey: Buffer | null | undefined;
 
-function getMetaTokenEncryptionKey(): Buffer | null {
-  if (cachedMetaTokenKey !== undefined) {
-    return cachedMetaTokenKey;
-  }
-
-  const rawKey = process.env.META_TOKEN_ENC_KEY?.trim();
-  if (!rawKey) {
-    cachedMetaTokenKey = null;
-    return null;
-  }
-
-  const tryDecode = (value: string, encoding: BufferEncoding): Buffer | null => {
-    try {
-      const decoded = Buffer.from(value, encoding);
-      return decoded.length === 32 ? decoded : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const base64Key = tryDecode(rawKey, "base64");
-  if (base64Key) {
-    cachedMetaTokenKey = base64Key;
-    return base64Key;
-  }
-
-  if (rawKey.length === 32) {
-    const utf8Key = tryDecode(rawKey, "utf8");
-    if (utf8Key) {
-      cachedMetaTokenKey = utf8Key;
-      return utf8Key;
-    }
-  }
-
-  console.warn("META_TOKEN_ENC_KEY must decode to exactly 32 bytes (AES-256).");
-  cachedMetaTokenKey = null;
-  return null;
-}
-
-function encryptMetaAccessToken(token: string): string {
-  if (!token) {
-    return token;
-  }
-  const key = getMetaTokenEncryptionKey();
-  if (!key) {
-    return token;
-  }
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
-  const encrypted = Buffer.concat([cipher.update(token, "utf8"), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-  return [
-    META_TOKEN_ENC_PREFIX,
-    iv.toString("base64"),
-    authTag.toString("base64"),
-    encrypted.toString("base64"),
-  ].join(":");
-}
-
-function decryptMetaAccessToken(token?: string | null): string | null {
-  if (!token || token.length === 0) {
-    return null;
-  }
-  if (!token.startsWith(`${META_TOKEN_ENC_PREFIX}:`)) {
-    return token;
-  }
-  const key = getMetaTokenEncryptionKey();
-  if (!key) {
-    console.error("Encrypted Meta token stored but META_TOKEN_ENC_KEY is missing or invalid.");
-    return null;
-  }
-  const [, ivB64, tagB64, payloadB64] = token.split(":");
-  if (!ivB64 || !tagB64 || !payloadB64) {
-    console.error("Invalid encrypted Meta token format.");
-    return null;
-  }
-  try {
-    const iv = Buffer.from(ivB64, "base64");
-    const authTag = Buffer.from(tagB64, "base64");
-    const payload = Buffer.from(payloadB64, "base64");
-    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
-    decipher.setAuthTag(authTag);
-    const decrypted = Buffer.concat([decipher.update(payload), decipher.final()]);
-    return decrypted.toString("utf8");
-  } catch (err) {
-    console.error("Failed to decrypt Meta token:", err);
-    return null;
-  }
-}
-
-const OBJECTIVE_OUTCOME_MAP: Record<string, string> = {
-  LEAD: "OUTCOME_LEADS",
-  LEADS: "OUTCOME_LEADS",
-  OUTCOME_LEADS: "OUTCOME_LEADS",
-  TRAFFIC: "OUTCOME_TRAFFIC",
-  OUTCOME_TRAFFIC: "OUTCOME_TRAFFIC",
-  WHATSAPP: "OUTCOME_ENGAGEMENT",
-  MESSAGES: "OUTCOME_ENGAGEMENT",
-  MESSAGE: "OUTCOME_ENGAGEMENT",
-  OUTCOME_ENGAGEMENT: "OUTCOME_ENGAGEMENT",
-  CONVERSIONS: "OUTCOME_SALES",
-  SALES: "OUTCOME_SALES",
-  OUTCOME_SALES: "OUTCOME_SALES",
-  REACH: "OUTCOME_AWARENESS",
-  OUTCOME_AWARENESS: "OUTCOME_AWARENESS",
-};
-
-const OBJECTIVE_OPTIMIZATION_MAP: Record<string, string> = {
-  OUTCOME_LEADS: "LEAD_GENERATION",
-  OUTCOME_ENGAGEMENT: "CONVERSATIONS",
-  OUTCOME_TRAFFIC: "LINK_CLICKS",
-  OUTCOME_SALES: "OFFSITE_CONVERSIONS",
-  OUTCOME_AWARENESS: "IMPRESSIONS",
-};
-
-const DEFAULT_PUBLISHER_PLATFORMS = [
-  "facebook",
-  "instagram",
-  "messenger",
-  "audience_network",
-] as const;
-
-function mapObjectiveToOutcome(value: unknown): string {
-  const normalized = typeof value === "string" ? value.trim().toUpperCase() : "";
-  if (!normalized) {
-    return "OUTCOME_LEADS";
-  }
-  return OBJECTIVE_OUTCOME_MAP[normalized] ?? (normalized.startsWith("OUTCOME_") ? normalized : "OUTCOME_LEADS");
-}
-
-// Configure passport
 passport.use(
   new LocalStrategy(
     { usernameField: "email", passwordField: "password" },
@@ -291,14 +122,6 @@ passport.deserializeUser(async (id: number, done) => {
     done(err);
   }
 });
-
-// Middleware to check authentication
-function isAuthenticated(req: Request, res: Response, next: NextFunction) {
-  if (req.isAuthenticated()) {
-    return next();
-  }
-  res.status(401).json({ message: "Unauthorized" });
-}
 
 const DATE_PARAM_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const dashboardMetricsQuerySchema = z.object({
@@ -364,27 +187,6 @@ function emptyTotals(): MetaMetricTotals {
 type MetaIntegrationConfig = {
   accessToken?: string | null;
 };
-
-// Middleware to check if user is admin
-function isAdmin(req: Request, res: Response, next: NextFunction) {
-  if (req.isAuthenticated()) {
-    const user = req.user as User;
-    if (isAdminRole(user.role)) {
-      return next();
-    }
-  }
-  res.status(403).json({ message: "Forbidden - Admin access required" });
-}
-
-function isSystemAdmin(req: Request, res: Response, next: NextFunction) {
-  if (req.isAuthenticated()) {
-    const user = req.user as User;
-    if (isSystemAdminRole(user.role)) {
-      return next();
-    }
-  }
-  res.status(403).json({ message: "Forbidden - System admin access required" });
-}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/health", async (_req, res) => {
@@ -506,16 +308,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // ===== Resource Routes =====
 
-  // Get all resources for tenant
-  app.get("/api/resources", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const resources = await storage.getResourcesByTenant(user.tenantId);
-      res.json(resources);
-    } catch (err) {
-      next(err);
-    }
-  });
+  app.use("/api/resources", resourcesRouter);
+  app.use("/api/integrations", integrationsRouter);
+  app.use("/api/audiences", audiencesRouter);
+  app.use("/api/campaigns", campaignsRouter);
+  app.use("/api/webhooks", campaignWebhookRouter);
 
   app.get("/api/dashboard/metrics", isAuthenticated, async (req, res, next) => {
     try {
@@ -692,7 +489,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
 
-        // integraÃ§ao meta / token
+        // integraçao meta / token
         const integration = await storage.getIntegrationByProvider(
           user.tenantId,
           "Meta",
@@ -717,7 +514,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         // precisamos do objective da campanha para calcular 'resultado principal'
-        // (leads, conversas, vendas...) no relatÃ³rio por anÃºncio
+        // (leads, conversas, vendas...) no relatório por anúncio
         const client = new MetaGraphClient(
           metaAccessToken,
           settings.metaAppSecret,
@@ -729,7 +526,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         );
         const campaignObjective = thisCampaign?.objective ?? null;
 
-        // AGORA usamos a nova funÃ§Ã£o que retorna por ANÃšNCIO (ad)
+        // AGORA usamos a nova função que retorna por ANÚNCIO (ad)
         const adReports = await client.fetchCampaignAdReports(
           accountIdParam,
           campaignId,
@@ -747,87 +544,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     },
   );
 
-
-  // Get resources by type
-  app.get("/api/resources/:type", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const resources = await storage.getResourcesByType(user.tenantId, req.params.type);
-      res.json(resources);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Create resource
-  app.post("/api/resources", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const data = insertResourceSchema.parse(req.body);
-      const resourceValues: InsertResource & { tenantId: number } = {
-        ...data,
-        tenantId: user.tenantId,
-      };
-      const resource = await storage.createResource(resourceValues);
-
-      res.status(201).json(resource);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Update resource
-  app.patch("/api/resources/:id", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const id = parseInt(req.params.id);
-
-      // Verify resource belongs to user's tenant
-      const existing = await storage.getResource(id);
-      if (!existing || existing.tenantId !== user.tenantId) {
-        return res.status(404).json({ message: "Resource not found" });
-      }
-
-      // Prevent tenantId override
-      const data = insertResourceSchema.partial().parse(req.body);
-      const resource = await storage.updateResource(id, data);
-      res.json(resource);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Delete resource
-  app.delete("/api/resources/:id", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const id = parseInt(req.params.id);
-
-      // Verify resource belongs to user's tenant
-      const existing = await storage.getResource(id);
-      if (!existing || existing.tenantId !== user.tenantId) {
-        return res.status(404).json({ message: "Resource not found" });
-      }
-
-      await storage.deleteResource(id);
-      res.json({ message: "Resource deleted successfully" });
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // ===== Audience Routes =====
-
-  // Get all audiences for tenant
-  app.get("/api/audiences", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const audiences = await storage.getAudiencesByTenant(user.tenantId);
-      res.json(audiences);
-    } catch (err) {
-      next(err);
-    }
-  });
 
   function parseQueryParam(value: unknown): string {
     if (Array.isArray(value)) {
@@ -851,7 +567,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const access = await getMetaAccess(user.tenantId);
       if (!access) {
-        return res.status(400).json({ message: "IntegraÃ§Ã£o com Meta nÃ£o configurada" });
+        return res.status(400).json({ message: "Integração com Meta não configurada" });
       }
 
       const params = new URLSearchParams({
@@ -913,7 +629,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const access = await getMetaAccess(user.tenantId);
       if (!access) {
-        return res.status(400).json({ message: "IntegraÃ§Ã£o com Meta nÃ£o configurada" });
+        return res.status(400).json({ message: "Integração com Meta não configurada" });
       }
 
       const params = new URLSearchParams({
@@ -975,7 +691,7 @@ app.get("/api/meta/pages/:pageId/posts", isAuthenticated, async (req, res) => {
       }
     }
 
-    // --- 1) Buscar integraÃ§Ã£o da Meta / User Token (via getMetaAccess) ---
+    // --- 1) Buscar integração da Meta / User Token (via getMetaAccess) ---
     const userAccess = await getMetaAccess(user.tenantId);
 
     if (
@@ -983,7 +699,7 @@ app.get("/api/meta/pages/:pageId/posts", isAuthenticated, async (req, res) => {
       typeof userAccess.accessToken !== "string" ||
       userAccess.accessToken.trim().length === 0
     ) {
-      console.error("Meta access invÃ¡lido para tenant", user.tenantId, {
+      console.error("Meta access inválido para tenant", user.tenantId, {
         hasAccess: !!userAccess,
         hasToken: !!userAccess?.accessToken,
       });
@@ -1172,7 +888,7 @@ app.get("/api/meta/pages/:pageId/posts", isAuthenticated, async (req, res) => {
         .json({ message: "Falha ao interpretar resposta da Meta" });
     }
 
-    // --- Tratamento de erros do Graph API (token/permissÃ£o/etc) ---
+    // --- Tratamento de erros do Graph API (token/permissão/etc) ---
     if (!postsResponse.ok || body?.error) {
       const graphCode =
         typeof body?.error?.code === "number" ? body.error.code : undefined;
@@ -1218,7 +934,7 @@ app.get("/api/meta/pages/:pageId/posts", isAuthenticated, async (req, res) => {
         .json({ message: clientMessage, graphCode, errorSubcode });
     }
 
-    // --- NormalizaÃ§Ã£o das contagens ---
+    // --- Normalização das contagens ---
     const ensureCount = (value: unknown): number => {
       if (typeof value === "number") {
         return Number.isFinite(value) && value >= 0 ? value : 0;
@@ -1279,435 +995,6 @@ app.get("/api/meta/pages/:pageId/posts", isAuthenticated, async (req, res) => {
 });
 
 
-  // Get single audience
-  app.get("/api/audiences/:id", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const id = parseInt(req.params.id);
-      const audience = await storage.getAudience(id);
-
-      if (!audience || audience.tenantId !== user.tenantId) {
-        return res.status(404).json({ message: "Audience not found" });
-      }
-
-      res.json(audience);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Create audience
-  app.post("/api/audiences", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const data = insertAudienceSchema.parse(req.body);
-      const audienceValues: InsertAudience & { tenantId: number } = {
-        ...data,
-        tenantId: user.tenantId,
-      };
-      const audience = await storage.createAudience(audienceValues);
-
-      res.status(201).json(audience);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Update audience
-  app.patch("/api/audiences/:id", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const id = parseInt(req.params.id);
-
-      // Verify audience belongs to user's tenant
-      const existing = await storage.getAudience(id);
-      if (!existing || existing.tenantId !== user.tenantId) {
-        return res.status(404).json({ message: "Audience not found" });
-      }
-
-      // Prevent tenantId override
-      const data = updateAudienceSchema.parse(req.body);
-      const audience = await storage.updateAudience(id, data);
-      res.json(audience);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Delete audience
-  app.delete("/api/audiences/:id", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const id = parseInt(req.params.id);
-
-      // Verify audience belongs to user's tenant
-      const existing = await storage.getAudience(id);
-      if (!existing || existing.tenantId !== user.tenantId) {
-        return res.status(404).json({ message: "Audience not found" });
-      }
-
-      await storage.deleteAudience(id);
-      res.json({ message: "Audience deleted successfully" });
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // ===== Campaign Routes =====
-
-  // Get all campaigns for tenant
-  app.get("/api/campaigns", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const campaigns = await storage.getCampaignsByTenant(user.tenantId);
-      res.json(campaigns);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Get single campaign
-  app.get("/api/campaigns/:id", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const id = parseInt(req.params.id);
-      const campaign = await storage.getCampaign(id);
-
-      if (!campaign || campaign.tenantId !== user.tenantId) {
-        return res.status(404).json({ message: "Campaign not found" });
-      }
-
-      res.json(campaign);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Create campaign (always as draft)
-  app.post("/api/campaigns", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const data = insertCampaignSchema.parse(req.body);
-
-      // Always create campaigns as draft - webhook will be sent manually via send-webhook endpoint
-      const campaignValues: InsertCampaign & { tenantId: number } = {
-        ...data,
-        tenantId: user.tenantId,
-        status: "draft", // Explicitly set to draft
-      };
-      const campaign = await storage.createCampaign(campaignValues);
-
-      res.status(201).json(campaign);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Update campaign
-  app.patch("/api/campaigns/:id", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const id = parseInt(req.params.id);
-
-      // Verify campaign belongs to user's tenant
-      const existing = await storage.getCampaign(id);
-      if (!existing || existing.tenantId !== user.tenantId) {
-        return res.status(404).json({ message: "Campaign not found" });
-      }
-
-      // Prevent tenantId override
-      const data = insertCampaignSchema.partial().parse(req.body);
-      const campaign = await storage.updateCampaign(id, { ...data });
-      res.json(campaign);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Delete campaign
-  app.delete("/api/campaigns/:id", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const id = parseInt(req.params.id);
-
-      // Verify campaign belongs to user's tenant
-      const existing = await storage.getCampaign(id);
-      if (!existing || existing.tenantId !== user.tenantId) {
-        return res.status(404).json({ message: "Campaign not found" });
-      }
-
-      await storage.deleteCampaign(id);
-      res.json({ message: "Campaign deleted successfully" });
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Send campaign to n8n webhook
-  app.post("/api/campaigns/:id/send-webhook", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const id = parseInt(req.params.id);
-
-      // Verify campaign belongs to user's tenant
-      const campaign = await storage.getCampaign(id);
-      if (!campaign || campaign.tenantId !== user.tenantId) {
-        return res.status(404).json({ message: "Campaign not found" });
-      }
-
-      // Get webhook URL
-      const settings = await storage.getAppSettings();
-      if (!settings?.n8nWebhookUrl) {
-        return res.status(400).json({ message: "Webhook n8n nao configurado. Configure em Admin > Configuracoes" });
-      }
-
-      // Fetch resource details
-      const accountResource = campaign.accountId ? await storage.getResource(campaign.accountId) : null;
-      const pageResource = campaign.pageId ? await storage.getResource(campaign.pageId) : null;
-      const instagramResource = campaign.instagramId ? await storage.getResource(campaign.instagramId) : null;
-      const whatsappResource = campaign.whatsappId ? await storage.getResource(campaign.whatsappId) : null;
-      const leadformResource = campaign.leadformId ? await storage.getResource(campaign.leadformId) : null;
-      const adAccountId = accountResource?.value
-        ? accountResource.value.replace(/\D+/g, "")
-        : "";
-
-      const extractString = (value: unknown) =>
-        typeof value === "string" ? value.trim() : "";
-
-      const creativeEntries = Array.isArray(campaign.creatives)
-        ? (campaign.creatives as Array<Record<string, unknown>>)
-        : [];
-
-      const primaryDriveFolderFromCreative = creativeEntries
-        .map((creative) => extractString(creative["driveFolderId"]))
-        .find((value) => value.length > 0);
-
-      const primaryCreativeEntry =
-        creativeEntries.find((creative) => {
-          const titleValue = extractString(creative["title"]);
-          const textValue = extractString(creative["text"]);
-          return titleValue.length > 0 || textValue.length > 0;
-        }) ?? creativeEntries[0];
-
-      const primaryCreativeTitle = extractString(primaryCreativeEntry?.["title"]);
-      const primaryCreativeText = extractString(primaryCreativeEntry?.["text"]);
-      const primaryObjectStoryId =
-        creativeEntries
-          .map((creative) => extractString(creative["objectStoryId"]))
-          .find((value) => value.length > 0) ?? "";
-      const primaryPostId =
-        creativeEntries
-          .map((creative) => extractString(creative["postId"]))
-          .find((value) => value.length > 0) ?? "";
-      const primaryPermalinkUrl =
-        creativeEntries
-          .map((creative) => extractString(creative["permalinkUrl"]))
-          .find((value) => value.length > 0) ?? "";
-      const primaryCreativeMode =
-        creativeEntries
-          .map((creative) => extractString(creative["mode"]))
-          .find((value) => value.length > 0) ?? "";
-      const primaryPostMessage =
-        creativeEntries
-          .map((creative) => extractString(creative["postMessage"]))
-          .find((value) => value.length > 0) ?? "";
-
-      const driveFolderId =
-        primaryDriveFolderFromCreative ||
-        (typeof campaign.driveFolderId === "string" ? campaign.driveFolderId.trim() : "");
-
-      const tenant = await storage.getTenant(user.tenantId);
-      const callbackBaseUrl = getPublicAppUrl(req).replace(/\/$/, "");
-      const callbackUrl = `${callbackBaseUrl}/api/webhooks/n8n/status`;
-      const requestId = `req-${crypto.randomUUID().replace(/-/g, "")}`;
-
-      const parseBudgetToNumber = (raw: unknown): number | undefined => {
-        if (typeof raw === "number" && Number.isFinite(raw)) {
-          return raw;
-        }
-        if (typeof raw === "string") {
-          const normalized = raw.replace(/[^0-9,.-]/g, "").replace(/\./g, "").replace(",", ".");
-          const value = Number.parseFloat(normalized);
-          if (Number.isFinite(value)) {
-            return value;
-          }
-        }
-        return undefined;
-      };
-
-      const mappedObjective = mapObjectiveToOutcome(campaign.objective);
-
-      const adSetEntries = Array.isArray(campaign.adSets)
-        ? (campaign.adSets as Array<Record<string, unknown>>)
-        : [];
-
-      const adSetsPayload = await Promise.all(
-        adSetEntries.map(async (rawAdSet, index) => {
-          const adSet = rawAdSet as Record<string, unknown>;
-
-          const audienceIdInput = adSet["audienceId"];
-          const audienceId =
-            typeof audienceIdInput === "number"
-              ? audienceIdInput
-              : Number.parseInt(String(audienceIdInput ?? ""), 10);
-
-          const audience =
-            Number.isFinite(audienceId) && audienceId > 0
-              ? await storage.getAudience(audienceId)
-              : undefined;
-
-          const audienceData =
-            audience && audience.tenantId === user.tenantId ? audience : undefined;
-
-          const adSetNameRaw = adSet["name"];
-          const adSetName =
-            typeof adSetNameRaw === "string" && adSetNameRaw.trim().length > 0
-              ? adSetNameRaw.trim()
-              : audienceData?.name ?? `Conjunto ${index + 1}`;
-
-          const budgetValue = parseBudgetToNumber(adSet["budget"]);
-          const startDateRaw = adSet["startDate"];
-          const endDateRaw = adSet["endDate"];
-          const gendersRaw = adSet["genders"];
-
-          const dailyBudget =
-            budgetValue !== undefined ? Math.max(0, Math.round(budgetValue * 100)) : undefined;
-          const startDate =
-            typeof startDateRaw === "string" && startDateRaw.trim().length > 0
-              ? startDateRaw
-              : new Date().toISOString().slice(0, 10);
-          const endDate =
-            typeof endDateRaw === "string" && endDateRaw.trim().length > 0 ? endDateRaw : undefined;
-
-          const genders =
-            Array.isArray(gendersRaw) && gendersRaw.every((g) => typeof g === "number")
-              ? (gendersRaw as number[])
-              : [];
-
-          const publisherPlatforms = Array.from(DEFAULT_PUBLISHER_PLATFORMS);
-
-          const cityTargets = (audienceData?.cities ?? []).map(({ key, radius, distance_unit }) => ({
-            key,
-            radius,
-            distance_unit,
-          }));
-
-          const interestTargets = (audienceData?.interests ?? []).map(({ id, name }) => ({
-            id,
-            name,
-          }));
-
-          const geoLocations =
-            cityTargets.length > 0
-              ? {
-                cities: cityTargets,
-              }
-              : undefined;
-
-          const flexibleSpec =
-            interestTargets.length > 0
-              ? [
-                {
-                  interests: interestTargets,
-                },
-              ]
-              : undefined;
-
-          const optimizationGoalRaw = adSet["optimizationGoal"];
-          const optimizationGoal =
-            typeof optimizationGoalRaw === "string" && optimizationGoalRaw.trim().length > 0
-              ? optimizationGoalRaw.trim()
-              : OBJECTIVE_OPTIMIZATION_MAP[mappedObjective] ?? "LEAD_GENERATION";
-
-          return {
-            name: adSetName,
-            billing_event: "IMPRESSIONS",
-            optimization_goal: optimizationGoal,
-            bid_strategy: "LOWEST_COST_WITHOUT_CAP",
-            daily_budget: dailyBudget,
-            targeting: {
-              age_min: audienceData?.ageMin ?? undefined,
-              age_max: audienceData?.ageMax ?? undefined,
-              genders,
-              geo_locations: geoLocations,
-              flexible_spec: flexibleSpec,
-              publisher_platforms: publisherPlatforms,
-            },
-            status: "PAUSED",
-            start_time: startDate,
-            end_time: endDate,
-          };
-        })
-      );
-
-      const clientName = tenant?.name ?? `Tenant-${user.tenantId}`;
-      const adAccountValue = adAccountId || (accountResource ? accountResource.value : "");
-      const pageIdValue = pageResource ? pageResource.value : "";
-      const instagramIdValue = instagramResource ? instagramResource.value : "";
-      const leadFormIdValue = leadformResource ? leadformResource.value : "";
-      const leadFormNameValue = leadformResource?.name ?? "";
-      const whatsappIdValue = whatsappResource ? whatsappResource.value : "";
-      const campaignWebsite = extractString(campaign.websiteUrl);
-
-      const messageText =
-        extractString(campaign.message) ||
-        primaryPostMessage ||
-        primaryCreativeText;
-      const titleText =
-        extractString(campaign.title) ||
-        primaryCreativeTitle ||
-        (primaryPostMessage.length > 0
-          ? primaryPostMessage.slice(0, 80)
-          : "");
-
-      const isAddCreativesFlow = adSetsPayload.length === 0;
-
-      const dataPayload = isAddCreativesFlow
-        ? {
-          action: "add_creatives" as const,
-          tenant_id: user.tenantId,
-          client: clientName,
-          ad_account_id: adAccountValue,
-          external_id: String(campaign.id),
-          campaign_name: extractString(campaign.name) || titleText,
-          objective: mappedObjective,
-          page_id: pageIdValue,
-          instagram_user_id: instagramIdValue,
-          lead_form_id: leadFormIdValue,
-          leadgen_form_id: leadFormIdValue,
-          drive_folder_id: driveFolderId || "",
-          message_text: messageText,
-          title_text: titleText,
-          whatsapp_number_id: whatsappIdValue,
-          website_url: campaignWebsite,
-          page_name: pageResource?.name ?? "",
-          instagram_name: instagramResource?.name ?? "",
-          whatsapp_name: whatsappResource?.name ?? "",
-          leadgen_form_name: leadFormNameValue,
-          lead_form_name: leadFormNameValue,
-          drive_folder_name: "",
-          object_story_id: primaryObjectStoryId || undefined,
-          post_id: primaryPostId || undefined,
-          post_permalink: primaryPermalinkUrl || undefined,
-          creative_mode: primaryCreativeMode || undefined,
-        }
-        : {
-          action: "create_campaign" as const,
-          tenant_id: user.tenantId,
-          client: clientName,
-          ad_account_id: adAccountValue,
-          external_id: String(campaign.id),
-          campaign: {
-            name: campaign.name,
-            objective: mappedObjective,
-            buying_type: "AUCTION",
-            status: campaign.status ? campaign.status.toUpperCase() : "PAUSED",
-            special_ad_categories: ["NONE"],
-          },
-          adsets: adSetsPayload,
-          page_id: pageIdValue,
-          instagram_user_id: instagramIdValue,
-          lead_form_id: leadFormIdValue,
           leadgen_form_id: leadFormIdValue,
           drive_folder_id: driveFolderId || "",
           message_text: messageText,
@@ -1764,356 +1051,6 @@ app.get("/api/meta/pages/:pageId/posts", isAuthenticated, async (req, res) => {
       });
 
       res.json({ message: "Campanha enviada para n8n com sucesso" });
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Send data directly to n8n webhook (for existing campaign form)
-  app.post("/api/webhooks/n8n", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-
-      // Get webhook URL
-      const settings = await storage.getAppSettings();
-      if (!settings?.n8nWebhookUrl) {
-        return res.status(400).json({ message: "Webhook n8n nao configurado. Configure em Admin > Configuracoes" });
-      }
-
-      // Extract data from request
-      const {
-        ad_account_id,
-        account_id,
-        account_resource_id,
-        campaign_id,
-        external_id,
-        campaign_name,
-        objective,
-        objectives,
-        page_id,
-        page_name,
-        instagram_user_id,
-        instagram_name,
-        whatsapp_number_id,
-        whatsapp_name,
-        leadgen_form_id,
-        lead_form_id,
-        leadgen_form_name,
-        lead_form_name,
-        website_url,
-        drive_folder_id,
-        drive_folder_name,
-        title,
-        title_text,
-        message,
-        message_text,
-        metadata,
-        client,
-        callback_url,
-        request_id,
-      } = req.body ?? {};
-
-      const tenant = await storage.getTenant(user.tenantId);
-      const callbackBaseUrl = getPublicAppUrl(req).replace(/\/$/, "");
-      const inferredCallbackUrl = `${callbackBaseUrl}/api/webhooks/n8n/status`;
-
-      const incomingMeta =
-        metadata && typeof metadata === "object" ? (metadata as Record<string, unknown>) : {};
-
-      const computedRequestId =
-        (typeof request_id === "string" && request_id.length > 0
-          ? request_id
-          : undefined) ||
-        (typeof incomingMeta["request_id"] === "string" && (incomingMeta["request_id"] as string).length > 0
-          ? (incomingMeta["request_id"] as string)
-          : `req-${crypto.randomUUID().replace(/-/g, "")}`);
-
-      const computedCallbackUrl =
-        (typeof callback_url === "string" && callback_url.length > 0
-          ? callback_url
-          : undefined) ||
-        (typeof incomingMeta["callback_url"] === "string" &&
-          (incomingMeta["callback_url"] as string).length > 0
-          ? (incomingMeta["callback_url"] as string)
-          : inferredCallbackUrl);
-
-      const accountResourceIdInput = account_resource_id ?? account_id;
-      const accountResourceId =
-        typeof accountResourceIdInput === "number"
-          ? accountResourceIdInput
-          : Number.parseInt(String(accountResourceIdInput ?? ""), 10);
-
-      const accountResource =
-        Number.isFinite(accountResourceId) && accountResourceId > 0
-          ? await storage.getResource(accountResourceId)
-          : undefined;
-
-      const sanitizedAdAccountId =
-        (typeof ad_account_id === "string" && ad_account_id.length > 0
-          ? ad_account_id
-          : undefined) ??
-        accountResource?.value ??
-        "";
-
-      const resolvedLeadFormId =
-        typeof leadgen_form_id !== "undefined" && leadgen_form_id !== null
-          ? leadgen_form_id
-          : lead_form_id;
-
-      const resolvedLeadFormName =
-        typeof leadgen_form_name === "string" && leadgen_form_name.trim().length > 0
-          ? leadgen_form_name
-          : typeof lead_form_name === "string"
-            ? lead_form_name
-            : "";
-
-      const clientName =
-        (typeof client === "string" && client.trim().length > 0
-          ? client.trim()
-          : undefined) ??
-        tenant?.name ??
-        `Tenant-${user.tenantId}`;
-
-      const objectiveValueRaw =
-        (typeof objective === "string" && objective.length > 0 ? objective : undefined) ??
-        (Array.isArray(objectives) && objectives.length > 0 ? String(objectives[0]) : "");
-      const objectiveOutcome = mapObjectiveToOutcome(objectiveValueRaw);
-
-      const campaignIdentifier = external_id ?? campaign_id;
-      const outgoingExternalId = campaignIdentifier !== undefined && campaignIdentifier !== null
-        ? String(campaignIdentifier)
-        : "";
-
-      const webhookMeta: Record<string, unknown> = {
-        ...incomingMeta,
-        request_id: computedRequestId,
-        callback_url: computedCallbackUrl,
-      };
-
-      const webhookPayload = {
-        body: {
-          data: {
-            action: "add_creatives" as const,
-            tenant_id: user.tenantId,
-            client: clientName,
-            ad_account_id: sanitizedAdAccountId,
-            external_id: outgoingExternalId,
-            campaign_name:
-              (typeof campaign_name === "string" && campaign_name.length > 0
-                ? campaign_name
-                : undefined) || (typeof title_text === "string" && title_text.length > 0
-                  ? title_text
-                  : title ?? ""),
-            objective: objectiveOutcome,
-            page_id: page_id !== undefined && page_id !== null ? String(page_id) : "",
-            instagram_user_id:
-              instagram_user_id !== undefined && instagram_user_id !== null
-                ? String(instagram_user_id)
-                : "",
-            leadgen_form_id:
-              resolvedLeadFormId !== undefined && resolvedLeadFormId !== null
-                ? String(resolvedLeadFormId)
-                : "",
-            lead_form_id:
-              resolvedLeadFormId !== undefined && resolvedLeadFormId !== null
-                ? String(resolvedLeadFormId)
-                : "",
-            drive_folder_id:
-              drive_folder_id !== undefined && drive_folder_id !== null
-                ? String(drive_folder_id)
-                : "",
-            message_text:
-              (typeof message_text === "string" && message_text.length > 0
-                ? message_text
-                : message) || "",
-            title_text:
-              (typeof title_text === "string" && title_text.length > 0 ? title_text : title) || "",
-            whatsapp_number_id:
-              whatsapp_number_id !== undefined && whatsapp_number_id !== null
-                ? String(whatsapp_number_id)
-                : "",
-            website_url: typeof website_url === "string" ? website_url : "",
-            page_name: typeof page_name === "string" ? page_name : "",
-            instagram_name: typeof instagram_name === "string" ? instagram_name : "",
-            whatsapp_name: typeof whatsapp_name === "string" ? whatsapp_name : "",
-            leadgen_form_name: resolvedLeadFormName,
-            lead_form_name: resolvedLeadFormName,
-            drive_folder_name: typeof drive_folder_name === "string" ? drive_folder_name : "",
-          },
-          meta: webhookMeta,
-        },
-      };
-
-      // Send webhook
-      const webhookResponse = await fetch(settings.n8nWebhookUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(webhookPayload),
-      });
-
-      if (!webhookResponse.ok) {
-        const errorText = await webhookResponse.text();
-        console.error("Failed to send webhook to n8n:", errorText);
-
-        // Parse error to provide better user feedback
-        let userMessage = "Erro ao enviar webhook para n8n";
-        try {
-          const errorJson = JSON.parse(errorText);
-          if (errorJson.code === 404 || errorJson.message?.includes("not registered")) {
-            userMessage = "Webhook n8n nao esta ativo. No n8n, clique em 'Execute workflow' e tente novamente.";
-          }
-        } catch (e) {
-          // Keep default message if parsing fails
-        }
-
-        return res.status(500).json({ message: userMessage });
-      }
-
-      res.json({ message: "Dados enviados para n8n com sucesso" });
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Receive status update from n8n
-  app.post("/api/webhooks/n8n/status", async (req, res, next) => {
-    try {
-      const { campaign_id, external_id, status, status_detail } = req.body;
-
-      if (campaign_id && external_id && String(campaign_id) !== String(external_id)) {
-        return res
-          .status(400)
-          .json({ message: "campaign_id e external_id nao correspondem ao mesmo valor" });
-      }
-
-      if (!status) {
-        return res.status(400).json({ message: "status is required" });
-      }
-
-      // Validate status values
-      const validStatuses = ["active", "error", "paused", "completed"];
-      if (!validStatuses.includes(status.toLowerCase())) {
-        return res.status(400).json({
-          message: `Invalid status. Must be one of: ${validStatuses.join(", ")}`
-        });
-      }
-
-      const campaignIdentifier = external_id ?? campaign_id;
-      if (!campaignIdentifier) {
-        return res
-          .status(400)
-          .json({ message: "Envie campaign_id ou external_id para identificar a campanha" });
-      }
-
-      const parsedCampaignId = Number.parseInt(String(campaignIdentifier), 10);
-      if (!Number.isFinite(parsedCampaignId)) {
-        return res
-          .status(400)
-          .json({ message: "campaign_id/external_id deve ser numerico" });
-      }
-
-      // Get campaign to verify it exists
-      const campaign = await storage.getCampaign(parsedCampaignId);
-      if (!campaign) {
-        return res.status(404).json({ message: "Campaign not found" });
-      }
-
-      // Update campaign status
-      const updated = await storage.updateCampaign(parsedCampaignId, {
-        status: status.toLowerCase(),
-        statusDetail: status_detail || null,
-      });
-
-      console.log(
-        `[n8n-status] Campaign ${parsedCampaignId} status updated to: ${status}`,
-        status_detail || ""
-      );
-
-      res.json({
-        message: "Status updated successfully",
-        campaign: updated
-      });
-    } catch (err) {
-      console.error("[n8n-status] Error updating campaign status:", err);
-      next(err);
-    }
-  });
-
-  // ===== Integration Routes =====
-
-  // Get all integrations for tenant
-  app.get("/api/integrations", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const integrations = await storage.getIntegrationsByTenant(user.tenantId);
-      res.json(integrations);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Get integration by provider
-  app.get("/api/integrations/:provider", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const integration = await storage.getIntegrationByProvider(user.tenantId, req.params.provider);
-
-      if (!integration || integration.tenantId !== user.tenantId) {
-        return res.status(404).json({ message: "Integration not found" });
-      }
-
-      res.json(integration);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Create/Update integration
-  app.post("/api/integrations", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-
-      // Prevent tenantId override in create/update
-      const bodyData = insertIntegrationSchema.parse(req.body);
-
-      // Check if integration already exists
-      const existing = await storage.getIntegrationByProvider(user.tenantId, bodyData.provider);
-
-      if (existing) {
-        // Update existing
-        const updated = await storage.updateIntegration(existing.id, bodyData);
-        return res.json(updated);
-      }
-
-      // Create new
-      const integrationValues: InsertIntegration & { tenantId: number } = {
-        ...bodyData,
-        tenantId: user.tenantId,
-      };
-      const integration = await storage.createIntegration(integrationValues);
-
-      res.status(201).json(integration);
-    } catch (err) {
-      next(err);
-    }
-  });
-
-  // Delete integration
-  app.delete("/api/integrations/:id", isAuthenticated, async (req, res, next) => {
-    try {
-      const user = req.user as User;
-      const id = parseInt(req.params.id);
-
-      // Verify integration belongs to user's tenant
-      const existing = await storage.getIntegration(id);
-      if (!existing || existing.tenantId !== user.tenantId) {
-        return res.status(404).json({ message: "Integration not found" });
-      }
-
-      await storage.deleteIntegration(id);
-      res.json({ message: "Integration deleted successfully" });
     } catch (err) {
       next(err);
     }
@@ -2418,38 +1355,6 @@ app.get("/api/meta/pages/:pageId/posts", isAuthenticated, async (req, res) => {
   // ====== Meta OAuth Routes ======
 
   // Generate appsecret_proof for Meta API calls (security)
-  function generateAppSecretProof(accessToken: string, appSecret: string): string {
-    return crypto.createHmac('sha256', appSecret)
-      .update(accessToken)
-      .digest('hex');
-  }
-
-  async function getMetaAccess(tenantId: number): Promise<{
-    accessToken: string;
-    appSecretProof?: string;
-  } | null> {
-    const integration = await storage.getIntegrationByProvider(tenantId, "Meta");
-    if (!integration) {
-      return null;
-    }
-    const config = integration.config as Record<string, unknown>;
-    const storedToken =
-      typeof config?.accessToken === "string" ? config.accessToken : undefined;
-    if (!storedToken) {
-      return null;
-    }
-    const accessToken = decryptMetaAccessToken(storedToken);
-    if (!accessToken) {
-      return null;
-    }
-    const settings = await storage.getAppSettings();
-    const appSecretProof =
-      settings?.metaAppSecret && settings.metaAppSecret.length > 0
-        ? generateAppSecretProof(accessToken, settings.metaAppSecret)
-        : undefined;
-    return { accessToken, appSecretProof };
-  }
-
   app.get("/internal/meta/token", async (req, res) => {
     try {
       const validation = validateInternalRequest(req);
@@ -2809,3 +1714,4 @@ app.get("/api/meta/pages/:pageId/posts", isAuthenticated, async (req, res) => {
 
   return httpServer;
 }
+
