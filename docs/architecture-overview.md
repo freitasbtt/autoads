@@ -1,93 +1,102 @@
-## Architecture Overview
+## Visão Geral da Arquitetura
 
-This document maps the current structure after introducing the Meta and Storage modules and now the dedicated **Resources** router.
+Este documento descreve como o backend e o frontend estão organizados depois da separação completa dos domínios HTTP em routers dedicados. O arquivo `server/routes.ts` agora cuida apenas do bootstrap do Express (passport, sessões, arquivos estáticos) e delega toda a lógica de cada área para o respectivo módulo em `server/modules`.
 
 ```
 /
-├─ client/                 # React app (feature-first)
+├─ client/                       # Aplicação React (feature-first)
 ├─ server/
 │  ├─ modules/
-│  │  ├─ auth/
-│  │  ├─ meta/             # Graph API client + dashboard services
-│  │  ├─ resources/
-│  │  │   └─ routes.ts     # CRUD de `/api/resources`
-│  │  ├─ audiences/
-│  │  │   └─ routes.ts     # CRUD de `/api/audiences`
-│  │  ├─ campaigns/
-│  │  │   └─ routes.ts     # CRUD + `/api/webhooks/n8n*`
-│  │  ├─ integrations/
-│  │  │   └─ routes.ts     # CRUD de `/api/integrations`
-│  │  └─ storage/          # Persistence abstractions (memory/db)
-│  ├─ middlewares/
-│  ├─ routes.ts            # Registers routers/middlewares only
-│  └─ index.ts             # Express bootstrap
-├─ shared/                 # Drizzle schema + shared types
-└─ docs/                   # Architecture notes
+│  │  ├─ admin/                  # /api/admin/** → settings, tenants e usuários
+│  │  ├─ audiences/              # /api/audiences/**
+│  │  ├─ auth/                   # /api/auth/** + helpers de senha/roles
+│  │  ├─ campaigns/              # /api/campaigns/** + /api/webhooks/n8n*
+│  │  ├─ integrations/           # /api/integrations/**
+│  │  ├─ meta/                   # /api/dashboard, /api/meta/** e /internal/meta/token
+│  │  ├─ oauth/                  # /auth/meta* e /auth/google*
+│  │  ├─ resources/              # /api/resources/**
+│  │  └─ storage/                # Abstrações de persistência (memory/db)
+│  ├─ middlewares/               # Autenticação/autorização cross-cutting
+│  ├─ routes.ts                  # Configurações globais + montagem dos routers
+│  └─ index.ts                   # Ponto de entrada do servidor
+├─ shared/                       # Schema Drizzle e tipos compartilhados
+└─ docs/                         # Documentação e notas de arquitetura
 ```
 
 ## Frontend
 
-- **Features (`client/src/features`)** house pages, hooks and APIs per domain.  
-- **Shared (`client/src/shared`)** contains reusable UI/utilities.  
-- **App (`client/src/app`)** wires routing and global providers.
+- **Features (`client/src/features`)**: cada domínio da aplicação (campanhas, audiências etc.) possui componentes, páginas, hooks, APIs e tipos agrupados em uma pasta única.
+- **Shared (`client/src/shared`)**: utilitários e componentes reutilizáveis (botões, inputs, helpers de data, etc.).
+- **App (`client/src/app`)**: roteamento, provedores globais e bootstrap da aplicação.
 
-To create or locate a feature:
-1. Go to `client/src/features/<feature>/`.
-2. Use subfolders like `components/`, `pages/`, `hooks/`, `api/`, `types.ts`.
-3. Export through an `index.ts` for clean imports (`import { CampaignsPage } from "@/features/campaigns"`).
+Como criar ou localizar uma nova feature:
+1. Navegue até `client/src/features/<feature>/`.
+2. Crie subpastas como `components/`, `pages/`, `hooks/`, `api/`, `types.ts` conforme a necessidade.
+3. Centralize as exportações em um `index.ts` dentro da feature para manter os imports enxutos (`import { CampaignsPage } from "@/features/campaigns"`).
 
 ## Backend
 
-### Layers
-- `server/modules`: domain logic (controllers/services/routes/repositories).
-- `server/middlewares`: authentication, validation, cross-cutting pieces.
-- `server/routes.ts`: composes routers and shared middleware.
+### Camadas principais
 
-### Highlighted modules
+- `server/modules`: cada domínio possui seus controllers, serviços, routers e repositórios.
+- `server/middlewares`: guardas HTTP como `isAuthenticated`, `isAdmin`, rate limiters, etc.
+- `server/routes.ts`: inicializa passport/sessões, configura arquivos estáticos e conecta todos os routers especializados.
+
+### Destaque dos módulos
 
 **Meta (`server/modules/meta`)**
-- `client.ts`: `MetaGraphClient` and `MetaApiError`.
-- `services/dashboard.service.ts`: `fetchMetaDashboardMetrics`.
-- `constants.ts`, `types.ts`, `utils/`: action/objective mapping and aggregation helpers.
+- `routes.ts`: concentra `/api/dashboard/metrics`, `/api/meta/**` (busca de interesses, pages/posts, creatives) e o endpoint interno `/internal/meta/token`. Internamente garante que cada rota cheque autenticação.
+- `client.ts` / `services/dashboard.service.ts`: wrapper do Graph API (`MetaGraphClient`) e o agregador `fetchMetaDashboardMetrics`.
+- `utils/`, `constants.ts`, `types.ts`: conversões de objetivos, agregações, criptografia de tokens e tipos compartilhados.
 
 **Storage (`server/modules/storage`)**
-- `types.ts`: `IStorage`, filter definitions and shared exports.
-- `memory.storage.ts`: in-memory implementation for tests/dev.
-- `db.storage.ts`: Drizzle/Postgres implementation.
-- `index.ts`: exposes the correct `storage` singleton.
+- `types.ts`: interfaces (`IStorage`), enums e filtros reutilizados pelos módulos.
+- `memory.storage.ts`: implementação em memória para testes/dev.
+- `db.storage.ts`: implementação real usando Drizzle/Postgres.
+- `index.ts`: seleciona dinamicamente qual storage expor (`storage` singleton).
 
 **Resources (`server/modules/resources`)**
-- `routes.ts`: encapsulates all `/api/resources` endpoints (list, filter by type, create, update, delete) behind a dedicated router wired in `server/routes.ts`.
-  - This keeps the base router lean and makes it easier to evolve resource-specific policies or middlewares.
+- `routes.ts`: CRUD completo de `/api/resources` (listar, filtrar por tipo, criar, atualizar e deletar) sempre forçando que o recurso pertença ao tenant logado.
 
 **Audiences (`server/modules/audiences`)**
-- `routes.ts`: concentra o CRUD completo de `/api/audiences`, aplicando `isAuthenticated` e verificações de tenant em um único lugar. Ideal para evoluir regras de validação ou rate-limits sem tocar no router principal.
+- `routes.ts`: CRUD de audiências com validações, schema `zod` e reuso dos guardas de autenticação.
 
 **Campaigns (`server/modules/campaigns`)**
-- `routes.ts`: expõe o CRUD de `/api/campaigns`, o envio manual de campanhas para o n8n e os webhooks (`/api/webhooks/n8n` e `/api/webhooks/n8n/status`). Internamente mantém helpers de objetivos/segmentação que antes viviam em `server/routes.ts`.
+- `routes.ts`: CRUD de campanhas, envio manual para o n8n, webhooks (`/api/webhooks/n8n` e `/api/webhooks/n8n/status`) e todos os helpers de normalização que antes estavam no router principal.
 
 **Integrations (`server/modules/integrations`)**
-- `routes.ts`: controla todas as operações de `/api/integrations` (listar, buscar por provider, criar/atualizar, deletar), reaplicando as regras de tenant. Se novas integrações ou provedores surgirem, basta estender esse módulo.
+- `routes.ts`: gerenciamento de integrações por tenant (listar, buscar por provider, criar/atualizar, deletar), garantindo idempotência ao reusar provider existente.
 
-### Auth / Roles
-- `server/modules/auth/services/role.service.ts`: role helpers (`isAdminRole`, `isSystemAdminRole`, `ADMIN_ROLES`).
-- `server/middlewares/auth.ts`: HTTP-level guards (`isAuthenticated`, `isAdmin`, etc.).
+**Auth API (`server/modules/auth`)**
+- `routes.ts`: `/api/auth/login`, `/api/auth/logout` e `/api/auth/me`, reutilizando o `passport` configurado no bootstrap.
+- `services/`: hashing de senha e helpers de roles consumidos por outros módulos (ex.: admin).
 
-## Responsibility Cheat Sheet
+**Admin (`server/modules/admin`)**
+- `routes.ts`: endpoints para system admins/tenant admins (`/api/admin/settings`, `/api/admin/tenants`, CRUD de usuários). Aplica regras extras (ex.: apenas system admin cria outro system admin).
 
-| Need                                   | Where to look                                           |
-|----------------------------------------|---------------------------------------------------------|
-| Dashboard / Meta metrics               | `server/modules/meta/**`                                |
-| Persistence or DB tweaks               | `server/modules/storage/**`                             |
-| Resource CRUD endpoints                | `server/modules/resources/routes.ts`                    |
-| Audience CRUD endpoints                | `server/modules/audiences/routes.ts`                    |
-| Campaign CRUD & n8n webhooks           | `server/modules/campaigns/routes.ts`                    |
-| Integration CRUD                       | `server/modules/integrations/routes.ts`                 |
-| Auth / RBAC helpers                    | `server/modules/auth/services/role.service.ts`          |
-| New frontend feature                   | `client/src/features/<feature>/`                        |
-| Shared UI elements                     | `client/src/shared/components/`                         |
+**OAuth (`server/modules/oauth`)**
+- `routes.ts`: fluxos completos de `/auth/meta*` e `/auth/google*`, salvando tokens, sincronizando recursos (contas Meta, páginas, pastas do Drive) e retornando o usuário para a UI.
 
-## Next recommendations
-1. Continue extracting other API domains (audiences, campaigns, integrations) into routers under `server/modules/<feature>/`.
-2. Migrate the remaining legacy pages under `client/src/pages` into the feature-first structure.
-3. Keep this document updated whenever a new module or convention is introduced.
+**Realtime (`server/modules/realtime`)**
+- `routes.ts`: expõe `/api/events/campaigns`, um endpoint SSE autenticado por sessão para transmitir atualizações.
+- `sse.ts`: registra os clientes por tenant e envia eventos `campaign:update` quando a campanha muda de status (ex.: callback do n8n).
+
+## Guia rápido de responsabilidades
+
+| Necessidade                              | Onde procurar                                             |
+|------------------------------------------|-----------------------------------------------------------|
+| Dashboard / métricas / buscas da Meta    | `server/modules/meta/routes.ts` + `services/**`           |
+| Ajustes de persistência/DB               | `server/modules/storage/**`                               |
+| CRUD de resources                        | `server/modules/resources/routes.ts`                      |
+| CRUD de audiências                       | `server/modules/audiences/routes.ts`                      |
+| Campanhas + webhooks do n8n              | `server/modules/campaigns/routes.ts`                      |
+| Integrações externas                     | `server/modules/integrations/routes.ts`                   |
+| Settings, tenants e usuários (admin)     | `server/modules/admin/routes.ts`                          |
+| Login/logout/me                          | `server/modules/auth/routes.ts`                           |
+| Fluxos OAuth (Meta/Google)               | `server/modules/oauth/routes.ts`                          |
+| Push em tempo real (SSE)                 | `server/modules/realtime/**` + `useCampaignRealtime`      |
+| Helpers de autenticação/RBAC             | `server/modules/auth/services/role.service.ts`            |
+| Nova feature no frontend                 | `client/src/features/<feature>/`                          |
+| Componentes/úteis compartilhados (front) | `client/src/shared/components/` e `client/src/shared/lib/` |
+
+Mantenha este documento atualizado sempre que um novo módulo, fluxo OAuth ou regra cross-cutting surgir — ele é o mapa oficial da arquitetura do projeto.

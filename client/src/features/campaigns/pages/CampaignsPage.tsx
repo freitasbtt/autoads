@@ -9,6 +9,7 @@ import { CampaignStatusBadge } from "../components/CampaignStatusBadge";
 import { objectiveLabels } from "../constants";
 import { useCampaignListData } from "../hooks/useCampaignListData";
 import { useCampaignMutations } from "../hooks/useCampaignMutations";
+import { useCampaignRealtime } from "../hooks/useCampaignRealtime";
 import { useToast } from "@/hooks/use-toast";
 import type { Campaign } from "@shared/schema";
 
@@ -20,6 +21,7 @@ export function CampaignsPage() {
   const [showSendButton, setShowSendButton] = useState(false);
   const { campaigns, isLoading, resources, audiences } = useCampaignListData();
   const { toggleStatus, deleteCampaign } = useCampaignMutations();
+  useCampaignRealtime();
 
   const handleToggleStatus = (campaign: Campaign, e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();

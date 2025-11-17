@@ -6,6 +6,7 @@ import { storage } from "../storage";
 import type { InsertCampaign, User } from "@shared/schema";
 import { insertCampaignSchema } from "@shared/schema";
 import { getPublicAppUrl } from "../../utils/url";
+import { broadcastCampaignUpdate } from "../realtime/sse";
 
 const OBJECTIVE_OUTCOME_MAP: Record<string, string> = {
   LEAD: "OUTCOME_LEADS",
@@ -329,6 +330,9 @@ campaignsRouter.post("/:id/send-webhook", async (req, res, next) => {
             geo_locations: geoLocations,
             flexible_spec: flexibleSpec,
             publisher_platforms: publisherPlatforms,
+            targeting_automation: {
+              advantage_audience: 1,
+            },
           },
           status: "PAUSED",
           start_time: startDate,
@@ -676,6 +680,8 @@ campaignWebhookRouter.post("/n8n/status", async (req, res, next) => {
       status: status.toLowerCase(),
       statusDetail: typeof status_detail === "string" ? status_detail : null,
     });
+
+    broadcastCampaignUpdate(existing.tenantId, updated);
 
     res.json({ message: "Campaign status updated", campaign: updated });
   } catch (err) {
