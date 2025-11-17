@@ -1632,6 +1632,9 @@ app.get("/api/meta/pages/:pageId/posts", isAuthenticated, async (req, res) => {
               geo_locations: geoLocations,
               flexible_spec: flexibleSpec,
               publisher_platforms: publisherPlatforms,
+              targeting_automation: {
+                advantage_audience: 1,
+              },
             },
             status: "PAUSED",
             start_time: startDate,
