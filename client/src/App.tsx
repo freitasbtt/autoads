@@ -10,7 +10,7 @@ import Dashboard from "@/pages/Dashboard";
 import Resources from "@/pages/Resources";
 import CampaignForm from "@/pages/CampaignForm";
 import ExistingCampaignForm from "@/pages/ExistingCampaignForm";
-import Campaigns from "@/pages/Campaigns";
+import { CampaignsPage } from "@/features/campaigns";
 import Audiences from "@/pages/Audiences";
 import Integrations from "@/pages/Integrations";
 import Onboarding from "@/pages/Onboarding";
@@ -34,7 +34,7 @@ function PrivateRouter() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
-      <Route path="/campaigns" component={Campaigns} />
+      <Route path="/campaigns" component={CampaignsPage} />
       <Route path="/campaigns/new" component={CampaignForm} />
       <Route path="/campaigns/existing" component={ExistingCampaignForm} />
       <Route path="/audiences" component={Audiences} />

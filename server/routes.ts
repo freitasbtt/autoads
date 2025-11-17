@@ -1,55 +1,31 @@
 ﻿import { createServer, type Server } from "http";
-import { storage } from "./storage";
-import {
-  MetaGraphClient,
-  fetchMetaDashboardMetrics,
-} from "./meta/graph";
-import type { MetricTotals as MetaMetricTotals } from "./meta/graph";
+import { storage } from "./modules/storage";
 import { pingDatabase } from "./db";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import session from "express-session";
 import memorystore from "memorystore";
-import { z } from "zod";
-import type { Express, NextFunction, Request, Response } from "express";
-import type {
-  Campaign,
-  InsertAudience,
-  InsertAutomation,
-  InsertCampaign,
-  InsertIntegration,
-  InsertResource,
-  InsertUser,
-  Resource,
-  User,
-} from "@shared/schema";
-import {
-  insertUserSchema,
-  insertResourceSchema,
-  insertAudienceSchema,
-  updateAudienceSchema,
-  insertCampaignSchema,
-  insertIntegrationSchema,
-} from "@shared/schema";
-import crypto from "crypto";
-import { differenceInCalendarDays, format, isValid, parseISO, subDays } from "date-fns";
+import type { Express, Response } from "express";
+import type { User } from "@shared/schema";
 // ESM: recria __filename / __dirname
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { existsSync } from "node:fs";
+import { verifyPassword } from "./modules/auth/services/password.service";
+import { resourcesRouter } from "./modules/resources/routes";
+import { setNoCacheHeaders } from "./utils/cache";
+import { audiencesRouter } from "./modules/audiences/routes";
+import { campaignsRouter, campaignWebhookRouter } from "./modules/campaigns/routes";
+import { integrationsRouter } from "./modules/integrations/routes";
+import { authRouter } from "./modules/auth/routes";
+import { adminRouter } from "./modules/admin/routes";
+import { metaRouter, internalMetaRouter } from "./modules/meta/routes";
+import { oauthRouter } from "./modules/oauth/routes";
+import { realtimeRouter } from "./modules/realtime/routes";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-
-
-
-function setNoCacheHeaders(res: Response): void {
-  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-  res.setHeader("Pragma", "no-cache");
-  res.setHeader("Expires", "0");
-  res.setHeader("Surrogate-Control", "no-store");
-}
 
 // Extend session data to include OAuth state
 declare module "express-session" {
@@ -61,201 +37,7 @@ declare module "express-session" {
 
 const MemoryStore = memorystore(session);
 
-// Password hashing utilities
-import bcrypt from "bcryptjs";
 
-async function hashPassword(password: string): Promise<string> {
-  return await bcrypt.hash(password, 10);
-}
-
-async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  return await bcrypt.compare(password, hash);
-}
-
-const ADMIN_ROLES = new Set<User["role"]>(["system_admin", "tenant_admin"]);
-
-function isAdminRole(role: User["role"]): boolean {
-  return ADMIN_ROLES.has(role);
-}
-
-function isSystemAdminRole(role: User["role"]): boolean {
-  return role === "system_admin";
-}
-
-function getPublicAppUrl(req: Request): string {
-  const configured = process.env.PUBLIC_APP_URL?.trim();
-  if (configured && configured.length > 0) {
-    return configured.replace(/\/$/, "");
-  }
-
-  const host = req.get("host");
-  if (!host) {
-    throw new Error("Unable to determine host for OAuth redirects");
-  }
-
-  return `${req.protocol}://${host}`;
-}
-
-function validateInternalRequest(req: Request): {
-  valid: boolean;
-  status?: number;
-  message?: string;
-} {
-  const configuredSecret = process.env.INTERNAL_API_SECRET;
-  if (!configuredSecret || configuredSecret.length === 0) {
-    return {
-      valid: false,
-      status: 500,
-      message: "Internal API secret not configured",
-    };
-  }
-
-  const headerSecret = req.get("x-internal-api-secret");
-  const querySecret =
-    typeof req.query.api_secret === "string" ? req.query.api_secret : undefined;
-  const providedSecret = headerSecret ?? querySecret;
-
-  if (providedSecret !== configuredSecret) {
-    return { valid: false, status: 401, message: "Unauthorized" };
-  }
-
-  return { valid: true };
-}
-
-const META_TOKEN_ENC_PREFIX = "enc.v1";
-let cachedMetaTokenKey: Buffer | null | undefined;
-
-function getMetaTokenEncryptionKey(): Buffer | null {
-  if (cachedMetaTokenKey !== undefined) {
-    return cachedMetaTokenKey;
-  }
-
-  const rawKey = process.env.META_TOKEN_ENC_KEY?.trim();
-  if (!rawKey) {
-    cachedMetaTokenKey = null;
-    return null;
-  }
-
-  const tryDecode = (value: string, encoding: BufferEncoding): Buffer | null => {
-    try {
-      const decoded = Buffer.from(value, encoding);
-      return decoded.length === 32 ? decoded : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const base64Key = tryDecode(rawKey, "base64");
-  if (base64Key) {
-    cachedMetaTokenKey = base64Key;
-    return base64Key;
-  }
-
-  if (rawKey.length === 32) {
-    const utf8Key = tryDecode(rawKey, "utf8");
-    if (utf8Key) {
-      cachedMetaTokenKey = utf8Key;
-      return utf8Key;
-    }
-  }
-
-  console.warn("META_TOKEN_ENC_KEY must decode to exactly 32 bytes (AES-256).");
-  cachedMetaTokenKey = null;
-  return null;
-}
-
-function encryptMetaAccessToken(token: string): string {
-  if (!token) {
-    return token;
-  }
-  const key = getMetaTokenEncryptionKey();
-  if (!key) {
-    return token;
-  }
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
-  const encrypted = Buffer.concat([cipher.update(token, "utf8"), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-  return [
-    META_TOKEN_ENC_PREFIX,
-    iv.toString("base64"),
-    authTag.toString("base64"),
-    encrypted.toString("base64"),
-  ].join(":");
-}
-
-function decryptMetaAccessToken(token?: string | null): string | null {
-  if (!token || token.length === 0) {
-    return null;
-  }
-  if (!token.startsWith(`${META_TOKEN_ENC_PREFIX}:`)) {
-    return token;
-  }
-  const key = getMetaTokenEncryptionKey();
-  if (!key) {
-    console.error("Encrypted Meta token stored but META_TOKEN_ENC_KEY is missing or invalid.");
-    return null;
-  }
-  const [, ivB64, tagB64, payloadB64] = token.split(":");
-  if (!ivB64 || !tagB64 || !payloadB64) {
-    console.error("Invalid encrypted Meta token format.");
-    return null;
-  }
-  try {
-    const iv = Buffer.from(ivB64, "base64");
-    const authTag = Buffer.from(tagB64, "base64");
-    const payload = Buffer.from(payloadB64, "base64");
-    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
-    decipher.setAuthTag(authTag);
-    const decrypted = Buffer.concat([decipher.update(payload), decipher.final()]);
-    return decrypted.toString("utf8");
-  } catch (err) {
-    console.error("Failed to decrypt Meta token:", err);
-    return null;
-  }
-}
-
-const OBJECTIVE_OUTCOME_MAP: Record<string, string> = {
-  LEAD: "OUTCOME_LEADS",
-  LEADS: "OUTCOME_LEADS",
-  OUTCOME_LEADS: "OUTCOME_LEADS",
-  TRAFFIC: "OUTCOME_TRAFFIC",
-  OUTCOME_TRAFFIC: "OUTCOME_TRAFFIC",
-  WHATSAPP: "OUTCOME_ENGAGEMENT",
-  MESSAGES: "OUTCOME_ENGAGEMENT",
-  MESSAGE: "OUTCOME_ENGAGEMENT",
-  OUTCOME_ENGAGEMENT: "OUTCOME_ENGAGEMENT",
-  CONVERSIONS: "OUTCOME_SALES",
-  SALES: "OUTCOME_SALES",
-  OUTCOME_SALES: "OUTCOME_SALES",
-  REACH: "OUTCOME_AWARENESS",
-  OUTCOME_AWARENESS: "OUTCOME_AWARENESS",
-};
-
-const OBJECTIVE_OPTIMIZATION_MAP: Record<string, string> = {
-  OUTCOME_LEADS: "LEAD_GENERATION",
-  OUTCOME_ENGAGEMENT: "CONVERSATIONS",
-  OUTCOME_TRAFFIC: "LINK_CLICKS",
-  OUTCOME_SALES: "OFFSITE_CONVERSIONS",
-  OUTCOME_AWARENESS: "IMPRESSIONS",
-};
-
-const DEFAULT_PUBLISHER_PLATFORMS = [
-  "facebook",
-  "instagram",
-  "messenger",
-  "audience_network",
-] as const;
-
-function mapObjectiveToOutcome(value: unknown): string {
-  const normalized = typeof value === "string" ? value.trim().toUpperCase() : "";
-  if (!normalized) {
-    return "OUTCOME_LEADS";
-  }
-  return OBJECTIVE_OUTCOME_MAP[normalized] ?? (normalized.startsWith("OUTCOME_") ? normalized : "OUTCOME_LEADS");
-}
-
-// Configure passport
 passport.use(
   new LocalStrategy(
     { usernameField: "email", passwordField: "password" },
@@ -291,100 +73,6 @@ passport.deserializeUser(async (id: number, done) => {
     done(err);
   }
 });
-
-// Middleware to check authentication
-function isAuthenticated(req: Request, res: Response, next: NextFunction) {
-  if (req.isAuthenticated()) {
-    return next();
-  }
-  res.status(401).json({ message: "Unauthorized" });
-}
-
-const DATE_PARAM_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-const dashboardMetricsQuerySchema = z.object({
-  startDate: z.string().regex(DATE_PARAM_REGEX).optional(),
-  endDate: z.string().regex(DATE_PARAM_REGEX).optional(),
-});
-
-function normalizeQueryArray(value: unknown): string[] | undefined {
-  if (value === undefined || value === null) {
-    return undefined;
-  }
-
-  if (Array.isArray(value)) {
-    return value
-      .flatMap((entry) => (typeof entry === "string" ? entry.split(",") : []))
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0);
-  }
-
-  if (typeof value === "string") {
-    return value
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter((entry) => entry.length > 0);
-  }
-
-  return undefined;
-}
-
-function parseNumberQueryParam(value: unknown): number[] | undefined {
-  const entries = normalizeQueryArray(value);
-  if (!entries || entries.length === 0) {
-    return undefined;
-  }
-
-  const numbers = entries
-    .map((entry) => Number.parseInt(entry, 10))
-    .filter((num) => Number.isFinite(num));
-
-  return numbers.length > 0 ? numbers : undefined;
-}
-
-function parseStringQueryParam(value: unknown): string[] | undefined {
-  const entries = normalizeQueryArray(value);
-  if (!entries || entries.length === 0) {
-    return undefined;
-  }
-  return entries;
-}
-
-function emptyTotals(): MetaMetricTotals {
-  return {
-    spend: 0,
-    resultSpend: 0,
-    impressions: 0,
-    clicks: 0,
-    leads: 0,
-    results: 0,
-    costPerResult: null,
-  };
-}
-
-type MetaIntegrationConfig = {
-  accessToken?: string | null;
-};
-
-// Middleware to check if user is admin
-function isAdmin(req: Request, res: Response, next: NextFunction) {
-  if (req.isAuthenticated()) {
-    const user = req.user as User;
-    if (isAdminRole(user.role)) {
-      return next();
-    }
-  }
-  res.status(403).json({ message: "Forbidden - Admin access required" });
-}
-
-function isSystemAdmin(req: Request, res: Response, next: NextFunction) {
-  if (req.isAuthenticated()) {
-    const user = req.user as User;
-    if (isSystemAdminRole(user.role)) {
-      return next();
-    }
-  }
-  res.status(403).json({ message: "Forbidden - System admin access required" });
-}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/health", async (_req, res) => {
@@ -1632,9 +1320,6 @@ app.get("/api/meta/pages/:pageId/posts", isAuthenticated, async (req, res) => {
               geo_locations: geoLocations,
               flexible_spec: flexibleSpec,
               publisher_platforms: publisherPlatforms,
-              targeting_automation: {
-                advantage_audience: 1,
-              },
             },
             status: "PAUSED",
             start_time: startDate,
