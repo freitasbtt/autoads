@@ -676,14 +676,24 @@ campaignWebhookRouter.post("/n8n/status", async (req, res, next) => {
       return res.status(404).json({ message: "Campaign not found" });
     }
 
+    const normalizedStatus = String(status).toLowerCase();
+    const statusDetailValue = typeof status_detail === "string" ? status_detail : null;
     const updated = await storage.updateCampaign(campaignId, {
-      status: status.toLowerCase(),
-      statusDetail: typeof status_detail === "string" ? status_detail : null,
+      status: normalizedStatus,
+      statusDetail: statusDetailValue,
     });
+    const campaignForBroadcast =
+      updated ?? { ...existing, status: normalizedStatus, statusDetail: statusDetailValue };
 
-    broadcastCampaignUpdate(existing.tenantId, updated);
+    if (!updated) {
+      return res
+        .status(500)
+        .json({ message: "Nao foi possivel atualizar a campanha" });
+    }
 
-    res.json({ message: "Campaign status updated", campaign: updated });
+    broadcastCampaignUpdate(existing.tenantId, campaignForBroadcast);
+
+    res.json({ message: "Status da campanha atualizado", campaign: campaignForBroadcast });
   } catch (err) {
     next(err as Error);
   }

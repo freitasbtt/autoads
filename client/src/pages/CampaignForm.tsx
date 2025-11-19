@@ -117,6 +117,9 @@ export default function CampaignForm() {
   const [selectedPost, setSelectedPost] = useState<PagePostSummary | null>(
     null
   );
+  const openDriveFolderManager = () => {
+    window.open("/resources?type=drive_folder&new=1", "_blank", "noopener");
+  };
 
   // Fetch resources and audiences from API
   const { data: resources = [] } = useQuery<Resource[]>({
@@ -812,9 +815,19 @@ export default function CampaignForm() {
                         </div>
 
                         <div className="space-y-2">
-                          <Label htmlFor={`driveFolderId-${index}`}>
-                            Pasta Google Drive
-                          </Label>
+                          <div className="flex items-center justify-between">
+                            <Label htmlFor={`driveFolderId-${index}`}>
+                              Pasta Google Drive
+                            </Label>
+                            <Button
+                              type="button"
+                              variant="link"
+                              className="px-0"
+                              onClick={openDriveFolderManager}
+                            >
+                              Nova pasta
+                            </Button>
+                          </div>
                           <Select
                             value={creative.driveFolderId}
                             onValueChange={(value) =>

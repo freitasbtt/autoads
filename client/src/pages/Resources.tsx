@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+﻿import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { Plus, Link as LinkIcon } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Plus, Link as LinkIcon, Search as SearchIcon } from "lucide-react";
 import ResourceCard from "@/components/ResourceCard";
 import {
   Dialog,
@@ -13,7 +14,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
   SelectContent,
@@ -24,7 +24,19 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-type ResourceType = "account" | "page" | "instagram" | "whatsapp" | "leadform" | "website";
+type ResourceType =
+  | "account"
+  | "page"
+  | "instagram"
+  | "whatsapp"
+  | "leadform"
+  | "website"
+  | "drive_folder";
+type ResourceFilter = ResourceType | "all";
+type SortOption = "recent" | "name";
+
+const resolveTypeFromFilter = (filter: ResourceFilter): ResourceType =>
+  filter === "all" ? "account" : filter;
 
 interface Resource {
   id: number;
@@ -32,6 +44,7 @@ interface Resource {
   type: ResourceType;
   name: string;
   value: string;
+  createdAt?: string;
 }
 
 const resourceTypeLabels: Record<ResourceType, { title: string; placeholder: string }> = {
@@ -41,13 +54,27 @@ const resourceTypeLabels: Record<ResourceType, { title: string; placeholder: str
   whatsapp: { title: "WhatsApp Business", placeholder: "wa_789123456" },
   leadform: { title: "Formulário de Leads", placeholder: "lf_321654987" },
   website: { title: "Website", placeholder: "https://exemplo.com" },
+  drive_folder: { title: "Pasta do Google Drive", placeholder: "1AbCDefg123456" },
 };
+
+const orderedResourceTypes: ResourceType[] = [
+  "account",
+  "page",
+  "instagram",
+  "whatsapp",
+  "leadform",
+  "website",
+  "drive_folder",
+];
+
 
 export default function Resources() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [currentTab, setCurrentTab] = useState<ResourceType>("account");
+  const [typeFilter, setTypeFilter] = useState<ResourceFilter>("all");
+  const [sortOption, setSortOption] = useState<SortOption>("recent");
+  const [searchTerm, setSearchTerm] = useState("");
   const [newResource, setNewResource] = useState({
-    type: "account" as ResourceType,
+    type: resolveTypeFromFilter("all"),
     name: "",
     value: "",
   });
@@ -63,10 +90,10 @@ export default function Resources() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/resources"] });
       setIsDialogOpen(false);
-      setNewResource({ type: "account", name: "", value: "" });
+      setNewResource({ type: resolveTypeFromFilter(typeFilter), name: "", value: "" });
       toast({
         title: "Recurso criado com sucesso",
-        description: "O recurso foi adicionado à sua lista",
+        description: "O recurso foi adicionado Ã  sua lista",
       });
     },
     onError: (error: Error) => {
@@ -84,7 +111,7 @@ export default function Resources() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/resources"] });
       toast({
-        title: "Recurso excluído",
+        title: "Recurso excluÃ­do",
         description: "O recurso foi removido com sucesso",
       });
     },
@@ -121,7 +148,59 @@ export default function Resources() {
     }
   }, [toast]);
 
-  const groupedResources = resources.reduce((acc, resource) => {
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const typeParam = params.get("type");
+    const newParam = params.get("new");
+    const matchedType = orderedResourceTypes.find(
+      (type) => type === typeParam,
+    );
+
+    if (matchedType) {
+      setTypeFilter(matchedType);
+    }
+    if (newParam === "1") {
+      setNewResource({
+        type: matchedType ?? resolveTypeFromFilter("all"),
+        name: "",
+        value: "",
+      });
+      setIsDialogOpen(true);
+    }
+
+    if (typeParam || newParam) {
+      params.delete("type");
+      params.delete("new");
+      const next = params.toString();
+      const nextUrl = next ? `?${next}` : "";
+      window.history.replaceState({}, "", `${window.location.pathname}${nextUrl}`);
+    }
+  }, []);
+
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+
+  const filteredResources = resources.filter((resource) => {
+    const matchesType = typeFilter === "all" || resource.type === typeFilter;
+    if (!matchesType) return false;
+
+    if (!normalizedSearch) return true;
+    return (
+      resource.name.toLowerCase().includes(normalizedSearch) ||
+      resource.value.toLowerCase().includes(normalizedSearch)
+    );
+  });
+
+  const sortedResources = [...filteredResources].sort((a, b) => {
+    if (sortOption === "name") {
+      return a.name.localeCompare(b.name);
+    }
+
+    const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return dateB - dateA;
+  });
+
+  const groupedResources = sortedResources.reduce((acc, resource) => {
     if (!acc[resource.type]) {
       acc[resource.type] = [];
     }
@@ -129,49 +208,121 @@ export default function Resources() {
     return acc;
   }, {} as Record<ResourceType, Resource[]>);
 
+  const sectionTypes =
+    typeFilter === "all"
+      ? orderedResourceTypes.filter(
+          (type) => (groupedResources[type]?.length ?? 0) > 0,
+        )
+      : [typeFilter];
+  const hasResults = sortedResources.length > 0;
+
+  const handleOpenDialog = () => {
+    setNewResource({
+      type: resolveTypeFromFilter(typeFilter),
+      name: "",
+      value: "",
+    });
+    setIsDialogOpen(true);
+  };
+
+  const handleResetFilters = () => {
+    setSearchTerm("");
+    setTypeFilter("all");
+    setSortOption("recent");
+  };
+
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-semibold">Recursos</h1>
-          <p className="text-muted-foreground">Gerencie seus recursos Meta Ads</p>
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-semibold">Recursos</h1>
+            <p className="text-muted-foreground">Gerencie e conecte os ativos usados nas campanhas</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={handleMetaOAuth}
+              data-testid="button-connect-meta"
+            >
+              <LinkIcon className="h-4 w-4 mr-2" />
+              Conectar com Meta
+            </Button>
+            <Button onClick={handleOpenDialog} data-testid="button-add-resource">
+              <Plus className="h-4 w-4 mr-2" />
+              Adicionar Recurso
+            </Button>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button 
-            variant="outline" 
-            onClick={handleMetaOAuth} 
-            data-testid="button-connect-meta"
+
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-3 md:flex-row md:flex-1">
+            <div className="relative w-full">
+              <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Buscar por nome ou ID"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                data-testid="input-resource-search"
+              />
+            </div>
+            <Select
+              value={typeFilter}
+              onValueChange={(value) => setTypeFilter(value as ResourceFilter)}
+            >
+              <SelectTrigger className="w-full md:w-[220px]" data-testid="select-resource-filter">
+                <SelectValue placeholder="Filtrar por tipo" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Todos os tipos</SelectItem>
+                {orderedResourceTypes.map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {resourceTypeLabels[type].title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Select
+            value={sortOption}
+            onValueChange={(value) => setSortOption(value as SortOption)}
           >
-            <LinkIcon className="h-4 w-4 mr-2" />
-            Conectar com Meta
-          </Button>
-          <Button onClick={() => setIsDialogOpen(true)} data-testid="button-add-resource">
-            <Plus className="h-4 w-4 mr-2" />
-            Adicionar Recurso
-          </Button>
+            <SelectTrigger className="w-full md:w-[200px]" data-testid="select-resource-sort">
+              <SelectValue placeholder="Ordenar por" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="recent">Mais recentes</SelectItem>
+              <SelectItem value="name">Nome (A-Z)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
-      <Tabs value={currentTab} onValueChange={(v) => setCurrentTab(v as ResourceType)}>
-        <TabsList>
-          <TabsTrigger value="account" data-testid="tab-accounts">Contas</TabsTrigger>
-          <TabsTrigger value="page" data-testid="tab-pages">Páginas</TabsTrigger>
-          <TabsTrigger value="instagram" data-testid="tab-instagram">Instagram</TabsTrigger>
-          <TabsTrigger value="whatsapp" data-testid="tab-whatsapp">WhatsApp</TabsTrigger>
-          <TabsTrigger value="leadform" data-testid="tab-leadforms">Formulários</TabsTrigger>
-          <TabsTrigger value="website" data-testid="tab-websites">Websites</TabsTrigger>
-        </TabsList>
-
-        {isLoading ? (
-          <div className="mt-6 text-center py-12">
-            <p className="text-muted-foreground">Carregando recursos...</p>
-          </div>
-        ) : (
-          (Object.keys(resourceTypeLabels) as ResourceType[]).map((type) => (
-            <TabsContent key={type} value={type} className="mt-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {groupedResources[type]?.length > 0 ? (
-                  groupedResources[type].map((resource) => (
+      {isLoading ? (
+        <div className="mt-6 text-center py-12">
+          <p className="text-muted-foreground">Carregando recursos...</p>
+        </div>
+      ) : hasResults ? (
+        <div className="space-y-8">
+          {sectionTypes.map((type) => {
+            const typeResources = groupedResources[type] ?? [];
+            if (typeResources.length === 0) {
+              return null;
+            }
+            return (
+              <section key={type} className="space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-xl font-semibold">{resourceTypeLabels[type].title}</h2>
+                    <p className="text-sm text-muted-foreground">
+                      {typeResources.length} recurso(s) disponível(is) para esta categoria
+                    </p>
+                  </div>
+                  <Badge variant="secondary">{typeResources.length}</Badge>
+                </div>
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+                  {typeResources.map((resource) => (
                     <ResourceCard
                       key={resource.id}
                       title={resource.name}
@@ -185,19 +336,28 @@ export default function Resources() {
                       }}
                       onDelete={() => deleteMutation.mutate(resource.id)}
                     />
-                  ))
-                ) : (
-                  <div className="col-span-full text-center py-12">
-                    <p className="text-muted-foreground">
-                      Nenhum recurso cadastrado nesta categoria
-                    </p>
-                  </div>
-                )}
-              </div>
-            </TabsContent>
-          ))
-        )}
-      </Tabs>
+                  ))}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="rounded-lg border border-dashed py-16 text-center">
+          <p className="text-base font-semibold">Nenhum recurso encontrado</p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Ajuste os filtros ou cadastre um novo recurso para usá-lo em campanhas.
+          </p>
+          <div className="mt-4 flex justify-center gap-2">
+            <Button variant="outline" onClick={handleResetFilters} data-testid="button-reset-filters">
+              Limpar filtros
+            </Button>
+            <Button onClick={handleOpenDialog} data-testid="button-empty-add-resource">
+              Adicionar recurso
+            </Button>
+          </div>
+        </div>
+      )}
 
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent>
@@ -219,12 +379,11 @@ export default function Resources() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="account">Conta de Anúncios</SelectItem>
-                    <SelectItem value="page">Página do Facebook</SelectItem>
-                    <SelectItem value="instagram">Instagram Business</SelectItem>
-                    <SelectItem value="whatsapp">WhatsApp Business</SelectItem>
-                    <SelectItem value="leadform">Formulário de Leads</SelectItem>
-                    <SelectItem value="website">Website</SelectItem>
+                    {orderedResourceTypes.map((type) => (
+                      <SelectItem key={type} value={type}>
+                        {resourceTypeLabels[type].title}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -274,3 +433,9 @@ export default function Resources() {
     </div>
   );
 }
+
+
+
+
+
+

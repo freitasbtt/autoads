@@ -39,6 +39,9 @@ export default function ExistingCampaignForm() {
   
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const openDriveFolderManager = () => {
+    window.open("/resources?type=drive_folder&new=1", "_blank", "noopener");
+  };
 
   const { data: resources = [], isLoading: loadingResources } = useQuery<Resource[]>({
     queryKey: ["/api/resources"],
@@ -380,7 +383,17 @@ export default function ExistingCampaignForm() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="drive-folder">Pasta Google Drive *</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="drive-folder">Pasta Google Drive *</Label>
+                <Button
+                  type="button"
+                  variant="link"
+                  className="px-0"
+                  onClick={openDriveFolderManager}
+                >
+                  Nova pasta
+                </Button>
+              </div>
               <Select value={driveFolderId} onValueChange={setDriveFolderId}>
                 <SelectTrigger id="drive-folder" data-testid="select-drive-folder">
                   <SelectValue placeholder="Selecione a pasta com criativos" />
