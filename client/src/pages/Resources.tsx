@@ -1,8 +1,15 @@
-﻿import { useState, useEffect } from "react";
+﻿"use client";
+
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import {
+  Plus,
+  Link as LinkIcon,
+  Search as SearchIcon,
+} from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Link as LinkIcon, Search as SearchIcon } from "lucide-react";
 import ResourceCard from "@/components/ResourceCard";
 import {
   Dialog,
@@ -32,6 +39,7 @@ type ResourceType =
   | "leadform"
   | "website"
   | "drive_folder";
+
 type ResourceFilter = ResourceType | "all";
 type SortOption = "recent" | "name";
 
@@ -47,14 +55,52 @@ interface Resource {
   createdAt?: string;
 }
 
-const resourceTypeLabels: Record<ResourceType, { title: string; placeholder: string }> = {
-  account: { title: "Conta de Anúncios", placeholder: "act_123456789" },
-  page: { title: "Página do Facebook", placeholder: "pg_987654321" },
-  instagram: { title: "Instagram Business", placeholder: "ig_456789123" },
-  whatsapp: { title: "WhatsApp Business", placeholder: "wa_789123456" },
-  leadform: { title: "Formulário de Leads", placeholder: "lf_321654987" },
-  website: { title: "Website", placeholder: "https://exemplo.com" },
-  drive_folder: { title: "Pasta do Google Drive", placeholder: "1AbCDefg123456" },
+const resourceTypeLabels: Record<
+  ResourceType,
+  { title: string; placeholder: string; description?: string }
+> = {
+  account: {
+    title: "Conta de Anúncios",
+    placeholder: "act_123456789",
+    description:
+      "Conta de anúncios usada para veicular campanhas no Gestor de Anúncios.",
+  },
+  page: {
+    title: "Página do Facebook",
+    placeholder: "123456789012345",
+    description:
+      "Página que serve de origem para os teus anúncios no Facebook.",
+  },
+  instagram: {
+    title: "Instagram Business",
+    placeholder: "17841400000000000",
+    description:
+      "Perfil profissional de Instagram ligado a uma Página do Facebook.",
+  },
+  whatsapp: {
+    title: "WhatsApp Business",
+    placeholder: "wa_789123456",
+    description:
+      "Número de WhatsApp Business usado em campanhas e conversões.",
+  },
+  leadform: {
+    title: "Formulário de Leads",
+    placeholder: "lf_321654987",
+    description:
+      "Formulário de geração de leads associado a anúncios.",
+  },
+  website: {
+    title: "Website",
+    placeholder: "https://exemplo.com",
+    description:
+      "Domínio ou URL de destino utilizado nas tuas campanhas.",
+  },
+  drive_folder: {
+    title: "Pasta do Google Drive",
+    placeholder: "1AbCDefg123456",
+    description:
+      "Pasta com criativos, documentos e materiais de apoio.",
+  },
 };
 
 const orderedResourceTypes: ResourceType[] = [
@@ -67,7 +113,6 @@ const orderedResourceTypes: ResourceType[] = [
   "drive_folder",
 ];
 
-
 export default function Resources() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [typeFilter, setTypeFilter] = useState<ResourceFilter>("all");
@@ -78,22 +123,29 @@ export default function Resources() {
     name: "",
     value: "",
   });
+
   const { toast } = useToast();
 
+  // Lista de recursos do tenant
   const { data: resources = [], isLoading } = useQuery<Resource[]>({
     queryKey: ["/api/resources"],
   });
 
+  // Criar recurso manualmente (via modal)
   const createMutation = useMutation({
     mutationFn: (data: { type: ResourceType; name: string; value: string }) =>
       apiRequest("POST", "/api/resources", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/resources"] });
       setIsDialogOpen(false);
-      setNewResource({ type: resolveTypeFromFilter(typeFilter), name: "", value: "" });
+      setNewResource({
+        type: resolveTypeFromFilter(typeFilter),
+        name: "",
+        value: "",
+      });
       toast({
         title: "Recurso criado com sucesso",
-        description: "O recurso foi adicionado Ã  sua lista",
+        description: "O recurso foi adicionado à tua lista.",
       });
     },
     onError: (error: Error) => {
@@ -105,14 +157,15 @@ export default function Resources() {
     },
   });
 
+  // Apagar recurso
   const deleteMutation = useMutation({
     mutationFn: (id: number) =>
       apiRequest("DELETE", `/api/resources/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/resources"] });
       toast({
-        title: "Recurso excluÃ­do",
-        description: "O recurso foi removido com sucesso",
+        title: "Recurso excluído",
+        description: "O recurso foi removido com sucesso.",
       });
     },
     onError: (error: Error) => {
@@ -133,21 +186,25 @@ export default function Resources() {
     window.location.href = "/auth/meta";
   };
 
-  // Check for OAuth success
+  // Depois do OAuth (redirect com ?oauth=success), apenas actualiza lista
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get('oauth') === 'success') {
+    if (params.get("oauth") === "success") {
       toast({
-        title: "Conectado com sucesso!",
-        description: "Seus recursos Meta foram importados automaticamente.",
+        title: "Conectado com sucesso à Meta",
+        description:
+          "As contas, páginas e perfis ligados foram importados automaticamente.",
       });
-      // Clean URL
-      window.history.replaceState({}, '', '/resources');
-      // Refresh resources
+
+      // Limpa a query na URL
+      window.history.replaceState({}, "", "/resources");
+
+      // Faz refetch dos recursos (o backend já guardou tudo no callback)
       queryClient.invalidateQueries({ queryKey: ["/api/resources"] });
     }
   }, [toast]);
 
+  // Leitura inicial de parâmetros (?type=...&new=1) para abrir modal / aplicar filtro
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const typeParam = params.get("type");
@@ -173,52 +230,67 @@ export default function Resources() {
       params.delete("new");
       const next = params.toString();
       const nextUrl = next ? `?${next}` : "";
-      window.history.replaceState({}, "", `${window.location.pathname}${nextUrl}`);
+      window.history.replaceState(
+        {},
+        "",
+        `${window.location.pathname}${nextUrl}`,
+      );
     }
   }, []);
 
+  // --- Filtros & ordenação em memória ---
+
   const normalizedSearch = searchTerm.trim().toLowerCase();
 
-  const filteredResources = resources.filter((resource) => {
-    const matchesType = typeFilter === "all" || resource.type === typeFilter;
-    if (!matchesType) return false;
+  const filteredResources = useMemo(
+    () =>
+      resources.filter((resource) => {
+        const matchesType =
+          typeFilter === "all" || resource.type === typeFilter;
+        if (!matchesType) return false;
 
-    if (!normalizedSearch) return true;
-    return (
-      resource.name.toLowerCase().includes(normalizedSearch) ||
-      resource.value.toLowerCase().includes(normalizedSearch)
-    );
-  });
+        if (!normalizedSearch) return true;
 
-  const sortedResources = [...filteredResources].sort((a, b) => {
+        return (
+          resource.name.toLowerCase().includes(normalizedSearch) ||
+          resource.value.toLowerCase().includes(normalizedSearch)
+        );
+      }),
+    [resources, typeFilter, normalizedSearch],
+  );
+
+  const sortedResources = useMemo(() => {
+    const copy = [...filteredResources];
     if (sortOption === "name") {
-      return a.name.localeCompare(b.name);
+      return copy.sort((a, b) => a.name.localeCompare(b.name));
     }
+    return copy.sort((a, b) => {
+      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return dateB - dateA;
+    });
+  }, [filteredResources, sortOption]);
 
-    const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-    const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-    return dateB - dateA;
-  });
-
-  const groupedResources = sortedResources.reduce((acc, resource) => {
-    if (!acc[resource.type]) {
-      acc[resource.type] = [];
-    }
-    acc[resource.type].push(resource);
-    return acc;
-  }, {} as Record<ResourceType, Resource[]>);
-
-  const sectionTypes =
-    typeFilter === "all"
-      ? orderedResourceTypes.filter(
-          (type) => (groupedResources[type]?.length ?? 0) > 0,
-        )
-      : [typeFilter];
   const hasResults = sortedResources.length > 0;
+  const totalFiltered = sortedResources.length;
 
-  const handleOpenDialog = () => {
+  const countsByType: Record<ResourceType, number> = useMemo(
+    () =>
+      orderedResourceTypes.reduce(
+        (acc, type) => {
+          acc[type] = resources.filter(
+            (r) => r.type === type,
+          ).length;
+          return acc;
+        },
+        {} as Record<ResourceType, number>,
+      ),
+    [resources],
+  );
+
+  const handleOpenDialog = (forcedType?: ResourceType) => {
     setNewResource({
-      type: resolveTypeFromFilter(typeFilter),
+      type: forcedType ?? resolveTypeFromFilter(typeFilter),
       name: "",
       value: "",
     });
@@ -233,13 +305,22 @@ export default function Resources() {
 
   return (
     <div className="p-6 space-y-6">
+      {/* 1. Cabeçalho + integrações principais */}
       <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-1">
             <h1 className="text-3xl font-semibold">Recursos</h1>
-            <p className="text-muted-foreground">Gerencie e conecte os ativos usados nas campanhas</p>
+            <p className="text-sm text-muted-foreground max-w-xl">
+              Centraliza aqui todas as contas, páginas, formulários,
+              websites e pastas que o sistema vai usar nas campanhas.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {totalFiltered} recurso(s) visível(eis) com os filtros
+              actuais.
+            </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+
+          <div className="flex flex-col gap-2 items-stretch sm:flex-row sm:items-center">
             <Button
               variant="outline"
               onClick={handleMetaOAuth}
@@ -248,30 +329,117 @@ export default function Resources() {
               <LinkIcon className="h-4 w-4 mr-2" />
               Conectar com Meta
             </Button>
-            <Button onClick={handleOpenDialog} data-testid="button-add-resource">
+            <Button
+              onClick={() => handleOpenDialog()}
+              data-testid="button-add-resource"
+            >
               <Plus className="h-4 w-4 mr-2" />
-              Adicionar Recurso
+              Adicionar recurso manual
             </Button>
           </div>
         </div>
 
+        {/* Secção de resumo de integrações / tipos */}
+        <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-4">
+          {/* Cartão principal da Meta */}
+          <div className="flex flex-col justify-between rounded-lg border p-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Meta (Facebook / IG)</p>
+              <p className="text-xs text-muted-foreground">
+                Contas de anúncios, páginas e Instagram Business ligadas
+                a este tenant.
+              </p>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+              <Badge variant="secondary">
+                {countsByType.account} conta(s)
+              </Badge>
+              <Badge variant="secondary">
+                {countsByType.page} página(s)
+              </Badge>
+              <Badge variant="secondary">
+                {countsByType.instagram} Instagram(s)
+              </Badge>
+              {countsByType.leadform > 0 && (
+                <Badge variant="secondary">
+                  {countsByType.leadform} formulário(s)
+                </Badge>
+              )}
+            </div>
+          </div>
+
+          {/* Cartão Google Drive */}
+          <div className="flex flex-col justify-between rounded-lg border p-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Google Drive</p>
+              <p className="text-xs text-muted-foreground">
+                Pastas disponíveis para guardar criativos e documentos.
+              </p>
+            </div>
+            <div className="mt-3">
+              <Badge variant="secondary">
+                {countsByType.drive_folder} pasta(s)
+              </Badge>
+            </div>
+          </div>
+
+          {/* Cartão Websites */}
+          <div className="flex flex-col justify-between rounded-lg border p-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Websites</p>
+              <p className="text-xs text-muted-foreground">
+                Domínios e URLs de destino usados nas campanhas.
+              </p>
+            </div>
+            <div className="mt-3">
+              <Badge variant="secondary">
+                {countsByType.website} website(s)
+              </Badge>
+            </div>
+          </div>
+
+          {/* Cartão WhatsApp (se houver) */}
+          <div className="flex flex-col justify-between rounded-lg border p-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">WhatsApp Business</p>
+              <p className="text-xs text-muted-foreground">
+                Números ligados às campanhas de mensagens.
+              </p>
+            </div>
+            <div className="mt-3">
+              <Badge variant="secondary">
+                {countsByType.whatsapp} número(s)
+              </Badge>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. Filtros para pesquisar recursos */}
+      <div className="rounded-lg border bg-card p-4 space-y-3">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex flex-col gap-3 md:flex-row md:flex-1">
             <div className="relative w-full">
               <SearchIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 className="pl-9"
-                placeholder="Buscar por nome ou ID"
+                placeholder="Buscar por nome ou ID/URL"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 data-testid="input-resource-search"
               />
             </div>
+
             <Select
               value={typeFilter}
-              onValueChange={(value) => setTypeFilter(value as ResourceFilter)}
+              onValueChange={(value) =>
+                setTypeFilter(value as ResourceFilter)
+              }
             >
-              <SelectTrigger className="w-full md:w-[220px]" data-testid="select-resource-filter">
+              <SelectTrigger
+                className="w-full md:w-[220px]"
+                data-testid="select-resource-filter"
+              >
                 <SelectValue placeholder="Filtrar por tipo" />
               </SelectTrigger>
               <SelectContent>
@@ -284,95 +452,184 @@ export default function Resources() {
               </SelectContent>
             </Select>
           </div>
+
           <Select
             value={sortOption}
-            onValueChange={(value) => setSortOption(value as SortOption)}
+            onValueChange={(value) =>
+              setSortOption(value as SortOption)
+            }
           >
-            <SelectTrigger className="w-full md:w-[200px]" data-testid="select-resource-sort">
+            <SelectTrigger
+              className="w-full md:w-[200px]"
+              data-testid="select-resource-sort"
+            >
               <SelectValue placeholder="Ordenar por" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="recent">Mais recentes</SelectItem>
-              <SelectItem value="name">Nome (A-Z)</SelectItem>
+              <SelectItem value="name">Nome (A–Z)</SelectItem>
             </SelectContent>
           </Select>
         </div>
-      </div>
 
-      {isLoading ? (
-        <div className="mt-6 text-center py-12">
-          <p className="text-muted-foreground">Carregando recursos...</p>
-        </div>
-      ) : hasResults ? (
-        <div className="space-y-8">
-          {sectionTypes.map((type) => {
-            const typeResources = groupedResources[type] ?? [];
-            if (typeResources.length === 0) {
-              return null;
-            }
+        {/* Botões de atalho de tipo (opcional, mas útil) */}
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Button
+            size="sm"
+            variant={typeFilter === "all" ? "default" : "outline"}
+            onClick={() => setTypeFilter("all")}
+          >
+            Todos
+            <span className="ml-2 text-xs opacity-80">
+              {resources.length}
+            </span>
+          </Button>
+
+          {orderedResourceTypes.map((type) => {
+            const count = countsByType[type];
+            if (!count) return null;
             return (
-              <section key={type} className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <h2 className="text-xl font-semibold">{resourceTypeLabels[type].title}</h2>
-                    <p className="text-sm text-muted-foreground">
-                      {typeResources.length} recurso(s) disponível(is) para esta categoria
-                    </p>
-                  </div>
-                  <Badge variant="secondary">{typeResources.length}</Badge>
-                </div>
-                <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-                  {typeResources.map((resource) => (
-                    <ResourceCard
-                      key={resource.id}
-                      title={resource.name}
-                      label={resourceTypeLabels[type].title}
-                      value={resource.value}
-                      onEdit={() => {
-                        toast({
-                          title: "Em desenvolvimento",
-                          description: "Funcionalidade de edição em breve",
-                        });
-                      }}
-                      onDelete={() => deleteMutation.mutate(resource.id)}
-                    />
-                  ))}
-                </div>
-              </section>
+              <Button
+                key={type}
+                size="sm"
+                variant={
+                  typeFilter === type ? "default" : "outline"
+                }
+                onClick={() => setTypeFilter(type)}
+              >
+                {resourceTypeLabels[type].title}
+                <span className="ml-2 text-xs opacity-80">
+                  {count}
+                </span>
+              </Button>
             );
           })}
+
+          {typeFilter !== "all" && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={handleResetFilters}
+            >
+              Limpar filtros
+            </Button>
+          )}
+        </div>
+      </div>
+
+      {/* 3. Lista de recursos (vista única, sem secções exageradas) */}
+      {isLoading ? (
+        <div className="mt-6 text-center py-12">
+          <p className="text-muted-foreground">
+            Carregando recursos...
+          </p>
+        </div>
+      ) : hasResults ? (
+        <div className="space-y-4">
+          {/* “Resumo” contextual do tipo filtrado */}
+          {typeFilter !== "all" && (
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-medium">
+                  {resourceTypeLabels[typeFilter].title}
+                </p>
+                {resourceTypeLabels[typeFilter].description && (
+                  <p className="text-xs text-muted-foreground">
+                    {resourceTypeLabels[typeFilter].description}
+                  </p>
+                )}
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  handleOpenDialog(
+                    typeFilter === "all"
+                      ? undefined
+                      : (typeFilter as ResourceType),
+                  )
+                }
+              >
+                <Plus className="mr-1 h-3 w-3" />
+                Adicionar {typeFilter !== "all"
+                  ? resourceTypeLabels[typeFilter].title
+                  : "recurso"}
+              </Button>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {sortedResources.map((resource) => {
+              const info = resourceTypeLabels[resource.type];
+              return (
+                <ResourceCard
+                  key={resource.id}
+                  title={resource.name}
+                  label={info.title}
+                  value={resource.value}
+                  onEdit={() => {
+                    toast({
+                      title: "Em desenvolvimento",
+                      description:
+                        "A edição de recursos será adicionada em breve.",
+                    });
+                  }}
+                  onDelete={() =>
+                    deleteMutation.mutate(resource.id)
+                  }
+                />
+              );
+            })}
+          </div>
         </div>
       ) : (
         <div className="rounded-lg border border-dashed py-16 text-center">
-          <p className="text-base font-semibold">Nenhum recurso encontrado</p>
+          <p className="text-base font-semibold">
+            Nenhum recurso encontrado
+          </p>
           <p className="mt-2 text-sm text-muted-foreground">
-            Ajuste os filtros ou cadastre um novo recurso para usá-lo em campanhas.
+            Ajusta os filtros ou cria um novo recurso para usá-lo em
+            campanhas.
           </p>
           <div className="mt-4 flex justify-center gap-2">
-            <Button variant="outline" onClick={handleResetFilters} data-testid="button-reset-filters">
+            <Button
+              variant="outline"
+              onClick={handleResetFilters}
+              data-testid="button-reset-filters"
+            >
               Limpar filtros
             </Button>
-            <Button onClick={handleOpenDialog} data-testid="button-empty-add-resource">
+            <Button
+              onClick={() => handleOpenDialog()}
+              data-testid="button-empty-add-resource"
+            >
               Adicionar recurso
             </Button>
           </div>
         </div>
       )}
 
+      {/* Modal para criar recurso manualmente */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Adicionar Recurso</DialogTitle>
-            <DialogDescription>Preencha os dados do novo recurso</DialogDescription>
+            <DialogTitle>Adicionar recurso</DialogTitle>
+            <DialogDescription>
+              Escolhe o tipo de recurso e preenche os dados mínimos para
+              o identificarmos nas tuas campanhas.
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit}>
             <div className="space-y-4 py-4">
               <div className="space-y-2">
-                <Label htmlFor="type">Tipo de Recurso</Label>
+                <Label htmlFor="type">Tipo de recurso</Label>
                 <Select
                   value={newResource.type}
                   onValueChange={(value) =>
-                    setNewResource({ ...newResource, type: value as ResourceType })
+                    setNewResource({
+                      ...newResource,
+                      type: value as ResourceType,
+                    })
                   }
                 >
                   <SelectTrigger data-testid="select-resource-type">
@@ -386,28 +643,52 @@ export default function Resources() {
                     ))}
                   </SelectContent>
                 </Select>
+                {resourceTypeLabels[newResource.type].description && (
+                  <p className="text-xs text-muted-foreground">
+                    {resourceTypeLabels[newResource.type].description}
+                  </p>
+                )}
               </div>
+
               <div className="space-y-2">
-                <Label htmlFor="name">Nome Descritivo</Label>
+                <Label htmlFor="name">Nome descritivo</Label>
                 <Input
                   id="name"
                   placeholder="Nome para identificar este recurso"
                   value={newResource.name}
-                  onChange={(e) => setNewResource({ ...newResource, name: e.target.value })}
+                  onChange={(e) =>
+                    setNewResource({
+                      ...newResource,
+                      name: e.target.value,
+                    })
+                  }
                   data-testid="input-resource-name"
                   required
                 />
               </div>
+
               <div className="space-y-2">
                 <Label htmlFor="value">ID ou URL</Label>
                 <Input
                   id="value"
-                  placeholder={resourceTypeLabels[newResource.type].placeholder}
+                  placeholder={
+                    resourceTypeLabels[newResource.type].placeholder
+                  }
                   value={newResource.value}
-                  onChange={(e) => setNewResource({ ...newResource, value: e.target.value })}
+                  onChange={(e) =>
+                    setNewResource({
+                      ...newResource,
+                      value: e.target.value,
+                    })
+                  }
                   data-testid="input-resource-value"
                   required
                 />
+                <p className="text-xs text-muted-foreground">
+                  Usa o ID exacto ou URL que a plataforma te fornece
+                  (por exemplo, o ID da conta de anúncios ou o link do
+                  website).
+                </p>
               </div>
             </div>
             <DialogFooter>
@@ -433,9 +714,3 @@ export default function Resources() {
     </div>
   );
 }
-
-
-
-
-
-

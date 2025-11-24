@@ -1,9 +1,8 @@
 import { Router } from "express";
-import type { InsertIntegration, InsertResource, User } from "@shared/schema";
+import type { InsertIntegration, User } from "@shared/schema";
 import { storage } from "../storage";
 import { isAuthenticated } from "../../middlewares/auth";
 import { getPublicAppUrl } from "../../utils/url";
-import { generateAppSecretProof } from "../meta/utils/crypto";
 import { encryptMetaAccessToken } from "../meta/utils/token";
 
 export const oauthRouter = Router();
@@ -81,59 +80,6 @@ oauthRouter.get("/meta/callback", async (req, res) => {
     }
 
     const accessToken = tokenData.access_token;
-    const appSecretProof = generateAppSecretProof(accessToken, settings.metaAppSecret);
-
-    const accountsUrl =
-      `https://graph.facebook.com/v18.0/me/adaccounts?` +
-      `access_token=${accessToken}&` +
-      `appsecret_proof=${appSecretProof}&` +
-      `fields=id,name`;
-
-    const accountsResponse = await fetch(accountsUrl);
-    const accountsData: any = await accountsResponse.json();
-
-    if (accountsData.data && accountsData.data.length > 0) {
-      for (const account of accountsData.data) {
-        const accountResource: InsertResource & { tenantId: number } = {
-          tenantId,
-          type: "account",
-          name: account.name || "Ad Account",
-          value: account.id,
-        };
-        await storage.createResource(accountResource);
-      }
-    }
-
-    const pagesUrl =
-      `https://graph.facebook.com/v18.0/me/accounts?` +
-      `access_token=${accessToken}&` +
-      `appsecret_proof=${appSecretProof}&` +
-      `fields=id,name,instagram_business_account`;
-
-    const pagesResponse = await fetch(pagesUrl);
-    const pagesData: any = await pagesResponse.json();
-
-    if (pagesData.data && pagesData.data.length > 0) {
-      for (const page of pagesData.data) {
-        const pageResource: InsertResource & { tenantId: number } = {
-          tenantId,
-          type: "page",
-          name: page.name || "Facebook Page",
-          value: page.id,
-        };
-        await storage.createResource(pageResource);
-
-        if (page.instagram_business_account?.id) {
-          const instagramResource: InsertResource & { tenantId: number } = {
-            tenantId,
-            type: "instagram",
-            name: `Instagram - ${page.name}`,
-            value: page.instagram_business_account.id,
-          };
-          await storage.createResource(instagramResource);
-        }
-      }
-    }
 
     const storedAccessToken = encryptMetaAccessToken(accessToken);
     const metaIntegration: InsertIntegration & { tenantId: number } = {
@@ -306,4 +252,3 @@ oauthRouter.get("/google/callback", async (req, res) => {
     res.status(500).send("Failed to complete OAuth");
   }
 });
-
