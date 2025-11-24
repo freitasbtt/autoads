@@ -24,6 +24,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { ChevronRight, ChevronLeft, Plus, Trash2, Check } from "lucide-react";
 import { Resource, Audience } from "@shared/schema";
+import { DriveFolderCombobox } from "@/components/DriveFolderCombobox";
 
 const OBJECTIVE_OPTIONS: Record<
   string,
@@ -828,29 +829,16 @@ export default function CampaignForm() {
                               Nova pasta
                             </Button>
                           </div>
-                          <Select
+                          <DriveFolderCombobox
+                            folders={driveFolders}
                             value={creative.driveFolderId}
-                            onValueChange={(value) =>
+                            onChange={(value) =>
                               updateCreative(index, "driveFolderId", value)
                             }
-                          >
-                            <SelectTrigger
-                              id={`driveFolderId-${index}`}
-                              data-testid={`select-drive-folder-${index}`}
-                            >
-                              <SelectValue placeholder="Selecione a pasta" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {driveFolders.map((folder) => (
-                                <SelectItem
-                                  key={folder.id}
-                                  value={folder.value}
-                                >
-                                  {folder.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                            placeholder="Buscar pasta por nome"
+                            emptyLabel="Nenhuma pasta encontrada"
+                            testId={`select-drive-folder-${index}`}
+                          />
                         </div>
                       </div>
                     </div>

@@ -17,6 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
+import { DriveFolderCombobox } from "@/components/DriveFolderCombobox";
 
 interface Resource {
   id: number;
@@ -394,24 +395,14 @@ export default function ExistingCampaignForm() {
                   Nova pasta
                 </Button>
               </div>
-              <Select value={driveFolderId} onValueChange={setDriveFolderId}>
-                <SelectTrigger id="drive-folder" data-testid="select-drive-folder">
-                  <SelectValue placeholder="Selecione a pasta com criativos" />
-                </SelectTrigger>
-                <SelectContent>
-                  {driveFolders.length === 0 ? (
-                    <SelectItem value="none" disabled>
-                      Nenhuma pasta disponível
-                    </SelectItem>
-                  ) : (
-                    driveFolders.map((folder) => (
-                      <SelectItem key={folder.id} value={folder.value}>
-                        {folder.name}
-                      </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
+              <DriveFolderCombobox
+                folders={driveFolders}
+                value={driveFolderId}
+                onChange={setDriveFolderId}
+                placeholder="Buscar pasta por nome"
+                emptyLabel="Nenhuma pasta disponivel"
+                testId="select-drive-folder"
+              />
             </div>
           </CardContent>
         </Card>
