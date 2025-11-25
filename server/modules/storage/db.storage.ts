@@ -129,6 +129,13 @@ export class DbStorage implements IStorage {
     return (result.rowCount ?? 0) > 0;
   }
 
+  async deleteResourcesByType(tenantId: number, type: string): Promise<number> {
+    const result = await db
+      .delete(schema.resources)
+      .where(and(eq(schema.resources.tenantId, tenantId), eq(schema.resources.type, type)));
+    return result.rowCount ?? 0;
+  }
+
   async getAudience(id: number): Promise<Audience | undefined> {
     return db.query.audiences.findFirst({
       where: eq(schema.audiences.id, id),

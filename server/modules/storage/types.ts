@@ -45,6 +45,7 @@ export interface IStorage {
   createResource(resource: InsertResource & { tenantId: number }): Promise<Resource>;
   updateResource(id: number, resource: Partial<InsertResource>): Promise<Resource | undefined>;
   deleteResource(id: number): Promise<boolean>;
+  deleteResourcesByType(tenantId: number, type: string): Promise<number>;
 
   getAudience(id: number): Promise<Audience | undefined>;
   getAudiencesByTenant(tenantId: number): Promise<Audience[]>;

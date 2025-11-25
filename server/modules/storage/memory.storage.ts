@@ -133,6 +133,17 @@ export class MemStorage implements IStorage {
     return this.resources.delete(id);
   }
 
+  async deleteResourcesByType(tenantId: number, type: string): Promise<number> {
+    let deleted = 0;
+    for (const [id, resource] of this.resources.entries()) {
+      if (resource.tenantId === tenantId && resource.type === type) {
+        this.resources.delete(id);
+        deleted += 1;
+      }
+    }
+    return deleted;
+  }
+
   async getAudience(id: number): Promise<Audience | undefined> {
     return this.audiences.get(id);
   }
