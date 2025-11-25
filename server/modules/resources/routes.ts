@@ -61,6 +61,27 @@ resourcesRouter.get(
   },
 );
 
+// DELETE /api/resources/type/:type
+// Apaga todos os recursos de um tipo (multi-tenant safe)
+resourcesRouter.delete(
+  "/type/:type",
+  async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const user = req.user as User;
+      const { type } = req.params;
+
+      if (!allowedTypes.includes(type as ResourceType)) {
+        return res.status(400).json({ message: "Invalid resource type" });
+      }
+
+      const deleted = await storage.deleteResourcesByType(user.tenantId, type);
+      return res.json({ deleted });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
 // POST /api/resources
 // Cria um recurso manualmente
 resourcesRouter.post(

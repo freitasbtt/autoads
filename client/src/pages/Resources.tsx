@@ -177,6 +177,28 @@ export default function Resources() {
     },
   });
 
+  // Apagar todos os recursos de um tipo
+  const bulkDeleteMutation = useMutation({
+    mutationFn: async (type: ResourceType) => {
+      const res = await apiRequest("DELETE", `/api/resources/type/${type}`);
+      return (await res.json()) as { deleted: number };
+    },
+    onSuccess: (data, type) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/resources"] });
+      toast({
+        title: "Recursos removidos",
+        description: `${data.deleted} recurso(s) do tipo ${resourceTypeLabels[type].title} foram removidos.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro ao remover recursos",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     createMutation.mutate(newResource);
@@ -301,6 +323,24 @@ export default function Resources() {
     setSearchTerm("");
     setTypeFilter("all");
     setSortOption("recent");
+  };
+
+  const handleBulkDeleteByType = (type: ResourceType) => {
+    const count = countsByType[type];
+    if (!count) {
+      toast({
+        title: "Nada para remover",
+        description: "N�o existem recursos desse tipo para apagar.",
+      });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Desejas remover ${count} recurso(s) do tipo "${resourceTypeLabels[type].title}"? Esta ac��o n�o pode ser desfeita.`,
+    );
+    if (!confirmed) return;
+
+    bulkDeleteMutation.mutate(type);
   };
 
   return (
@@ -539,22 +579,35 @@ export default function Resources() {
                   </p>
                 )}
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() =>
-                  handleOpenDialog(
-                    typeFilter === "all"
-                      ? undefined
-                      : (typeFilter as ResourceType),
-                  )
-                }
-              >
-                <Plus className="mr-1 h-3 w-3" />
-                Adicionar {typeFilter !== "all"
-                  ? resourceTypeLabels[typeFilter].title
-                  : "recurso"}
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() =>
+                    handleBulkDeleteByType(typeFilter as ResourceType)
+                  }
+                  disabled={bulkDeleteMutation.isPending}
+                  data-testid="button-delete-resources-by-type"
+                >
+                  {bulkDeleteMutation.isPending ? "Removendo..." : "Remover todos"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    handleOpenDialog(
+                      typeFilter === "all"
+                        ? undefined
+                        : (typeFilter as ResourceType),
+                    )
+                  }
+                >
+                  <Plus className="mr-1 h-3 w-3" />
+                  Adicionar {typeFilter !== "all"
+                    ? resourceTypeLabels[typeFilter].title
+                    : "recurso"}
+                </Button>
+              </div>
             </div>
           )}
 
