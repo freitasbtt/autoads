@@ -4,8 +4,213 @@ import { storage } from "../storage";
 import { isAuthenticated } from "../../middlewares/auth";
 import { getPublicAppUrl } from "../../utils/url";
 import { encryptMetaAccessToken } from "../meta/utils/token";
+import { generateAppSecretProof } from "../meta/utils/crypto";
 
 export const oauthRouter = Router();
+
+type MetaAdAccount = {
+  id?: string;
+  name?: string;
+  account_id?: string;
+  account_status?: number;
+};
+
+type MetaPageWithInstagram = {
+  id?: string;
+  name?: string;
+  instagram_business_account?: {
+    id?: string;
+    username?: string;
+  } | null;
+};
+
+function appendSecurityParams(url: URL, accessToken: string, appSecretProof?: string) {
+  if (!url.searchParams.has("access_token")) {
+    url.searchParams.set("access_token", accessToken);
+  }
+  if (appSecretProof && !url.searchParams.has("appsecret_proof")) {
+    url.searchParams.set("appsecret_proof", appSecretProof);
+  }
+}
+
+async function fetchPagedMetaList<T>(
+  initialUrl: URL,
+  accessToken: string,
+  appSecretProof?: string,
+): Promise<T[]> {
+  const items: T[] = [];
+  let nextUrl: URL | null = initialUrl;
+
+  while (nextUrl) {
+    appendSecurityParams(nextUrl, accessToken, appSecretProof);
+
+    let response: globalThis.Response;
+    try {
+      response = await fetch(nextUrl);
+    } catch (networkError) {
+      throw new Error(`Network error while contacting Meta: ${String(networkError)}`);
+    }
+
+    const text = await response.text();
+    let body: any = {};
+    try {
+      body = text ? JSON.parse(text) : {};
+    } catch (parseError) {
+      throw new Error("Failed to parse Meta response while importing resources");
+    }
+
+    if (!response.ok || body?.error) {
+      const message =
+        typeof body?.error?.message === "string"
+          ? body.error.message
+          : `Meta request failed with status ${response.status}`;
+      throw new Error(message);
+    }
+
+    if (Array.isArray(body?.data)) {
+      items.push(...body.data);
+    }
+
+    const next = body?.paging?.next;
+    nextUrl = next ? new URL(next) : null;
+  }
+
+  return items;
+}
+
+async function fetchMetaAdAccounts(
+  accessToken: string,
+  appSecretProof?: string,
+): Promise<MetaAdAccount[]> {
+  const url = new URL("https://graph.facebook.com/v18.0/me/adaccounts");
+  url.searchParams.set("fields", "id,name,account_id,account_status");
+  url.searchParams.set("limit", "200");
+  return fetchPagedMetaList<MetaAdAccount>(url, accessToken, appSecretProof);
+}
+
+async function fetchMetaPagesWithInstagram(
+  accessToken: string,
+  appSecretProof?: string,
+): Promise<MetaPageWithInstagram[]> {
+  const url = new URL("https://graph.facebook.com/v18.0/me/accounts");
+  url.searchParams.set("fields", "id,name,instagram_business_account{id,username}");
+  url.searchParams.set("limit", "200");
+  return fetchPagedMetaList<MetaPageWithInstagram>(url, accessToken, appSecretProof);
+}
+
+async function syncMetaResourcesFromOAuth(options: {
+  tenantId: number;
+  accessToken: string;
+  appSecret: string;
+}) {
+  const { tenantId, accessToken, appSecret } = options;
+  const appSecretProof = generateAppSecretProof(accessToken, appSecret);
+
+  const [adAccounts, pages, existingResources] = await Promise.all([
+    fetchMetaAdAccounts(accessToken, appSecretProof),
+    fetchMetaPagesWithInstagram(accessToken, appSecretProof),
+    storage.getResourcesByTenant(tenantId),
+  ]);
+
+  const existingByTypeAndValue = new Map<string, number>();
+  for (const res of existingResources) {
+    existingByTypeAndValue.set(`${res.type}|${res.value}`, res.id);
+  }
+
+  const upsertResource = async (
+    type: string,
+    value: string,
+    name: string,
+    metadata: Record<string, unknown>,
+  ): Promise<number> => {
+    const key = `${type}|${value}`;
+    const existingId = existingByTypeAndValue.get(key);
+    if (existingId) {
+      await storage.updateResource(existingId, { name, metadata });
+      return existingId;
+    }
+    const created = await storage.createResource({
+      tenantId,
+      type,
+      name,
+      value,
+      metadata,
+    });
+    existingByTypeAndValue.set(key, created.id);
+    return created.id;
+  };
+
+  const instagramIndex = new Map<string, number>();
+
+  for (const account of adAccounts) {
+    const accountId =
+      typeof account.id === "string"
+        ? account.id
+        : typeof account.account_id === "string"
+          ? account.account_id
+          : null;
+
+    if (!accountId) continue;
+
+    const accountName =
+      typeof account.name === "string" && account.name.trim().length > 0
+        ? account.name
+        : accountId;
+
+    await upsertResource("account", accountId, accountName, {
+      accountStatus: typeof account.account_status === "number" ? account.account_status : null,
+    });
+  }
+
+  for (const page of pages) {
+    const pageId = typeof page.id === "string" ? page.id : null;
+    if (!pageId) continue;
+
+    const pageName =
+      typeof page.name === "string" && page.name.trim().length > 0 ? page.name : pageId;
+
+    const instagramId =
+      typeof page.instagram_business_account?.id === "string"
+        ? page.instagram_business_account.id
+        : null;
+    const instagramUsername =
+      typeof page.instagram_business_account?.username === "string"
+        ? page.instagram_business_account.username
+        : null;
+
+    let instagramResourceId: number | null = null;
+
+    if (instagramId) {
+      const cachedId = instagramIndex.get(instagramId);
+      if (cachedId) {
+        instagramResourceId = cachedId;
+      } else {
+        const createdId = await upsertResource(
+          "instagram",
+          instagramId,
+          instagramUsername ? `@${instagramUsername}` : instagramId,
+          {
+            username: instagramUsername,
+            pageId,
+          },
+        );
+        instagramResourceId = createdId;
+        instagramIndex.set(instagramId, createdId);
+      }
+    }
+
+    await upsertResource("page", pageId, pageName, {
+      instagramId,
+      instagramUsername,
+      instagramResourceId,
+    });
+  }
+
+  return {
+    accounts: adAccounts.length,
+    pages: pages.length,
+  };
+}
 
 oauthRouter.get("/meta", isAuthenticated, async (req, res) => {
   try {
@@ -88,7 +293,21 @@ oauthRouter.get("/meta/callback", async (req, res) => {
       config: { accessToken: storedAccessToken, tokenType: tokenData.token_type },
       status: "connected",
     };
-    await storage.createIntegration(metaIntegration);
+    const existingIntegration = await storage.getIntegrationByProvider(tenantId, "Meta");
+    if (existingIntegration) {
+      await storage.updateIntegration(existingIntegration.id, {
+        config: metaIntegration.config,
+        status: metaIntegration.status,
+      });
+    } else {
+      await storage.createIntegration(metaIntegration);
+    }
+
+    await syncMetaResourcesFromOAuth({
+      tenantId,
+      accessToken,
+      appSecret: settings.metaAppSecret,
+    });
 
     res.redirect("/resources?oauth=success");
   } catch (err) {

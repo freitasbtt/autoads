@@ -6,11 +6,12 @@ interface ResourceCardProps {
   title: string;
   label: string;
   value: string;
+  meta?: Array<{ label: string; value: string }>;
   onEdit: () => void;
   onDelete: () => void;
 }
 
-export default function ResourceCard({ title, label, value, onEdit, onDelete }: ResourceCardProps) {
+export default function ResourceCard({ title, label, value, meta, onEdit, onDelete }: ResourceCardProps) {
   return (
     <Card data-testid={`card-resource-${title.toLowerCase()}`}>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -39,6 +40,16 @@ export default function ResourceCard({ title, label, value, onEdit, onDelete }: 
       <CardContent>
         <div className="text-sm text-muted-foreground mb-1">{label}</div>
         <div className="font-mono text-sm">{value}</div>
+        {meta && meta.length > 0 && (
+          <div className="mt-3 space-y-1">
+            {meta.map((entry, index) => (
+              <div key={`${entry.label}-${index}`} className="text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">{entry.label}:</span>{" "}
+                {entry.value}
+              </div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

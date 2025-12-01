@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import type { Resource } from "@shared/schema";
 
 type ResourceType =
   | "account"
@@ -45,15 +46,6 @@ type SortOption = "recent" | "name";
 
 const resolveTypeFromFilter = (filter: ResourceFilter): ResourceType =>
   filter === "all" ? "account" : filter;
-
-interface Resource {
-  id: number;
-  tenantId: number;
-  type: ResourceType;
-  name: string;
-  value: string;
-  createdAt?: string;
-}
 
 const resourceTypeLabels: Record<
   ResourceType,
@@ -112,6 +104,40 @@ const orderedResourceTypes: ResourceType[] = [
   "website",
   "drive_folder",
 ];
+
+function extractPageInstagram(resource: Resource): {
+  handle: string | null;
+  instagramId: string | null;
+  instagramResourceId: number | null;
+} {
+  const metadata = (resource?.metadata ?? {}) as Record<string, unknown>;
+  const instagramId =
+    typeof metadata.instagramId === "string" ? metadata.instagramId : null;
+  const usernameRaw =
+    typeof metadata.instagramUsername === "string"
+      ? metadata.instagramUsername
+      : typeof (metadata as any).username === "string"
+        ? (metadata as any).username
+        : null;
+  const instagramResourceIdRaw = (metadata as any)?.instagramResourceId;
+  const instagramResourceId =
+    typeof instagramResourceIdRaw === "number"
+      ? instagramResourceIdRaw
+      : typeof instagramResourceIdRaw === "string" && instagramResourceIdRaw.trim().length > 0
+        ? Number.parseInt(instagramResourceIdRaw, 10)
+        : null;
+
+  const normalizedUsername =
+    usernameRaw && usernameRaw.startsWith("@") ? usernameRaw.slice(1) : usernameRaw;
+
+  const handle = normalizedUsername
+    ? `@${normalizedUsername}`
+    : instagramId
+      ? `IG ${instagramId}`
+      : null;
+
+  return { handle, instagramId, instagramResourceId };
+}
 
 export default function Resources() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -271,11 +297,16 @@ export default function Resources() {
           typeFilter === "all" || resource.type === typeFilter;
         if (!matchesType) return false;
 
+        const pageMeta =
+          resource.type === "page" ? extractPageInstagram(resource) : null;
+        const instagramHandle = pageMeta?.handle?.toLowerCase() ?? "";
+
         if (!normalizedSearch) return true;
 
         return (
           resource.name.toLowerCase().includes(normalizedSearch) ||
-          resource.value.toLowerCase().includes(normalizedSearch)
+          resource.value.toLowerCase().includes(normalizedSearch) ||
+          (instagramHandle && instagramHandle.includes(normalizedSearch))
         );
       }),
     [resources, typeFilter, normalizedSearch],
@@ -613,13 +644,25 @@ export default function Resources() {
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
             {sortedResources.map((resource) => {
-              const info = resourceTypeLabels[resource.type];
+              const info =
+                resourceTypeLabels[resource.type as ResourceType] ??
+                {
+                  title: resource.type,
+                  placeholder: "",
+                };
+              const pageMeta =
+                resource.type === "page" ? extractPageInstagram(resource) : null;
               return (
                 <ResourceCard
                   key={resource.id}
                   title={resource.name}
                   label={info.title}
                   value={resource.value}
+                  meta={
+                    pageMeta?.handle
+                      ? [{ label: "Instagram", value: pageMeta.handle }]
+                      : undefined
+                  }
                   onEdit={() => {
                     toast({
                       title: "Em desenvolvimento",

@@ -46,6 +46,10 @@ export const resources = pgTable(
     type: text("type").notNull(),
     name: text("name").notNull(),
     value: text("value").notNull(),
+    metadata: jsonb("metadata")
+      .$type<Record<string, unknown>>()
+      .default(sql`'{}'::jsonb`)
+      .notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => {
@@ -56,12 +60,17 @@ export const resources = pgTable(
   }
 );
 
+const resourceMetadataSchema = z.record(z.any()).optional();
 
-export const insertResourceSchema = createInsertSchema(resources).omit({
-  id: true,
-  tenantId: true,
-  createdAt: true,
-});
+export const insertResourceSchema = createInsertSchema(resources)
+  .omit({
+    id: true,
+    tenantId: true,
+    createdAt: true,
+  })
+  .extend({
+    metadata: resourceMetadataSchema,
+  });
 export type InsertResource = z.infer<typeof insertResourceSchema>;
 export type Resource = typeof resources.$inferSelect;
 

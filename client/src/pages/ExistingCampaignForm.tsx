@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,12 +18,37 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { DriveFolderCombobox } from "@/components/DriveFolderCombobox";
+import type { Resource } from "@shared/schema";
 
-interface Resource {
-  id: number;
-  type: string;
-  name: string;
-  value: string;
+function extractPageInstagram(resource?: Resource | null): {
+  instagramResourceId: number | null;
+  handle: string | null;
+} {
+  const metadata = (resource?.metadata ?? {}) as Record<string, unknown>;
+  const instagramResourceIdRaw = (metadata as any)?.instagramResourceId;
+  const instagramResourceId =
+    typeof instagramResourceIdRaw === "number"
+      ? instagramResourceIdRaw
+      : typeof instagramResourceIdRaw === "string" && instagramResourceIdRaw.trim().length > 0
+        ? Number.parseInt(instagramResourceIdRaw, 10)
+        : null;
+
+  const instagramUsername =
+    typeof metadata.instagramUsername === "string" ? metadata.instagramUsername : null;
+  const instagramId = typeof metadata.instagramId === "string" ? metadata.instagramId : null;
+
+  const normalizedUsername =
+    instagramUsername && instagramUsername.startsWith("@")
+      ? instagramUsername.slice(1)
+      : instagramUsername;
+
+  const handle = normalizedUsername
+    ? `@${normalizedUsername}`
+    : instagramId
+      ? instagramId
+      : null;
+
+  return { instagramResourceId, handle };
 }
 
 export default function ExistingCampaignForm() {
@@ -68,10 +93,31 @@ export default function ExistingCampaignForm() {
 
   const adAccounts = resources.filter((r) => r.type === "account");
   const pages = resources.filter((r) => r.type === "page");
-  const instagramAccounts = resources.filter((r) => r.type === "instagram");
   const whatsappNumbers = resources.filter((r) => r.type === "whatsapp");
-  const leadForms = resources.filter((r) => r.type === "leadform");
   const driveFolders = resources.filter((r) => r.type === "drive_folder");
+  const selectedPageResource = pages.find((page) => String(page.id) === pageId);
+  const selectedPageValue = selectedPageResource?.value ?? "";
+  const pageInstagram = extractPageInstagram(selectedPageResource);
+
+  useEffect(() => {
+    const derivedInstagramId = pageInstagram.instagramResourceId
+      ? String(pageInstagram.instagramResourceId)
+      : "";
+    setInstagramId(derivedInstagramId);
+    setLeadFormId("");
+  }, [pageInstagram.instagramResourceId, selectedPageValue]);
+
+  const {
+    data: leadForms = [],
+    isFetching: isFetchingLeadForms,
+  } = useQuery<Resource[]>({
+    queryKey: ["leadforms-by-page", selectedPageValue],
+    enabled: Boolean(selectedPageValue),
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/meta/pages/${selectedPageValue}/leadforms`);
+      return (await res.json()) as Resource[];
+    },
+  });
 
   const createDraftMutation = useMutation({
     mutationFn: async (payload: any) => {
@@ -261,6 +307,9 @@ export default function ExistingCampaignForm() {
                       pages.map((page) => (
                         <SelectItem key={page.id} value={String(page.id)}>
                           {page.name}
+                          {extractPageInstagram(page).handle
+                            ? ` (${extractPageInstagram(page).handle})`
+                            : ""}
                         </SelectItem>
                       ))
                     )}
@@ -269,26 +318,41 @@ export default function ExistingCampaignForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="instagram">Instagram User ID *</Label>
-                <Select value={instagramId} onValueChange={setInstagramId}>
+                <Label htmlFor="instagram">Instagram vinculado *</Label>
+                <Select
+                  value={instagramId}
+                  onValueChange={setInstagramId}
+                  disabled={!selectedPageValue || !pageInstagram.instagramResourceId}
+                >
                   <SelectTrigger id="instagram" data-testid="select-instagram">
-                    <SelectValue placeholder="Selecione" />
+                    <SelectValue
+                      placeholder={
+                        !selectedPageValue
+                          ? "Selecione uma pagina primeiro"
+                          : pageInstagram.instagramResourceId
+                            ? "Selecione"
+                            : "Nenhum Instagram associado"
+                      }
+                    />
                   </SelectTrigger>
                   <SelectContent>
-                    {instagramAccounts.length === 0 ? (
+                    {!selectedPageValue ? (
                       <SelectItem value="none" disabled>
-                        Nenhuma conta Instagram disponível
+                        Selecione uma pagina primeiro
+                      </SelectItem>
+                    ) : pageInstagram.instagramResourceId ? (
+                      <SelectItem value={String(pageInstagram.instagramResourceId)}>
+                        {pageInstagram.handle ?? "Instagram vinculado"}
                       </SelectItem>
                     ) : (
-                      instagramAccounts.map((instagram) => (
-                        <SelectItem key={instagram.id} value={String(instagram.id)}>
-                          {instagram.name}
-                        </SelectItem>
-                      ))
+                      <SelectItem value="none" disabled>
+                        Nenhum Instagram associado
+                      </SelectItem>
                     )}
                   </SelectContent>
                 </Select>
               </div>
+
             </div>
 
             {needsWhatsApp && (
@@ -317,15 +381,35 @@ export default function ExistingCampaignForm() {
 
             {needsLeadForm && (
               <div className="space-y-2">
-                <Label htmlFor="leadform">Formulário de Leads *</Label>
-                <Select value={leadFormId} onValueChange={setLeadFormId}>
+                <Label htmlFor="leadform">Formulario de Leads *</Label>
+                <Select
+                  value={leadFormId}
+                  onValueChange={setLeadFormId}
+                  disabled={!selectedPageValue || isFetchingLeadForms}
+                >
                   <SelectTrigger id="leadform" data-testid="select-leadform">
-                    <SelectValue placeholder="Selecione" />
+                    <SelectValue
+                      placeholder={
+                        !selectedPageValue
+                          ? "Selecione uma pagina primeiro"
+                          : isFetchingLeadForms
+                            ? "Carregando formularios..."
+                            : "Selecione"
+                      }
+                    />
                   </SelectTrigger>
                   <SelectContent>
-                    {leadForms.length === 0 ? (
+                    {!selectedPageValue ? (
                       <SelectItem value="none" disabled>
-                        Nenhum formulário disponível
+                        Selecione uma pagina primeiro
+                      </SelectItem>
+                    ) : isFetchingLeadForms ? (
+                      <SelectItem value="none" disabled>
+                        Carregando formularios...
+                      </SelectItem>
+                    ) : leadForms.length === 0 ? (
+                      <SelectItem value="none" disabled>
+                        Nenhum formulario disponivel
                       </SelectItem>
                     ) : (
                       leadForms.map((form) => (
@@ -435,3 +519,5 @@ export default function ExistingCampaignForm() {
     </div>
   );
 }
+
+

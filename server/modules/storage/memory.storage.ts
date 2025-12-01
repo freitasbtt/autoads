@@ -111,6 +111,7 @@ export class MemStorage implements IStorage {
     const id = this.nextId++;
     const newResource: Resource = {
       ...resource,
+      metadata: resource.metadata ?? {},
       id,
       createdAt: new Date(),
     };
@@ -134,10 +135,36 @@ export class MemStorage implements IStorage {
   }
 
   async deleteResourcesByType(tenantId: number, type: string): Promise<number> {
-    let deleted = 0;
+    const idsToDelete: number[] = [];
     for (const [id, resource] of this.resources.entries()) {
       if (resource.tenantId === tenantId && resource.type === type) {
-        this.resources.delete(id);
+        idsToDelete.push(id);
+      }
+    }
+
+    if (idsToDelete.length === 0) return 0;
+
+    for (const [cid, campaign] of this.campaigns.entries()) {
+      if (type === "account" && campaign.accountId && idsToDelete.includes(campaign.accountId)) {
+        this.campaigns.set(cid, { ...campaign, accountId: null });
+      }
+      if (type === "page" && campaign.pageId && idsToDelete.includes(campaign.pageId)) {
+        this.campaigns.set(cid, { ...campaign, pageId: null });
+      }
+      if (type === "instagram" && campaign.instagramId && idsToDelete.includes(campaign.instagramId)) {
+        this.campaigns.set(cid, { ...campaign, instagramId: null });
+      }
+      if (type === "leadform" && campaign.leadformId && idsToDelete.includes(campaign.leadformId)) {
+        this.campaigns.set(cid, { ...campaign, leadformId: null });
+      }
+      if (type === "whatsapp" && campaign.whatsappId && idsToDelete.includes(campaign.whatsappId)) {
+        this.campaigns.set(cid, { ...campaign, whatsappId: null });
+      }
+    }
+
+    let deleted = 0;
+    for (const id of idsToDelete) {
+      if (this.resources.delete(id)) {
         deleted += 1;
       }
     }

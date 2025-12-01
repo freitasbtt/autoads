@@ -87,6 +87,37 @@ interface PagePostSummary {
   permalink_url: string;
 }
 
+function extractPageInstagram(resource?: Resource | null): {
+  instagramResourceId: number | null;
+  handle: string | null;
+} {
+  const metadata = (resource?.metadata ?? {}) as Record<string, unknown>;
+  const instagramResourceIdRaw = (metadata as any)?.instagramResourceId;
+  const instagramResourceId =
+    typeof instagramResourceIdRaw === "number"
+      ? instagramResourceIdRaw
+      : typeof instagramResourceIdRaw === "string" && instagramResourceIdRaw.trim().length > 0
+        ? Number.parseInt(instagramResourceIdRaw, 10)
+        : null;
+
+  const instagramUsername =
+    typeof metadata.instagramUsername === "string" ? metadata.instagramUsername : null;
+  const instagramId = typeof metadata.instagramId === "string" ? metadata.instagramId : null;
+
+  const normalizedUsername =
+    instagramUsername && instagramUsername.startsWith("@")
+      ? instagramUsername.slice(1)
+      : instagramUsername;
+
+  const handle = normalizedUsername
+    ? `@${normalizedUsername}`
+    : instagramId
+      ? instagramId
+      : null;
+
+  return { instagramResourceId, handle };
+}
+
 export default function CampaignForm() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -134,14 +165,25 @@ export default function CampaignForm() {
   // Group resources by type
   const accounts = resources.filter((r) => r.type === "account");
   const pages = resources.filter((r) => r.type === "page");
-  const instagrams = resources.filter((r) => r.type === "instagram");
   const whatsapps = resources.filter((r) => r.type === "whatsapp");
-  const leadforms = resources.filter((r) => r.type === "leadform");
   const driveFolders = resources.filter((r) => r.type === "drive_folder");
   const selectedPageResource = pages.find(
     (page) => String(page.id) === config.pageId
   );
   const selectedPageValue = selectedPageResource?.value ?? "";
+  const pageInstagram = extractPageInstagram(selectedPageResource);
+
+  const {
+    data: pageLeadForms = [],
+    isFetching: isFetchingLeadForms,
+  } = useQuery<Resource[]>({
+    queryKey: ["leadforms-by-page", selectedPageValue],
+    enabled: Boolean(selectedPageValue),
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/meta/pages/${selectedPageValue}/leadforms`);
+      return (await res.json()) as Resource[];
+    },
+  });
 
   const {
     data: pagePosts = [],
@@ -168,6 +210,25 @@ export default function CampaignForm() {
       return (await res.json()) as PagePostSummary[];
     },
   });
+
+  useEffect(() => {
+    const nextInstagramId = pageInstagram.instagramResourceId
+      ? String(pageInstagram.instagramResourceId)
+      : "";
+    const nextPageId = selectedPageResource ? String(selectedPageResource.id) : "";
+    setConfig((prev) => {
+      const pageChanged = prev.pageId !== nextPageId;
+      const instagramChanged = prev.instagramId !== nextInstagramId;
+      if (!pageChanged && !instagramChanged) {
+        return prev;
+      }
+      return {
+        ...prev,
+        instagramId: nextInstagramId,
+        leadformId: pageChanged ? "" : prev.leadformId,
+      };
+    });
+  }, [pageInstagram.instagramResourceId, selectedPageResource]);
 
   useEffect(() => {
     if (creativeMode !== "existing_post") {
@@ -513,15 +574,18 @@ export default function CampaignForm() {
                   <SelectTrigger id="pageId" data-testid="select-page">
                     <SelectValue placeholder="Selecione a página" />
                   </SelectTrigger>
-                  <SelectContent>
-                    {pages.map((page) => (
-                      <SelectItem key={page.id} value={String(page.id)}>
-                        {page.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                <SelectContent>
+                  {pages.map((page) => (
+                    <SelectItem key={page.id} value={String(page.id)}>
+                      {page.name}
+                      {extractPageInstagram(page).handle
+                        ? ` (${extractPageInstagram(page).handle})`
+                        : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
 
               <div className="space-y-2">
                 <Label htmlFor="instagramId">Instagram</Label>
@@ -530,22 +594,36 @@ export default function CampaignForm() {
                   onValueChange={(value) =>
                     setConfig({ ...config, instagramId: value })
                   }
+                  disabled={!selectedPageValue || !pageInstagram.instagramResourceId}
                 >
                   <SelectTrigger
                     id="instagramId"
                     data-testid="select-instagram"
                   >
-                    <SelectValue placeholder="Selecione o Instagram" />
+                    <SelectValue
+                      placeholder={
+                        !selectedPageValue
+                          ? "Selecione uma pagina primeiro"
+                          : pageInstagram.instagramResourceId
+                            ? "Selecione"
+                            : "Nenhum Instagram associado"
+                      }
+                    />
                   </SelectTrigger>
                   <SelectContent>
-                    {instagrams.map((instagram) => (
-                      <SelectItem
-                        key={instagram.id}
-                        value={String(instagram.id)}
-                      >
-                        {instagram.name}
+                    {!selectedPageValue ? (
+                      <SelectItem value="none" disabled>
+                        Selecione uma pagina primeiro
                       </SelectItem>
-                    ))}
+                    ) : pageInstagram.instagramResourceId ? (
+                      <SelectItem value={String(pageInstagram.instagramResourceId)}>
+                        {pageInstagram.handle ?? "Instagram vinculado"}
+                      </SelectItem>
+                    ) : (
+                      <SelectItem value="none" disabled>
+                        Nenhum Instagram associado
+                      </SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -572,25 +650,49 @@ export default function CampaignForm() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="leadformId">Formulário de Leads</Label>
+                <Label htmlFor="leadformId">Formulario de Leads</Label>
                 <Select
                   value={config.leadformId}
                   onValueChange={(value) =>
                     setConfig({ ...config, leadformId: value })
                   }
+                  disabled={!selectedPageValue || isFetchingLeadForms}
                 >
                   <SelectTrigger id="leadformId" data-testid="select-leadform">
-                    <SelectValue placeholder="Selecione o formulário" />
+                    <SelectValue
+                      placeholder={
+                        !selectedPageValue
+                          ? "Selecione uma pagina primeiro"
+                          : isFetchingLeadForms
+                            ? "Carregando formularios..."
+                            : "Selecione o formulario"
+                      }
+                    />
                   </SelectTrigger>
                   <SelectContent>
-                    {leadforms.map((leadform) => (
-                      <SelectItem key={leadform.id} value={String(leadform.id)}>
-                        {leadform.name}
+                    {!selectedPageValue ? (
+                      <SelectItem value="none" disabled>
+                        Selecione uma pagina primeiro
                       </SelectItem>
-                    ))}
+                    ) : isFetchingLeadForms ? (
+                      <SelectItem value="none" disabled>
+                        Carregando formularios...
+                      </SelectItem>
+                    ) : pageLeadForms.length === 0 ? (
+                      <SelectItem value="none" disabled>
+                        Nenhum formulario disponivel
+                      </SelectItem>
+                    ) : (
+                      pageLeadForms.map((leadform) => (
+                        <SelectItem key={leadform.id} value={String(leadform.id)}>
+                          {leadform.name}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
+
             </div>
           </CardContent>
         </Card>
@@ -1076,3 +1178,4 @@ export default function CampaignForm() {
     </div>
   );
 }
+

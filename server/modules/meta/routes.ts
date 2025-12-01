@@ -421,6 +421,244 @@ metaRouter.get("/meta/search/interests", async (req, res, next) => {
   }
 });
 
+metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
+  try {
+    const user = req.user as User;
+    const rawPageId = typeof req.params.pageId === "string" ? req.params.pageId.trim() : "";
+
+    if (rawPageId.length === 0) {
+      return res.status(400).json({ message: "pageId obrigatorio" });
+    }
+
+    const pageResources = await storage.getResourcesByType(user.tenantId, "page");
+    const pageResource = pageResources.find((resource) => resource.value === rawPageId);
+
+    const userAccess = await getMetaAccess(user.tenantId);
+    if (!userAccess || typeof userAccess.accessToken !== "string" || userAccess.accessToken.trim().length === 0) {
+      console.error("Meta access invalido para tenant ao carregar lead forms", user.tenantId, {
+        hasAccess: !!userAccess,
+        hasToken: !!userAccess?.accessToken,
+      });
+      return res.status(400).json({
+        message: "Integracao com Meta nao configurada corretamente (token ausente ou invalido).",
+      });
+    }
+
+    const userAccessToken = userAccess.accessToken.trim();
+    const userAppSecretProof =
+      typeof userAccess.appSecretProof === "string" && userAccess.appSecretProof.trim().length > 0
+        ? userAccess.appSecretProof.trim()
+        : undefined;
+
+    const pageDetailsUrl = new URL(`https://graph.facebook.com/v18.0/${encodeURIComponent(rawPageId)}`);
+    pageDetailsUrl.searchParams.set("fields", "id,access_token");
+    pageDetailsUrl.searchParams.set("access_token", userAccessToken);
+    if (userAppSecretProof) {
+      pageDetailsUrl.searchParams.set("appsecret_proof", userAppSecretProof);
+    }
+
+    let pageDetailsResponse: globalThis.Response;
+    try {
+      pageDetailsResponse = await fetch(pageDetailsUrl);
+    } catch (networkError) {
+      console.error("Erro de rede ao obter Page Access Token (leadforms):", {
+        error: networkError,
+        tenantId: user.tenantId,
+        pageId: rawPageId,
+      });
+      return res.status(502).json({
+        message: "Falha de comunicacao com a Meta ao obter token da pagina. Tente novamente.",
+      });
+    }
+
+    const pageDetailsText = await pageDetailsResponse.text();
+    let pageDetailsBody: any = {};
+    try {
+      pageDetailsBody = pageDetailsText.length > 0 ? JSON.parse(pageDetailsText) : {};
+    } catch (error) {
+      console.error("Parse error ao obter dados da pagina Meta (leadforms):", {
+        error,
+        bodyTextPreview: pageDetailsText.slice(0, 200),
+      });
+      return res.status(500).json({
+        message: "Falha ao interpretar resposta da Meta ao obter dados da pagina.",
+      });
+    }
+
+    if (!pageDetailsResponse.ok || pageDetailsBody?.error) {
+      const graphCode = typeof pageDetailsBody?.error?.code === "number" ? pageDetailsBody.error.code : undefined;
+      const errorSubcode =
+        typeof pageDetailsBody?.error?.error_subcode === "number"
+          ? pageDetailsBody.error.error_subcode
+          : undefined;
+      const rawMessage =
+        typeof pageDetailsBody?.error?.message === "string" ? pageDetailsBody.error.message : undefined;
+
+      console.error("1Falha ao obter Page Access Token (leadforms):", {
+        status: pageDetailsResponse.status,
+        graphCode,
+        errorSubcode,
+        rawMessage,
+        body: pageDetailsBody,
+      });
+
+      let clientMessage = rawMessage || "Falha ao obter dados da pagina na Meta. Verifique a integracao.";
+
+      if (graphCode === 190) {
+        clientMessage = "Token de acesso da Meta expirado ou invalido. Reconfigure a integracao.";
+      }
+
+      const statusCode =
+        pageDetailsResponse.status && pageDetailsResponse.status >= 400 ? pageDetailsResponse.status : 502;
+
+      return res.status(statusCode).json({ message: clientMessage, graphCode, errorSubcode });
+    }
+
+    const pageAccessTokenRaw = pageDetailsBody?.access_token;
+    if (typeof pageAccessTokenRaw !== "string" || pageAccessTokenRaw.trim().length === 0) {
+      console.error("Nao foi possivel obter access_token da pagina a partir do user token (leadforms).", {
+        tenantId: user.tenantId,
+        pageId: rawPageId,
+        body: pageDetailsBody,
+      });
+      return res.status(400).json({
+        message:
+          "Nao foi possivel obter o token da pagina. Verifique se o utilizador conectado tem permissao de administrador nesta pagina e se a app possui pages_read_engagement.",
+      });
+    }
+
+    const pageAccessToken = pageAccessTokenRaw.trim();
+
+    const settings = await storage.getAppSettings();
+    const pageAppSecretProof =
+      settings?.metaAppSecret && settings.metaAppSecret.length > 0
+        ? generateAppSecretProof(pageAccessToken, settings.metaAppSecret)
+        : undefined;
+
+    const leadFormsUrl = new URL(
+      `https://graph.facebook.com/v18.0/${encodeURIComponent(rawPageId)}/leadgen_forms`,
+    );
+    leadFormsUrl.searchParams.set("fields", "id,name,status,locale,created_time");
+    leadFormsUrl.searchParams.set("access_token", pageAccessToken);
+    if (pageAppSecretProof) {
+      leadFormsUrl.searchParams.set("appsecret_proof", pageAppSecretProof);
+    }
+
+    let leadFormsResponse: globalThis.Response;
+    try {
+      leadFormsResponse = await fetch(leadFormsUrl);
+    } catch (networkError) {
+      console.error("Erro de rede ao chamar Meta leadgen_forms:", {
+        error: networkError,
+        tenantId: user.tenantId,
+        pageId: rawPageId,
+      });
+      return res.status(502).json({
+        message: "Falha de comunicacao com a Meta ao carregar formularios de lead.",
+      });
+    }
+
+    const leadFormsText = await leadFormsResponse.text();
+    let leadFormsBody: any = {};
+    try {
+      leadFormsBody = leadFormsText.length > 0 ? JSON.parse(leadFormsText) : {};
+    } catch (error) {
+      console.error("Meta leadgen_forms parse error:", {
+        error,
+        bodyTextPreview: leadFormsText.slice(0, 200),
+      });
+      return res.status(500).json({ message: "Falha ao interpretar resposta da Meta" });
+    }
+
+    if (!leadFormsResponse.ok || leadFormsBody?.error) {
+      const graphCode = typeof leadFormsBody?.error?.code === "number" ? leadFormsBody.error.code : undefined;
+      const errorSubcode =
+        typeof leadFormsBody?.error?.error_subcode === "number"
+          ? leadFormsBody.error.error_subcode
+          : undefined;
+      const errorType = typeof leadFormsBody?.error?.type === "string" ? leadFormsBody.error.type : undefined;
+      const rawMessage =
+        typeof leadFormsBody?.error?.message === "string" ? leadFormsBody.error.message : undefined;
+
+      console.error("Meta leadgen_forms failed:", {
+        status: leadFormsResponse.status,
+        graphCode,
+        errorSubcode,
+        errorType,
+        rawMessage,
+        body: leadFormsBody,
+      });
+
+      let clientMessage = rawMessage || "Falha ao carregar formularios de lead da pagina na Meta.";
+
+      if (graphCode === 190) {
+        clientMessage =
+          "Token de acesso da pagina expirado ou invalido. Reconfigure a integracao ou renove as permissoes para esta pagina.";
+      }
+      if (graphCode === 200) {
+        clientMessage =
+          "Permissoes insuficientes para ler os formularios desta pagina na Meta. Verifique as permissoes da app e do token da pagina.";
+      }
+
+      const statusCode =
+        leadFormsResponse.status && leadFormsResponse.status >= 400 ? leadFormsResponse.status : 502;
+
+      return res.status(statusCode).json({ message: clientMessage, graphCode, errorSubcode });
+    }
+
+    const forms =
+      Array.isArray(leadFormsBody?.data) && leadFormsBody.data.length > 0
+        ? leadFormsBody.data
+            .map((item: any) => {
+              const id = typeof item?.id === "string" ? item.id : "";
+              if (!id) return null;
+
+              const name = typeof item?.name === "string" && item.name.length > 0 ? item.name : id;
+              const status = typeof item?.status === "string" ? item.status : null;
+
+              return { id, name, status };
+            })
+            .filter(Boolean)
+        : [];
+
+    const existingLeadforms = await storage.getResourcesByType(user.tenantId, "leadform");
+    const toDelete = existingLeadforms.filter((resource) => {
+      const metaPageId =
+        resource.metadata && typeof (resource.metadata as Record<string, unknown>)?.["pageId"] === "string"
+          ? (resource.metadata as Record<string, unknown>)["pageId"]
+          : null;
+      return metaPageId === rawPageId;
+    });
+
+    for (const resource of toDelete) {
+      await storage.deleteResource(resource.id);
+    }
+
+    const createdForms = await Promise.all(
+      forms.map((form: any) =>
+        storage.createResource({
+          tenantId: user.tenantId,
+          type: "leadform",
+          name: form.name,
+          value: form.id,
+          metadata: {
+            pageId: rawPageId,
+            pageName: pageResource?.name ?? null,
+            status: form.status ?? null,
+          },
+        }),
+      ),
+    );
+
+    setNoCacheHeaders(res);
+    res.removeHeader("ETag");
+    return res.json(createdForms);
+  } catch (err) {
+    console.error("Failed to load Meta lead forms:", err);
+    return res.status(500).json({ message: "Falha ao carregar formularios da pagina." });
+  }
+});
+
 metaRouter.get("/meta/pages/:pageId/posts", async (req, res) => {
   try {
     const user = req.user as User;

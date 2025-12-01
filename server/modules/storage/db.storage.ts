@@ -107,7 +107,7 @@ export class DbStorage implements IStorage {
   ): Promise<Resource> {
     const [created] = await db
       .insert(schema.resources)
-      .values(resource)
+      .values({ ...resource, metadata: resource.metadata ?? {} })
       .returning();
     return created;
   }
@@ -130,6 +130,47 @@ export class DbStorage implements IStorage {
   }
 
   async deleteResourcesByType(tenantId: number, type: string): Promise<number> {
+    // Primeiro, coleta os IDs dos recursos para limpar chaves estrangeiras antes de apagar
+    const resourcesToDelete = await db.query.resources.findMany({
+      columns: { id: true },
+      where: and(eq(schema.resources.tenantId, tenantId), eq(schema.resources.type, type)),
+    });
+
+    const ids = resourcesToDelete.map((r) => r.id);
+    if (ids.length === 0) return 0;
+
+    // Limpa referências nas campanhas para evitar violação de FK
+    if (type === "account") {
+      await db
+        .update(schema.campaigns)
+        .set({ accountId: null })
+        .where(inArray(schema.campaigns.accountId, ids));
+    }
+    if (type === "page") {
+      await db
+        .update(schema.campaigns)
+        .set({ pageId: null })
+        .where(inArray(schema.campaigns.pageId, ids));
+    }
+    if (type === "instagram") {
+      await db
+        .update(schema.campaigns)
+        .set({ instagramId: null })
+        .where(inArray(schema.campaigns.instagramId, ids));
+    }
+    if (type === "leadform") {
+      await db
+        .update(schema.campaigns)
+        .set({ leadformId: null })
+        .where(inArray(schema.campaigns.leadformId, ids));
+    }
+    if (type === "whatsapp") {
+      await db
+        .update(schema.campaigns)
+        .set({ whatsappId: null })
+        .where(inArray(schema.campaigns.whatsappId, ids));
+    }
+
     const result = await db
       .delete(schema.resources)
       .where(and(eq(schema.resources.tenantId, tenantId), eq(schema.resources.type, type)));
