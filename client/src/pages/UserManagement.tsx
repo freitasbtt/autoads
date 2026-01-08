@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -88,11 +88,7 @@ export default function UserManagement() {
     password: "",
     role: defaultRole,
   });
-  const [createTenantChoice, setCreateTenantChoice] = useState<"existing" | "new">("existing");
-  const [createTenantId, setCreateTenantId] = useState<string>("");
   const [createTenantName, setCreateTenantName] = useState("");
-  const [editTenantChoice, setEditTenantChoice] = useState<"existing" | "new">("existing");
-  const [editTenantId, setEditTenantId] = useState<string>("");
   const [editTenantName, setEditTenantName] = useState("");
   const [selectedTenantFilter, setSelectedTenantFilter] = useState<string>("all");
 
@@ -105,24 +101,6 @@ export default function UserManagement() {
     queryKey: ["/api/admin/tenants"],
     enabled: isSystemAdmin,
   });
-
-  useEffect(() => {
-    if (!isSystemAdmin || createTenantChoice === "new") {
-      return;
-    }
-    if (tenants.length === 0) {
-      setCreateTenantChoice("new");
-      setCreateTenantId("");
-      return;
-    }
-    if (!createTenantId) {
-      const defaultTenantId =
-        selectedTenantFilter !== "all" && selectedTenantFilter
-          ? selectedTenantFilter
-          : String(tenants[0].id);
-      setCreateTenantId(defaultTenantId);
-    }
-  }, [isSystemAdmin, tenants, createTenantChoice, createTenantId, selectedTenantFilter]);
 
   const {
     data: users = [],
@@ -151,26 +129,7 @@ export default function UserManagement() {
     });
     setSelectedUser(null);
     setCreateTenantName("");
-    setCreateTenantChoice("existing");
-    setEditTenantChoice("existing");
-    setEditTenantId("");
     setEditTenantName("");
-  if (isSystemAdmin) {
-      if (tenants.length > 0) {
-        const defaultTenantId =
-          selectedTenantFilter !== "all" && selectedTenantFilter
-            ? selectedTenantFilter
-            : String(tenants[0].id);
-        setCreateTenantChoice("existing");
-        setCreateTenantId(defaultTenantId);
-      } else {
-        setCreateTenantChoice("new");
-        setCreateTenantId("");
-      }
-    } else {
-      setCreateTenantChoice("existing");
-      setCreateTenantId("");
-    }
   };
 
   const openCreateDialog = () => {
@@ -256,26 +215,8 @@ export default function UserManagement() {
     };
 
     if (isSystemAdmin) {
-      if (createTenantChoice === "existing") {
-        if (!createTenantId) {
-          toast({
-            title: "Selecione um cliente",
-            description: "Escolha um cliente existente ou crie um novo.",
-            variant: "destructive",
-          });
-          return;
-        }
-        payload.tenantId = Number(createTenantId);
-      } else {
-        const trimmed = createTenantName.trim();
-        if (!trimmed) {
-          toast({
-            title: "Nome do cliente obrigatorio",
-            description: "Informe um nome para o novo cliente.",
-            variant: "destructive",
-          });
-          return;
-        }
+      const trimmed = createTenantName.trim();
+      if (trimmed) {
         payload.tenantName = trimmed;
       }
     }
@@ -290,8 +231,6 @@ export default function UserManagement() {
       password: "",
       role: user.role,
     });
-    setEditTenantChoice("existing");
-    setEditTenantId(String(user.tenantId));
     setEditTenantName("");
     setIsEditDialogOpen(true);
   };
@@ -314,29 +253,8 @@ export default function UserManagement() {
     if (formData.role !== selectedUser.role) updates.role = formData.role;
 
     if (isSystemAdmin) {
-      if (editTenantChoice === "existing") {
-        if (!editTenantId) {
-          toast({
-            title: "Selecione um cliente",
-            description: "Escolha um cliente existente ou crie um novo.",
-            variant: "destructive",
-          });
-          return;
-        }
-        const tenantIdNumber = Number(editTenantId);
-        if (tenantIdNumber !== selectedUser.tenantId) {
-          updates.tenantId = tenantIdNumber;
-        }
-      } else {
-        const trimmed = editTenantName.trim();
-        if (!trimmed) {
-          toast({
-            title: "Nome do cliente obrigatorio",
-            description: "Informe um nome para o novo cliente.",
-            variant: "destructive",
-          });
-          return;
-        }
+      const trimmed = editTenantName.trim();
+      if (trimmed) {
         updates.tenantName = trimmed;
       }
     }
@@ -542,45 +460,13 @@ export default function UserManagement() {
               </Select>
             </div>
             {isSystemAdmin && (
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <Label>Cliente</Label>
-                  <Select
-                    value={createTenantChoice === "new" ? "new" : createTenantId}
-                    onValueChange={(value) => {
-                      if (value === "new") {
-                        setCreateTenantChoice("new");
-                        setCreateTenantId("");
-                      } else {
-                        setCreateTenantChoice("existing");
-                        setCreateTenantId(value);
-                        setCreateTenantName("");
-                      }
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione um cliente" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {tenants.map((tenant) => (
-                        <SelectItem key={tenant.id} value={String(tenant.id)}>
-                          {tenant.name}
-                        </SelectItem>
-                      ))}
-                      <SelectItem value="new">+ Criar novo cliente</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {createTenantChoice === "new" && (
-                  <div className="space-y-2">
-                    <Label>Nome do cliente</Label>
-                    <Input
-                      value={createTenantName}
-                      onChange={(e) => setCreateTenantName(e.target.value)}
-                      placeholder="Minha Empresa"
-                    />
-                  </div>
-                )}
+              <div className="space-y-2">
+                <Label>Cliente (opcional)</Label>
+                <Input
+                  value={createTenantName}
+                  onChange={(e) => setCreateTenantName(e.target.value)}
+                  placeholder="Minha Empresa"
+                />
               </div>
             )}
           </div>
@@ -660,45 +546,13 @@ export default function UserManagement() {
               </Select>
             </div>
             {isSystemAdmin && selectedUser && (
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <Label>Cliente</Label>
-                  <Select
-                    value={editTenantChoice === "new" ? "new" : editTenantId}
-                    onValueChange={(value) => {
-                      if (value === "new") {
-                        setEditTenantChoice("new");
-                        setEditTenantId("");
-                      } else {
-                        setEditTenantChoice("existing");
-                        setEditTenantId(value);
-                        setEditTenantName("");
-                      }
-                    }}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {tenants.map((tenant) => (
-                        <SelectItem key={tenant.id} value={String(tenant.id)}>
-                          {tenant.name}
-                        </SelectItem>
-                      ))}
-                      <SelectItem value="new">+ Criar novo cliente</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {editTenantChoice === "new" && (
-                  <div className="space-y-2">
-                    <Label>Nome do cliente</Label>
-                    <Input
-                      value={editTenantName}
-                      onChange={(e) => setEditTenantName(e.target.value)}
-                      placeholder="Minha Empresa"
-                    />
-                  </div>
-                )}
+              <div className="space-y-2">
+                <Label>Novo cliente (opcional)</Label>
+                <Input
+                  value={editTenantName}
+                  onChange={(e) => setEditTenantName(e.target.value)}
+                  placeholder="Minha Empresa"
+                />
               </div>
             )}
           </div>

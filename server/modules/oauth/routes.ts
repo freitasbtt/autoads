@@ -82,7 +82,7 @@ async function fetchMetaAdAccounts(
   accessToken: string,
   appSecretProof?: string,
 ): Promise<MetaAdAccount[]> {
-  const url = new URL("https://graph.facebook.com/v18.0/me/adaccounts");
+  const url = new URL("https://graph.facebook.com/v24.0/me/adaccounts");
   url.searchParams.set("fields", "id,name,account_id,account_status");
   url.searchParams.set("limit", "200");
   return fetchPagedMetaList<MetaAdAccount>(url, accessToken, appSecretProof);
@@ -92,7 +92,7 @@ async function fetchMetaPagesWithInstagram(
   accessToken: string,
   appSecretProof?: string,
 ): Promise<MetaPageWithInstagram[]> {
-  const url = new URL("https://graph.facebook.com/v18.0/me/accounts");
+  const url = new URL("https://graph.facebook.com/v24.0/me/accounts");
   url.searchParams.set("fields", "id,name,instagram_business_account{id,username}");
   url.searchParams.set("limit", "200");
   return fetchPagedMetaList<MetaPageWithInstagram>(url, accessToken, appSecretProof);
@@ -233,14 +233,27 @@ oauthRouter.get("/meta", isAuthenticated, async (req, res) => {
 
     const baseUrl = getPublicAppUrl(req);
     const redirectUri = `${baseUrl}/auth/meta/callback`;
-    const scope =
-      "ads_read,pages_read_engagement,instagram_basic,whatsapp_business_management,leads_retrieval";
+
+    const scope = [
+      "ads_management",
+      "ads_read",
+      "business_management",
+      "pages_show_list",
+      "pages_read_engagement",
+      "pages_manage_metadata",
+      "pages_manage_ads",
+      "instagram_basic",
+      "whatsapp_business_management",
+      "leads_retrieval",
+    ].join(",");
 
     const authUrl =
-      `https://www.facebook.com/v18.0/dialog/oauth?` +
+      `https://www.facebook.com/v24.0/dialog/oauth?` +
       `client_id=${settings.metaAppId}&` +
       `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-      `scope=${scope}&` +
+      `return_scopes=true&` +
+      `auth_type=rerequest&` +
+      `scope=${encodeURIComponent(scope)}&` +
       `state=${user.id}`;
 
     res.redirect(authUrl);
@@ -270,7 +283,7 @@ oauthRouter.get("/meta/callback", async (req, res) => {
     const redirectUri = `${baseUrl}/auth/meta/callback`;
 
     const tokenUrl =
-      `https://graph.facebook.com/v18.0/oauth/access_token?` +
+      `https://graph.facebook.com/v24.0/oauth/access_token?` +
       `client_id=${settings.metaAppId}&` +
       `client_secret=${settings.metaAppSecret}&` +
       `redirect_uri=${encodeURIComponent(redirectUri)}&` +

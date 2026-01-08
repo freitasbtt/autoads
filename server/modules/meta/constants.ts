@@ -1,6 +1,6 @@
 import type { ObjectiveResultRule } from "./types";
 
-export const GRAPH_BASE_URL = "https://graph.facebook.com/v18.0";
+export const GRAPH_BASE_URL = "https://graph.facebook.com/v24.0";
 
 export const LEAD_ACTION_TYPES = new Set([
   "lead",

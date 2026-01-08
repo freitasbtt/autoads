@@ -10,6 +10,7 @@ import { getMetaAccess } from "./services/access.service";
 import { setNoCacheHeaders } from "../../utils/cache";
 import { isAuthenticated } from "../../middlewares/auth";
 import { generateAppSecretProof } from "./utils/crypto";
+import { isSystemAdminRole } from "../auth/services/role.service";
 
 type MetaIntegrationConfig = {
   accessToken?: string | null;
@@ -109,6 +110,74 @@ function validateInternalRequest(req: Request): {
   }
 
   return { valid: true };
+}
+
+async function fetchMetaTokenDebug(options: {
+  token: string;
+  appId: string;
+  appSecret: string;
+}): Promise<{ ok: boolean; status: number; body: unknown }> {
+  const url = new URL("https://graph.facebook.com/v24.0/debug_token");
+  url.searchParams.set("input_token", options.token);
+  url.searchParams.set("access_token", `${options.appId}|${options.appSecret}`);
+
+  let response: globalThis.Response;
+  try {
+    response = await fetch(url);
+  } catch (networkError) {
+    return {
+      ok: false,
+      status: 0,
+      body: { message: `Network error while debugging token: ${String(networkError)}` },
+    };
+  }
+
+  const text = await response.text();
+  let body: unknown = {};
+  try {
+    body = text.length > 0 ? JSON.parse(text) : {};
+  } catch {
+    body = { raw: text };
+  }
+
+  return { ok: response.ok, status: response.status, body };
+}
+
+type FetchRetryOptions = {
+  timeoutMs: number;
+  retryCount: number;
+  retryDelayMs: number;
+};
+
+async function fetchWithTimeoutRetry(
+  input: string | URL,
+  init: RequestInit | undefined,
+  options: FetchRetryOptions,
+): Promise<globalThis.Response> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= options.retryCount; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs);
+
+    try {
+      const response = await fetch(input, {
+        ...init,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      lastError = error;
+
+      if (attempt < options.retryCount) {
+        await new Promise((resolve) => setTimeout(resolve, options.retryDelayMs));
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 export const metaRouter = Router();
@@ -334,7 +403,7 @@ metaRouter.get("/meta/search/cities", async (req, res, next) => {
       params.set("appsecret_proof", access.appSecretProof);
     }
 
-    const response = await fetch(`https://graph.facebook.com/v23.0/search?${params.toString()}`);
+    const response = await fetch(`https://graph.facebook.com/v24.0/search?${params.toString()}`);
     if (!response.ok) {
       const errorText = await response.text();
       console.error("Meta city search failed:", response.status, errorText);
@@ -396,7 +465,7 @@ metaRouter.get("/meta/search/interests", async (req, res, next) => {
       params.set("appsecret_proof", access.appSecretProof);
     }
 
-    const response = await fetch(`https://graph.facebook.com/v23.0/search?${params.toString()}`);
+    const response = await fetch(`https://graph.facebook.com/v24.0/search?${params.toString()}`);
     if (!response.ok) {
       const errorText = await response.text();
       console.error("Meta interest search failed:", response.status, errorText);
@@ -425,9 +494,26 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
   try {
     const user = req.user as User;
     const rawPageId = typeof req.params.pageId === "string" ? req.params.pageId.trim() : "";
+    const debugParam = parseQueryParam(req.query.debug).toLowerCase();
+    const debugRequested = debugParam === "1" || debugParam === "true" || debugParam === "yes";
+    const debugEnabled = debugRequested && isSystemAdminRole(user.role);
+    const debugContext: Record<string, unknown> | null = debugRequested
+      ? { requested: true, enabled: debugEnabled }
+      : null;
+
+    if (debugRequested && !debugEnabled && debugContext) {
+      debugContext.reason = "requires_system_admin";
+    }
+
+    const attachDebug = (body: Record<string, unknown>) => {
+      if (!debugRequested || !debugContext) {
+        return body;
+      }
+      return { ...body, debug: debugContext };
+    };
 
     if (rawPageId.length === 0) {
-      return res.status(400).json({ message: "pageId obrigatorio" });
+      return res.status(400).json(attachDebug({ message: "pageId obrigatorio" }));
     }
 
     const pageResources = await storage.getResourcesByType(user.tenantId, "page");
@@ -439,9 +525,11 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
         hasAccess: !!userAccess,
         hasToken: !!userAccess?.accessToken,
       });
-      return res.status(400).json({
-        message: "Integracao com Meta nao configurada corretamente (token ausente ou invalido).",
-      });
+      return res.status(400).json(
+        attachDebug({
+          message: "Integracao com Meta nao configurada corretamente (token ausente ou invalido).",
+        }),
+      );
     }
 
     const userAccessToken = userAccess.accessToken.trim();
@@ -449,8 +537,28 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
       typeof userAccess.appSecretProof === "string" && userAccess.appSecretProof.trim().length > 0
         ? userAccess.appSecretProof.trim()
         : undefined;
+    const settings = await storage.getAppSettings();
 
-    const pageDetailsUrl = new URL(`https://graph.facebook.com/v18.0/${encodeURIComponent(rawPageId)}`);
+    if (debugEnabled && debugContext) {
+      debugContext.metaAppIdConfigured = Boolean(settings?.metaAppId);
+      debugContext.metaAppSecretConfigured = Boolean(settings?.metaAppSecret);
+
+      if (settings?.metaAppId && settings.metaAppSecret) {
+        debugContext.userToken = await fetchMetaTokenDebug({
+          token: userAccessToken,
+          appId: settings.metaAppId,
+          appSecret: settings.metaAppSecret,
+        });
+      } else {
+        debugContext.userToken = {
+          ok: false,
+          status: 0,
+          body: { message: "Meta appId/appSecret missing for debug_token" },
+        };
+      }
+    }
+
+    const pageDetailsUrl = new URL(`https://graph.facebook.com/v24.0/${encodeURIComponent(rawPageId)}`);
     pageDetailsUrl.searchParams.set("fields", "id,access_token");
     pageDetailsUrl.searchParams.set("access_token", userAccessToken);
     if (userAppSecretProof) {
@@ -459,16 +567,22 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
 
     let pageDetailsResponse: globalThis.Response;
     try {
-      pageDetailsResponse = await fetch(pageDetailsUrl);
+      pageDetailsResponse = await fetchWithTimeoutRetry(pageDetailsUrl, undefined, {
+        timeoutMs: 10000,
+        retryCount: 1,
+        retryDelayMs: 300,
+      });
     } catch (networkError) {
       console.error("Erro de rede ao obter Page Access Token (leadforms):", {
         error: networkError,
         tenantId: user.tenantId,
         pageId: rawPageId,
       });
-      return res.status(502).json({
-        message: "Falha de comunicacao com a Meta ao obter token da pagina. Tente novamente.",
-      });
+      return res.status(502).json(
+        attachDebug({
+          message: "Falha de comunicacao com a Meta ao obter token da pagina. Tente novamente.",
+        }),
+      );
     }
 
     const pageDetailsText = await pageDetailsResponse.text();
@@ -480,9 +594,11 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
         error,
         bodyTextPreview: pageDetailsText.slice(0, 200),
       });
-      return res.status(500).json({
-        message: "Falha ao interpretar resposta da Meta ao obter dados da pagina.",
-      });
+      return res.status(500).json(
+        attachDebug({
+          message: "Falha ao interpretar resposta da Meta ao obter dados da pagina.",
+        }),
+      );
     }
 
     if (!pageDetailsResponse.ok || pageDetailsBody?.error) {
@@ -511,7 +627,7 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
       const statusCode =
         pageDetailsResponse.status && pageDetailsResponse.status >= 400 ? pageDetailsResponse.status : 502;
 
-      return res.status(statusCode).json({ message: clientMessage, graphCode, errorSubcode });
+      return res.status(statusCode).json(attachDebug({ message: clientMessage, graphCode, errorSubcode }));
     }
 
     const pageAccessTokenRaw = pageDetailsBody?.access_token;
@@ -521,22 +637,31 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
         pageId: rawPageId,
         body: pageDetailsBody,
       });
-      return res.status(400).json({
-        message:
-          "Nao foi possivel obter o token da pagina. Verifique se o utilizador conectado tem permissao de administrador nesta pagina e se a app possui pages_read_engagement.",
-      });
+      return res.status(400).json(
+        attachDebug({
+          message:
+            "Nao foi possivel obter o token da pagina. Verifique se o utilizador conectado tem permissao de administrador nesta pagina e se a app possui pages_read_engagement.",
+        }),
+      );
     }
 
     const pageAccessToken = pageAccessTokenRaw.trim();
 
-    const settings = await storage.getAppSettings();
+    if (debugEnabled && debugContext && settings?.metaAppId && settings.metaAppSecret) {
+      debugContext.pageToken = await fetchMetaTokenDebug({
+        token: pageAccessToken,
+        appId: settings.metaAppId,
+        appSecret: settings.metaAppSecret,
+      });
+    }
+
     const pageAppSecretProof =
       settings?.metaAppSecret && settings.metaAppSecret.length > 0
         ? generateAppSecretProof(pageAccessToken, settings.metaAppSecret)
         : undefined;
 
     const leadFormsUrl = new URL(
-      `https://graph.facebook.com/v18.0/${encodeURIComponent(rawPageId)}/leadgen_forms`,
+      `https://graph.facebook.com/v24.0/${encodeURIComponent(rawPageId)}/leadgen_forms`,
     );
     leadFormsUrl.searchParams.set("fields", "id,name,status,locale,created_time");
     leadFormsUrl.searchParams.set("access_token", pageAccessToken);
@@ -546,16 +671,22 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
 
     let leadFormsResponse: globalThis.Response;
     try {
-      leadFormsResponse = await fetch(leadFormsUrl);
+      leadFormsResponse = await fetchWithTimeoutRetry(leadFormsUrl, undefined, {
+        timeoutMs: 10000,
+        retryCount: 1,
+        retryDelayMs: 300,
+      });
     } catch (networkError) {
       console.error("Erro de rede ao chamar Meta leadgen_forms:", {
         error: networkError,
         tenantId: user.tenantId,
         pageId: rawPageId,
       });
-      return res.status(502).json({
-        message: "Falha de comunicacao com a Meta ao carregar formularios de lead.",
-      });
+      return res.status(502).json(
+        attachDebug({
+          message: "Falha de comunicacao com a Meta ao carregar formularios de lead.",
+        }),
+      );
     }
 
     const leadFormsText = await leadFormsResponse.text();
@@ -567,7 +698,7 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
         error,
         bodyTextPreview: leadFormsText.slice(0, 200),
       });
-      return res.status(500).json({ message: "Falha ao interpretar resposta da Meta" });
+      return res.status(500).json(attachDebug({ message: "Falha ao interpretar resposta da Meta" }));
     }
 
     if (!leadFormsResponse.ok || leadFormsBody?.error) {
@@ -603,7 +734,7 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
       const statusCode =
         leadFormsResponse.status && leadFormsResponse.status >= 400 ? leadFormsResponse.status : 502;
 
-      return res.status(statusCode).json({ message: clientMessage, graphCode, errorSubcode });
+      return res.status(statusCode).json(attachDebug({ message: clientMessage, graphCode, errorSubcode }));
     }
 
     const forms =
@@ -622,20 +753,27 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
         : [];
 
     const existingLeadforms = await storage.getResourcesByType(user.tenantId, "leadform");
+    const manualLeadforms = existingLeadforms.filter((resource) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>;
+      const metaPageId = typeof metadata.pageId === "string" ? metadata.pageId : null;
+      const source = typeof metadata.source === "string" ? metadata.source : null;
+      return metaPageId === rawPageId && source === "manual";
+    });
+    const manualValueSet = new Set(manualLeadforms.map((resource) => resource.value));
     const toDelete = existingLeadforms.filter((resource) => {
-      const metaPageId =
-        resource.metadata && typeof (resource.metadata as Record<string, unknown>)?.["pageId"] === "string"
-          ? (resource.metadata as Record<string, unknown>)["pageId"]
-          : null;
-      return metaPageId === rawPageId;
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>;
+      const metaPageId = typeof metadata.pageId === "string" ? metadata.pageId : null;
+      const source = typeof metadata.source === "string" ? metadata.source : null;
+      return metaPageId === rawPageId && source !== "manual";
     });
 
     for (const resource of toDelete) {
       await storage.deleteResource(resource.id);
     }
 
+    const formsToCreate = forms.filter((form: any) => !manualValueSet.has(form.id));
     const createdForms = await Promise.all(
-      forms.map((form: any) =>
+      formsToCreate.map((form: any) =>
         storage.createResource({
           tenantId: user.tenantId,
           type: "leadform",
@@ -645,6 +783,7 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
             pageId: rawPageId,
             pageName: pageResource?.name ?? null,
             status: form.status ?? null,
+            source: "meta",
           },
         }),
       ),
@@ -652,10 +791,12 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
 
     setNoCacheHeaders(res);
     res.removeHeader("ETag");
-    return res.json(createdForms);
+    return res.json([...createdForms, ...manualLeadforms]);
   } catch (err) {
     console.error("Failed to load Meta lead forms:", err);
-    return res.status(500).json({ message: "Falha ao carregar formularios da pagina." });
+    return res
+      .status(500)
+      .json(attachDebug({ message: "Falha ao carregar formularios da pagina." }));
   }
 });
 
@@ -700,7 +841,7 @@ metaRouter.get("/meta/pages/:pageId/posts", async (req, res) => {
       tokenPreview: userAccessToken.slice(0, 8),
     });
 
-    const pageDetailsUrl = new URL(`https://graph.facebook.com/v18.0/${encodeURIComponent(rawPageId)}`);
+    const pageDetailsUrl = new URL(`https://graph.facebook.com/v24.0/${encodeURIComponent(rawPageId)}`);
     pageDetailsUrl.searchParams.set("fields", "id,access_token");
     pageDetailsUrl.searchParams.set("access_token", userAccessToken);
     if (userAppSecretProof) {
@@ -791,7 +932,7 @@ metaRouter.get("/meta/pages/:pageId/posts", async (req, res) => {
     });
 
     const postsUrl = new URL(
-      `https://graph.facebook.com/v18.0/${encodeURIComponent(rawPageId)}/posts`,
+      `https://graph.facebook.com/v24.0/${encodeURIComponent(rawPageId)}/posts`,
     );
     postsUrl.searchParams.set(
       "fields",

@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Campaign, Resource, Audience } from "@shared/schema";
-import { Calendar, Target, DollarSign, Send, CheckCircle, XCircle, Clock, FileText } from "lucide-react";
+import { Calendar, Target, DollarSign, Send, CheckCircle, XCircle, Clock, FileText, RotateCcw } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -92,6 +92,7 @@ export function CampaignDetailsModal({
 
   const adSets = campaign.adSets as any[] | null;
   const creatives = campaign.creatives as any[] | null;
+  const showReprocessButton = campaign.status !== "draft" || !showSendButton;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -261,18 +262,31 @@ export function CampaignDetailsModal({
           )}
         </div>
 
-        {showSendButton && campaign.status === "draft" && (
+        {(showSendButton && campaign.status === "draft") || showReprocessButton ? (
           <DialogFooter>
-            <Button
-              onClick={() => sendMutation.mutate(campaign.id)}
-              disabled={sendMutation.isPending}
-              data-testid="button-send-automation"
-            >
-              <Send className="h-4 w-4 mr-2" />
-              {sendMutation.isPending ? "Enviando..." : "Enviar Automação"}
-            </Button>
+            {showReprocessButton && (
+              <Button
+                variant="outline"
+                onClick={() => sendMutation.mutate(campaign.id)}
+                disabled={sendMutation.isPending}
+                data-testid="button-reprocess-campaign"
+              >
+                <RotateCcw className="h-4 w-4 mr-2" />
+                {sendMutation.isPending ? "Reprocessando..." : "Reprocessar"}
+              </Button>
+            )}
+            {showSendButton && campaign.status === "draft" && (
+              <Button
+                onClick={() => sendMutation.mutate(campaign.id)}
+                disabled={sendMutation.isPending}
+                data-testid="button-send-automation"
+              >
+                <Send className="h-4 w-4 mr-2" />
+                {sendMutation.isPending ? "Enviando..." : "Enviar Automação"}
+              </Button>
+            )}
           </DialogFooter>
-        )}
+        ) : null}
       </DialogContent>
     </Dialog>
   );

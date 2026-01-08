@@ -148,6 +148,7 @@ export default function Resources() {
     type: resolveTypeFromFilter("all"),
     name: "",
     value: "",
+    pageResourceId: "",
   });
 
   const { toast } = useToast();
@@ -156,11 +157,16 @@ export default function Resources() {
   const { data: resources = [], isLoading } = useQuery<Resource[]>({
     queryKey: ["/api/resources"],
   });
+  const pages = resources.filter((resource) => resource.type === "page");
 
   // Criar recurso manualmente (via modal)
   const createMutation = useMutation({
-    mutationFn: (data: { type: ResourceType; name: string; value: string }) =>
-      apiRequest("POST", "/api/resources", data),
+    mutationFn: (data: {
+      type: ResourceType;
+      name: string;
+      value: string;
+      metadata?: Record<string, unknown>;
+    }) => apiRequest("POST", "/api/resources", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/resources"] });
       setIsDialogOpen(false);
@@ -168,6 +174,7 @@ export default function Resources() {
         type: resolveTypeFromFilter(typeFilter),
         name: "",
         value: "",
+        pageResourceId: "",
       });
       toast({
         title: "Recurso criado com sucesso",
@@ -227,7 +234,44 @@ export default function Resources() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    createMutation.mutate(newResource);
+    if (newResource.type === "whatsapp") {
+      if (!newResource.pageResourceId) {
+        toast({
+          title: "Pagina obrigatoria",
+          description: "Selecione a pagina para associar o numero.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const pageResource = pages.find(
+        (page) => String(page.id) === newResource.pageResourceId,
+      );
+      if (!pageResource) {
+        toast({
+          title: "Pagina invalida",
+          description: "Pagina selecionada nao encontrada.",
+          variant: "destructive",
+        });
+        return;
+      }
+      createMutation.mutate({
+        type: newResource.type,
+        name: newResource.name,
+        value: newResource.value,
+        metadata: {
+          pageResourceId: pageResource.id,
+          pageId: pageResource.value,
+          pageName: pageResource.name,
+        },
+      });
+      return;
+    }
+
+    createMutation.mutate({
+      type: newResource.type,
+      name: newResource.name,
+      value: newResource.value,
+    });
   };
 
   const handleMetaOAuth = () => {
@@ -269,6 +313,7 @@ export default function Resources() {
         type: matchedType ?? resolveTypeFromFilter("all"),
         name: "",
         value: "",
+        pageResourceId: "",
       });
       setIsDialogOpen(true);
     }
@@ -346,6 +391,7 @@ export default function Resources() {
       type: forcedType ?? resolveTypeFromFilter(typeFilter),
       name: "",
       value: "",
+      pageResourceId: "",
     });
     setIsDialogOpen(true);
   };
@@ -722,10 +768,11 @@ export default function Resources() {
                 <Select
                   value={newResource.type}
                   onValueChange={(value) =>
-                    setNewResource({
-                      ...newResource,
+                    setNewResource((prev) => ({
+                      ...prev,
                       type: value as ResourceType,
-                    })
+                      pageResourceId: value === "whatsapp" ? prev.pageResourceId : "",
+                    }))
                   }
                 >
                   <SelectTrigger data-testid="select-resource-type">
@@ -762,6 +809,38 @@ export default function Resources() {
                   required
                 />
               </div>
+
+              {newResource.type === "whatsapp" && (
+                <div className="space-y-2">
+                  <Label htmlFor="whatsapp-page">Pagina associada</Label>
+                  <Select
+                    value={newResource.pageResourceId}
+                    onValueChange={(value) =>
+                      setNewResource({
+                        ...newResource,
+                        pageResourceId: value,
+                      })
+                    }
+                  >
+                    <SelectTrigger id="whatsapp-page" data-testid="select-resource-page">
+                      <SelectValue placeholder="Selecione a pagina" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {pages.length === 0 ? (
+                        <SelectItem value="none" disabled>
+                          Nenhuma pagina disponivel
+                        </SelectItem>
+                      ) : (
+                        pages.map((page) => (
+                          <SelectItem key={page.id} value={String(page.id)}>
+                            {page.name}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <Label htmlFor="value">ID ou URL</Label>

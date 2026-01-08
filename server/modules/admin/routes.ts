@@ -129,33 +129,14 @@ adminRouter.post("/users", isAdmin, async (req, res, next) => {
       return res.status(400).json({ message: "User with this email already exists" });
     }
 
-    let targetTenantId: number;
-    let tenantName: string | null = null;
+    const normalizedTenantName =
+      typeof data.tenantName === "string" ? data.tenantName.trim() : "";
+    const tenant = await storage.createTenant({
+      name: normalizedTenantName.length > 0 ? normalizedTenantName : data.email,
+    });
 
-    if (isSystemAdminRole(currentUser.role)) {
-      if (data.tenantId && data.tenantName) {
-        return res.status(400).json({ message: "Provide either tenantId or tenantName, not both" });
-      }
-
-      if (data.tenantId) {
-        const tenant = await storage.getTenant(data.tenantId);
-        if (!tenant) {
-          return res.status(404).json({ message: "Tenant not found" });
-        }
-        targetTenantId = tenant.id;
-        tenantName = tenant.name;
-      } else if (data.tenantName) {
-        const tenant = await storage.createTenant({ name: data.tenantName });
-        targetTenantId = tenant.id;
-        tenantName = tenant.name;
-      } else {
-        return res.status(400).json({ message: "tenantId or tenantName must be provided" });
-      }
-    } else {
-      targetTenantId = currentUser.tenantId;
-      const tenant = await storage.getTenant(targetTenantId);
-      tenantName = tenant?.name ?? null;
-    }
+    const targetTenantId = tenant.id;
+    const tenantName = tenant.name;
 
     const hashedPassword = await hashPassword(data.password);
     const newUser = await storage.createUser({
@@ -197,6 +178,11 @@ adminRouter.patch("/users/:id", isAdmin, async (req, res, next) => {
     if (!isSystemAdminRole(currentUser.role) && (data.tenantId || data.tenantName)) {
       return res.status(403).json({ message: "Only system admins can reassign tenants" });
     }
+    if (isSystemAdminRole(currentUser.role) && data.tenantId) {
+      return res.status(400).json({
+        message: "Reassigning users to an existing tenant is disabled. Provide tenantName instead.",
+      });
+    }
 
     if (data.email && data.email !== existingUser.email) {
       const emailTaken = await storage.getUserByEmail(data.email);
@@ -209,19 +195,10 @@ adminRouter.patch("/users/:id", isAdmin, async (req, res, next) => {
     let tenantName: string | null = null;
 
     if (isSystemAdminRole(currentUser.role)) {
-      if (data.tenantId && data.tenantName) {
-        return res.status(400).json({ message: "Provide either tenantId or tenantName, not both" });
-      }
-
-      if (data.tenantId) {
-        const tenant = await storage.getTenant(data.tenantId);
-        if (!tenant) {
-          return res.status(404).json({ message: "Tenant not found" });
-        }
-        updatedTenantId = tenant.id;
-        tenantName = tenant.name;
-      } else if (data.tenantName) {
-        const tenant = await storage.createTenant({ name: data.tenantName });
+      const normalizedTenantName =
+        typeof data.tenantName === "string" ? data.tenantName.trim() : "";
+      if (normalizedTenantName) {
+        const tenant = await storage.createTenant({ name: normalizedTenantName });
         updatedTenantId = tenant.id;
         tenantName = tenant.name;
       } else {
@@ -286,4 +263,3 @@ adminRouter.delete("/users/:id", isAdmin, async (req, res, next) => {
     next(err);
   }
 });
-

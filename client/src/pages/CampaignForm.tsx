@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
@@ -149,8 +157,26 @@ export default function CampaignForm() {
   const [selectedPost, setSelectedPost] = useState<PagePostSummary | null>(
     null
   );
+  const [isLeadFormDialogOpen, setIsLeadFormDialogOpen] = useState(false);
+  const [newLeadFormName, setNewLeadFormName] = useState("");
+  const [newLeadFormValue, setNewLeadFormValue] = useState("");
+  const [newLeadFormPageId, setNewLeadFormPageId] = useState<string>("");
   const openDriveFolderManager = () => {
     window.open("/resources?type=drive_folder&new=1", "_blank", "noopener");
+  };
+  const openLeadFormDialog = () => {
+    if (!config.pageId) {
+      toast({
+        title: "Selecione uma pagina",
+        description: "Escolha uma pagina antes de cadastrar o formulario.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setNewLeadFormPageId(config.pageId);
+    setNewLeadFormName("");
+    setNewLeadFormValue("");
+    setIsLeadFormDialogOpen(true);
   };
 
   // Fetch resources and audiences from API
@@ -167,6 +193,38 @@ export default function CampaignForm() {
   const pages = resources.filter((r) => r.type === "page");
   const whatsapps = resources.filter((r) => r.type === "whatsapp");
   const driveFolders = resources.filter((r) => r.type === "drive_folder");
+  const searchDriveFolders = useCallback(
+    async (query: string) => {
+      const res = await apiRequest(
+        "GET",
+        `/api/drive/folders?query=${encodeURIComponent(query)}&limit=10`,
+      );
+      const data = (await res.json()) as Array<{ id: string; name: string }>;
+      return data.map((folder) => ({
+        id: folder.id,
+        name: folder.name,
+        value: folder.id,
+        searchText: `${folder.name} ${folder.id}`.trim(),
+      }));
+    },
+    [],
+  );
+  const accountOptions = accounts.map((account) => ({
+    id: account.id,
+    name: account.name,
+    value: String(account.id),
+    searchText: `${account.name} ${account.value}`.trim(),
+  }));
+  const pageOptions = pages.map((page) => {
+    const handle = extractPageInstagram(page).handle;
+    const label = handle ? `${page.name} (${handle})` : page.name;
+    return {
+      id: page.id,
+      name: label,
+      value: String(page.id),
+      searchText: `${page.name} ${handle ?? ""} ${page.value}`.trim(),
+    };
+  });
   const selectedPageResource = pages.find(
     (page) => String(page.id) === config.pageId
   );
@@ -184,6 +242,60 @@ export default function CampaignForm() {
       return (await res.json()) as Resource[];
     },
   });
+  const manualLeadForms = selectedPageValue
+    ? resources.filter((leadform) => {
+        if (leadform.type !== "leadform") return false;
+        const metadata = (leadform.metadata ?? {}) as Record<string, unknown>;
+        const pageIdRaw = metadata.pageId;
+        const pageValueRaw = metadata.pageValue;
+        const pageResourceIdRaw = metadata.pageResourceId;
+        const pageId =
+          typeof pageIdRaw === "string"
+            ? pageIdRaw
+            : typeof pageIdRaw === "number"
+              ? String(pageIdRaw)
+              : null;
+        const pageValue =
+          typeof pageValueRaw === "string"
+            ? pageValueRaw
+            : typeof pageValueRaw === "number"
+              ? String(pageValueRaw)
+              : null;
+        const pageResourceId =
+          typeof pageResourceIdRaw === "number"
+            ? pageResourceIdRaw
+            : typeof pageResourceIdRaw === "string"
+              ? Number.parseInt(pageResourceIdRaw, 10)
+              : null;
+
+        if (pageId && pageId === selectedPageValue) return true;
+        if (pageValue && pageValue === selectedPageValue) return true;
+        if (
+          typeof pageResourceId === "number" &&
+          Number.isFinite(pageResourceId) &&
+          selectedPageResource &&
+          pageResourceId === selectedPageResource.id
+        ) {
+          return true;
+        }
+        return false;
+      })
+    : [];
+  const mergedLeadForms = (() => {
+    const byId = new Map<number, Resource>();
+    pageLeadForms.forEach((form) => {
+      if (typeof form.id === "number" && !byId.has(form.id)) {
+        byId.set(form.id, form);
+      }
+    });
+    manualLeadForms.forEach((form) => {
+      if (typeof form.id === "number" && !byId.has(form.id)) {
+        byId.set(form.id, form);
+      }
+    });
+    return Array.from(byId.values());
+  })();
+
 
   const {
     data: pagePosts = [],
@@ -297,6 +409,42 @@ export default function CampaignForm() {
     return creatives.every((creative) => creative.title && creative.text);
   };
 
+  const createLeadFormMutation = useMutation({
+    mutationFn: async (payload: {
+      type: "leadform";
+      name: string;
+      value: string;
+      metadata: Record<string, unknown>;
+    }) => {
+      const res = await apiRequest("POST", "/api/resources", payload);
+      return (await res.json()) as Resource;
+    },
+    onSuccess: async (created) => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/resources"] });
+      if (selectedPageValue) {
+        await queryClient.invalidateQueries({
+          queryKey: ["leadforms-by-page", selectedPageValue],
+        });
+      }
+      setConfig((prev) => ({ ...prev, leadformId: String(created.id) }));
+      setIsLeadFormDialogOpen(false);
+      setNewLeadFormName("");
+      setNewLeadFormValue("");
+      setNewLeadFormPageId("");
+      toast({
+        title: "Formulario cadastrado",
+        description: "O formulario de leads foi salvo com sucesso.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro ao cadastrar formulario",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   // Create campaign mutation
   const createMutation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/campaigns", data),
@@ -316,6 +464,48 @@ export default function CampaignForm() {
       });
     },
   });
+
+  const handleCreateLeadForm = () => {
+    const name = newLeadFormName.trim();
+    const value = newLeadFormValue.trim();
+    if (!name || !value) {
+      toast({
+        title: "Campos obrigatorios",
+        description: "Informe nome e Formulario ID.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (!newLeadFormPageId) {
+      toast({
+        title: "Selecione uma pagina",
+        description: "Associe o formulario a uma pagina.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const pageResource = pages.find((page) => String(page.id) === newLeadFormPageId);
+    if (!pageResource) {
+      toast({
+        title: "Pagina invalida",
+        description: "Pagina selecionada nao encontrada.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    createLeadFormMutation.mutate({
+      type: "leadform",
+      name,
+      value,
+      metadata: {
+        pageResourceId: pageResource.id,
+        pageId: pageResource.value,
+        pageName: pageResource.name,
+        source: "manual",
+      },
+    });
+  };
 
   const handleSubmit = () => {
     if (!isStep3Valid()) {
@@ -501,23 +691,15 @@ export default function CampaignForm() {
               <Label htmlFor="accountId">
                 Conta Meta Ads <span className="text-destructive">*</span>
               </Label>
-              <Select
+              <DriveFolderCombobox
+                folders={accountOptions}
                 value={config.accountId}
-                onValueChange={(value) =>
-                  setConfig({ ...config, accountId: value })
-                }
-              >
-                <SelectTrigger id="accountId" data-testid="select-account">
-                  <SelectValue placeholder="Selecione a conta" />
-                </SelectTrigger>
-                <SelectContent>
-                  {accounts.map((account) => (
-                    <SelectItem key={account.id} value={String(account.id)}>
-                      {account.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                onChange={(value) => setConfig({ ...config, accountId: value })}
+                placeholder="Buscar conta por nome"
+                emptyLabel="Nenhuma conta disponivel"
+                maxResults={50}
+                testId="select-account"
+              />
             </div>
 
             <div className="space-y-2">
@@ -564,28 +746,17 @@ export default function CampaignForm() {
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="pageId">Página Facebook</Label>
-                <Select
+                <Label htmlFor="pageId">P?gina Facebook</Label>
+                <DriveFolderCombobox
+                  folders={pageOptions}
                   value={config.pageId}
-                  onValueChange={(value) =>
-                    setConfig({ ...config, pageId: value })
-                  }
-                >
-                  <SelectTrigger id="pageId" data-testid="select-page">
-                    <SelectValue placeholder="Selecione a página" />
-                  </SelectTrigger>
-                <SelectContent>
-                  {pages.map((page) => (
-                    <SelectItem key={page.id} value={String(page.id)}>
-                      {page.name}
-                      {extractPageInstagram(page).handle
-                        ? ` (${extractPageInstagram(page).handle})`
-                        : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+                  onChange={(value) => setConfig({ ...config, pageId: value })}
+                  placeholder="Buscar pagina por nome"
+                  emptyLabel="Nenhuma pagina disponivel"
+                  maxResults={50}
+                  testId="select-page"
+                />
+              </div>
 
               <div className="space-y-2">
                 <Label htmlFor="instagramId">Instagram</Label>
@@ -627,73 +798,85 @@ export default function CampaignForm() {
                   </SelectContent>
                 </Select>
               </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="whatsappId">WhatsApp</Label>
-                <Select
-                  value={config.whatsappId}
-                  onValueChange={(value) =>
-                    setConfig({ ...config, whatsappId: value })
-                  }
-                >
-                  <SelectTrigger id="whatsappId" data-testid="select-whatsapp">
-                    <SelectValue placeholder="Selecione o WhatsApp" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {whatsapps.map((whatsapp) => (
-                      <SelectItem key={whatsapp.id} value={String(whatsapp.id)}>
-                        {whatsapp.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="leadformId">Formulario de Leads</Label>
-                <Select
-                  value={config.leadformId}
-                  onValueChange={(value) =>
-                    setConfig({ ...config, leadformId: value })
-                  }
-                  disabled={!selectedPageValue || isFetchingLeadForms}
-                >
-                  <SelectTrigger id="leadformId" data-testid="select-leadform">
-                    <SelectValue
-                      placeholder={
-                        !selectedPageValue
-                          ? "Selecione uma pagina primeiro"
-                          : isFetchingLeadForms
-                            ? "Carregando formularios..."
-                            : "Selecione o formulario"
-                      }
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {!selectedPageValue ? (
-                      <SelectItem value="none" disabled>
-                        Selecione uma pagina primeiro
-                      </SelectItem>
-                    ) : isFetchingLeadForms ? (
-                      <SelectItem value="none" disabled>
-                        Carregando formularios...
-                      </SelectItem>
-                    ) : pageLeadForms.length === 0 ? (
-                      <SelectItem value="none" disabled>
-                        Nenhum formulario disponivel
-                      </SelectItem>
-                    ) : (
-                      pageLeadForms.map((leadform) => (
-                        <SelectItem key={leadform.id} value={String(leadform.id)}>
-                          {leadform.name}
-                        </SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-
             </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="whatsappId">WhatsApp</Label>
+              <Select
+                value={config.whatsappId}
+                onValueChange={(value) =>
+                  setConfig({ ...config, whatsappId: value })
+                }
+              >
+                <SelectTrigger id="whatsappId" data-testid="select-whatsapp">
+                  <SelectValue placeholder="Selecione o WhatsApp" />
+                </SelectTrigger>
+                <SelectContent>
+                  {whatsapps.map((whatsapp) => (
+                    <SelectItem key={whatsapp.id} value={String(whatsapp.id)}>
+                      {whatsapp.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="leadformId">Formulario de Leads</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={openLeadFormDialog}
+                >
+                  <Plus className="h-4 w-4" />
+                  Novo formulario
+                </Button>
+              </div>
+              <Select
+                value={config.leadformId}
+                onValueChange={(value) =>
+                  setConfig({ ...config, leadformId: value })
+                }
+                disabled={!selectedPageValue || isFetchingLeadForms}
+              >
+                <SelectTrigger id="leadformId" data-testid="select-leadform">
+                  <SelectValue
+                    placeholder={
+                      !selectedPageValue
+                        ? "Selecione uma pagina primeiro"
+                        : isFetchingLeadForms
+                          ? "Carregando formularios..."
+                          : "Selecione o formulario"
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent>
+                  {!selectedPageValue ? (
+                    <SelectItem value="none" disabled>
+                      Selecione uma pagina primeiro
+                    </SelectItem>
+                  ) : isFetchingLeadForms ? (
+                    <SelectItem value="none" disabled>
+                      Carregando formularios...
+                    </SelectItem>
+                  ) : mergedLeadForms.length === 0 ? (
+                    <SelectItem value="none" disabled>
+                      Nenhum formulario disponivel
+                    </SelectItem>
+                  ) : (
+                    mergedLeadForms.map((leadform) => (
+                      <SelectItem key={leadform.id} value={String(leadform.id)}>
+                        {leadform.name}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
           </CardContent>
         </Card>
       )}
@@ -939,6 +1122,9 @@ export default function CampaignForm() {
                             }
                             placeholder="Buscar pasta por nome"
                             emptyLabel="Nenhuma pasta encontrada"
+                            onSearch={searchDriveFolders}
+                            minSearchLength={3}
+                            maxResults={10}
                             testId={`select-drive-folder-${index}`}
                           />
                         </div>
@@ -1175,7 +1361,74 @@ export default function CampaignForm() {
           </Button>
         )}
       </div>
+
+      <Dialog open={isLeadFormDialogOpen} onOpenChange={setIsLeadFormDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Novo formulario de leads</DialogTitle>
+            <DialogDescription>
+              Cadastre o formulario e associe a uma pagina.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="leadform-page">Pagina associada</Label>
+              <Select value={newLeadFormPageId} onValueChange={setNewLeadFormPageId}>
+                <SelectTrigger id="leadform-page" data-testid="select-leadform-page">
+                  <SelectValue placeholder="Selecione a pagina" />
+                </SelectTrigger>
+                <SelectContent>
+                  {pages.length === 0 ? (
+                    <SelectItem value="none" disabled>
+                      Nenhuma pagina disponivel
+                    </SelectItem>
+                  ) : (
+                    pages.map((page) => (
+                      <SelectItem key={page.id} value={String(page.id)}>
+                        {page.name}
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="leadform-name">Nome</Label>
+              <Input
+                id="leadform-name"
+                placeholder="Ex: Leads Campanha X"
+                value={newLeadFormName}
+                onChange={(e) => setNewLeadFormName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="leadform-id">Formulario ID</Label>
+              <Input
+                id="leadform-id"
+                placeholder="Ex: 123456789012345"
+                value={newLeadFormValue}
+                onChange={(e) => setNewLeadFormValue(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsLeadFormDialogOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleCreateLeadForm}
+              disabled={createLeadFormMutation.isPending}
+            >
+              {createLeadFormMutation.isPending ? "Salvando..." : "Salvar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
-
