@@ -40,6 +40,33 @@ const DEFAULT_PUBLISHER_PLATFORMS = [
   "audience_network",
 ] as const;
 
+const AD_ACCOUNT_COOLDOWN_MS = 5 * 60 * 1000;
+const adAccountCooldowns = new Map<string, number>();
+
+function getAdAccountCooldownKey(tenantId: number, adAccountId: string): string {
+  return `${tenantId}:${adAccountId}`;
+}
+
+function getCooldownRemainingMs(tenantId: number, adAccountId: string, now = Date.now()): number {
+  const key = getAdAccountCooldownKey(tenantId, adAccountId);
+  const expiresAt = adAccountCooldowns.get(key);
+  if (!expiresAt) {
+    return 0;
+  }
+  if (expiresAt <= now) {
+    adAccountCooldowns.delete(key);
+    return 0;
+  }
+  return expiresAt - now;
+}
+
+function setAdAccountCooldown(tenantId: number, adAccountId: string, now = Date.now()): number {
+  const key = getAdAccountCooldownKey(tenantId, adAccountId);
+  const expiresAt = now + AD_ACCOUNT_COOLDOWN_MS;
+  adAccountCooldowns.set(key, expiresAt);
+  return expiresAt;
+}
+
 function mapObjectiveToOutcome(value: unknown): string {
   const normalized = typeof value === "string" ? value.trim().toUpperCase() : "";
   if (!normalized) {
@@ -195,6 +222,18 @@ campaignsRouter.post("/:id/send-webhook", async (req, res, next) => {
     const whatsappResource = campaign.whatsappId ? await storage.getResource(campaign.whatsappId) : null;
     const leadformResource = campaign.leadformId ? await storage.getResource(campaign.leadformId) : null;
     const adAccountId = accountResource?.value ? accountResource.value.replace(/\D+/g, "") : "";
+    const adAccountKey = adAccountId;
+    if (adAccountKey) {
+      const remainingMs = getCooldownRemainingMs(user.tenantId, adAccountKey);
+      if (remainingMs > 0) {
+        const retryAfterSeconds = Math.ceil(remainingMs / 1000);
+        res.setHeader("Retry-After", String(retryAfterSeconds));
+        return res.status(429).json({
+          message: "Aguarde o tempo de espera para reenviar para a mesma conta de anuncios.",
+          retry_after: retryAfterSeconds,
+        });
+      }
+    }
 
     const creativeEntries = Array.isArray(campaign.creatives)
       ? (campaign.creatives as Array<Record<string, unknown>>)
@@ -456,7 +495,23 @@ campaignsRouter.post("/:id/send-webhook", async (req, res, next) => {
       statusDetail: "Aguardando processamento do n8n (reenviado)",
     });
 
-    res.json({ message: "Campanha enviada para n8n com sucesso" });
+    let cooldownUntil: string | null = null;
+    let cooldownSeconds: number | null = null;
+    if (adAccountKey) {
+      const expiresAt = setAdAccountCooldown(user.tenantId, adAccountKey);
+      cooldownUntil = new Date(expiresAt).toISOString();
+      cooldownSeconds = Math.ceil(AD_ACCOUNT_COOLDOWN_MS / 1000);
+    }
+
+    res.json({
+      message: "Campanha enviada para n8n com sucesso",
+      ...(cooldownSeconds
+        ? {
+            cooldown_seconds: cooldownSeconds,
+            cooldown_until: cooldownUntil,
+          }
+        : {}),
+    });
   } catch (err) {
     next(err);
   }

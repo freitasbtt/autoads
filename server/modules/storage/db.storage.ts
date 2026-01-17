@@ -125,6 +125,42 @@ export class DbStorage implements IStorage {
   }
 
   async deleteResource(id: number): Promise<boolean> {
+    const resource = await this.getResource(id);
+    if (!resource) {
+      return false;
+    }
+
+    if (resource.type === "account") {
+      await db
+        .update(schema.campaigns)
+        .set({ accountId: null })
+        .where(eq(schema.campaigns.accountId, id));
+    }
+    if (resource.type === "page") {
+      await db
+        .update(schema.campaigns)
+        .set({ pageId: null })
+        .where(eq(schema.campaigns.pageId, id));
+    }
+    if (resource.type === "instagram") {
+      await db
+        .update(schema.campaigns)
+        .set({ instagramId: null })
+        .where(eq(schema.campaigns.instagramId, id));
+    }
+    if (resource.type === "leadform") {
+      await db
+        .update(schema.campaigns)
+        .set({ leadformId: null })
+        .where(eq(schema.campaigns.leadformId, id));
+    }
+    if (resource.type === "whatsapp") {
+      await db
+        .update(schema.campaigns)
+        .set({ whatsappId: null })
+        .where(eq(schema.campaigns.whatsappId, id));
+    }
+
     const result = await db.delete(schema.resources).where(eq(schema.resources.id, id));
     return (result.rowCount ?? 0) > 0;
   }

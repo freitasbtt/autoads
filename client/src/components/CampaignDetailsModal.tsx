@@ -7,6 +7,51 @@ import { Calendar, Target, DollarSign, Send, CheckCircle, XCircle, Clock, FileTe
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useEffect, useState } from "react";
+
+type CooldownPayload = {
+  cooldown_seconds?: number;
+  cooldown_until?: string | null;
+};
+
+type CooldownErrorPayload = {
+  message?: string;
+  retry_after?: number;
+};
+
+function parseCooldownError(error: unknown): CooldownErrorPayload | null {
+  if (!error || typeof error !== "object" || !("message" in error)) {
+    return null;
+  }
+
+  const message = String((error as { message?: unknown }).message ?? "");
+  const match = message.match(/^\s*(\d{3}):\s*(.*)$/s);
+  if (!match) {
+    return null;
+  }
+
+  const statusCode = Number(match[1]);
+  if (statusCode !== 429) {
+    return null;
+  }
+
+  const payloadText = match[2]?.trim();
+  if (!payloadText) {
+    return { message: "Aguarde antes de enviar novamente." };
+  }
+
+  try {
+    return JSON.parse(payloadText) as CooldownErrorPayload;
+  } catch {
+    return { message: payloadText };
+  }
+}
+
+function formatCountdown(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
 
 interface CampaignDetailsModalProps {
   campaign: Campaign | null;
@@ -26,12 +71,47 @@ export function CampaignDetailsModal({
   showSendButton = false,
 }: CampaignDetailsModalProps) {
   const { toast } = useToast();
+  const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
+  const [cooldownRemaining, setCooldownRemaining] = useState(0);
+
+  useEffect(() => {
+    if (!cooldownUntil) {
+      setCooldownRemaining(0);
+      return;
+    }
+
+    const updateRemaining = () => {
+      const remainingMs = Math.max(0, cooldownUntil - Date.now());
+      setCooldownRemaining(remainingMs);
+      if (remainingMs <= 0) {
+        setCooldownUntil(null);
+      }
+    };
+
+    updateRemaining();
+    const intervalId = window.setInterval(updateRemaining, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [cooldownUntil]);
 
   const sendMutation = useMutation({
-    mutationFn: (campaignId: number) =>
-      apiRequest("POST", `/api/campaigns/${campaignId}/send-webhook`, {}),
-    onSuccess: () => {
+    mutationFn: async (campaignId: number) => {
+      const response = await apiRequest("POST", `/api/campaigns/${campaignId}/send-webhook`, {});
+      try {
+        return (await response.json()) as CooldownPayload;
+      } catch {
+        return {} as CooldownPayload;
+      }
+    },
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/campaigns"] });
+      if (data?.cooldown_until) {
+        const parsed = Date.parse(data.cooldown_until);
+        if (Number.isFinite(parsed)) {
+          setCooldownUntil(parsed);
+        }
+      } else if (typeof data?.cooldown_seconds === "number" && Number.isFinite(data.cooldown_seconds)) {
+        setCooldownUntil(Date.now() + data.cooldown_seconds * 1000);
+      }
       toast({
         title: "Enviado!",
         description: "Campanha enviada para automação com sucesso.",
@@ -39,10 +119,18 @@ export function CampaignDetailsModal({
       onOpenChange(false);
     },
     onError: (error: any) => {
+      const cooldownError = parseCooldownError(error);
+      const retryAfter = Number(cooldownError?.retry_after);
+      if (Number.isFinite(retryAfter) && retryAfter > 0) {
+        setCooldownUntil(Date.now() + retryAfter * 1000);
+      }
       toast({
-        title: "Erro ao enviar",
-        description: error.message || "Não foi possível enviar para automação.",
-        variant: "destructive",
+        title: cooldownError ? "Aguarde" : "Erro ao enviar",
+        description:
+          cooldownError?.message ||
+          error.message ||
+          "Não foi possível enviar para automação.",
+        variant: cooldownError ? "default" : "destructive",
       });
     },
   });
@@ -93,6 +181,8 @@ export function CampaignDetailsModal({
   const adSets = campaign.adSets as any[] | null;
   const creatives = campaign.creatives as any[] | null;
   const showReprocessButton = campaign.status !== "draft" || !showSendButton;
+  const cooldownSeconds = Math.ceil(cooldownRemaining / 1000);
+  const isCooldownActive = cooldownSeconds > 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -268,7 +358,7 @@ export function CampaignDetailsModal({
               <Button
                 variant="outline"
                 onClick={() => sendMutation.mutate(campaign.id)}
-                disabled={sendMutation.isPending}
+                disabled={sendMutation.isPending || isCooldownActive}
                 data-testid="button-reprocess-campaign"
               >
                 <RotateCcw className="h-4 w-4 mr-2" />
@@ -278,12 +368,17 @@ export function CampaignDetailsModal({
             {showSendButton && campaign.status === "draft" && (
               <Button
                 onClick={() => sendMutation.mutate(campaign.id)}
-                disabled={sendMutation.isPending}
+                disabled={sendMutation.isPending || isCooldownActive}
                 data-testid="button-send-automation"
               >
                 <Send className="h-4 w-4 mr-2" />
                 {sendMutation.isPending ? "Enviando..." : "Enviar Automação"}
               </Button>
+            )}
+            {isCooldownActive && (
+              <p className="text-xs text-muted-foreground">
+                Aguarde {formatCountdown(cooldownSeconds)} para reenviar para esta conta.
+              </p>
             )}
           </DialogFooter>
         ) : null}

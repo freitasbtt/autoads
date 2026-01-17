@@ -23,6 +23,7 @@ driveRouter.get("/drive/folders", async (req, res) => {
     const integration = await storage.getIntegrationByProvider(user.tenantId, "Google Drive");
     const config = (integration?.config ?? {}) as Record<string, unknown>;
     const accessToken = typeof config.accessToken === "string" ? config.accessToken : "";
+    const refreshToken = typeof config.refreshToken === "string" ? config.refreshToken : "";
 
     if (!accessToken) {
       return res.status(400).json({ message: "Integracao com Google Drive nao configurada." });
@@ -43,11 +44,54 @@ driveRouter.get("/drive/folders", async (req, res) => {
       supportsAllDrives: "true",
     });
 
-    const response = await fetch(`https://www.googleapis.com/drive/v3/files?${params.toString()}`, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    });
+    const fetchFolders = async (token: string) =>
+      fetch(`https://www.googleapis.com/drive/v3/files?${params.toString()}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+    let response = await fetchFolders(accessToken);
+
+    if (response.status === 401 && refreshToken) {
+      const settings = await storage.getAppSettings();
+      if (!settings?.googleClientId || !settings.googleClientSecret) {
+        return res.status(401).json({
+          message: "Token do Google Drive expirado. Refaça a integracao.",
+        });
+      }
+
+      const refreshResponse = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client_id: settings.googleClientId,
+          client_secret: settings.googleClientSecret,
+          refresh_token: refreshToken,
+          grant_type: "refresh_token",
+        }),
+      });
+
+      const refreshData: any = await refreshResponse.json();
+      if (refreshData?.access_token) {
+        const nextConfig = {
+          ...config,
+          accessToken: String(refreshData.access_token),
+          tokenType: typeof refreshData.token_type === "string" ? refreshData.token_type : config.tokenType,
+          expiresIn: typeof refreshData.expires_in === "number" ? refreshData.expires_in : config.expiresIn,
+        };
+
+        if (integration?.id) {
+          await storage.updateIntegration(integration.id, {
+            config: nextConfig,
+            status: "connected",
+            lastChecked: new Date(),
+          });
+        }
+
+        response = await fetchFolders(String(refreshData.access_token));
+      }
+    }
 
     if (!response.ok) {
       const errorText = await response.text();

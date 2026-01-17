@@ -131,6 +131,29 @@ export class MemStorage implements IStorage {
   }
 
   async deleteResource(id: number): Promise<boolean> {
+    const resource = this.resources.get(id);
+    if (!resource) {
+      return false;
+    }
+
+    for (const [cid, campaign] of this.campaigns.entries()) {
+      if (resource.type === "account" && campaign.accountId === id) {
+        this.campaigns.set(cid, { ...campaign, accountId: null, updatedAt: new Date() });
+      }
+      if (resource.type === "page" && campaign.pageId === id) {
+        this.campaigns.set(cid, { ...campaign, pageId: null, updatedAt: new Date() });
+      }
+      if (resource.type === "instagram" && campaign.instagramId === id) {
+        this.campaigns.set(cid, { ...campaign, instagramId: null, updatedAt: new Date() });
+      }
+      if (resource.type === "leadform" && campaign.leadformId === id) {
+        this.campaigns.set(cid, { ...campaign, leadformId: null, updatedAt: new Date() });
+      }
+      if (resource.type === "whatsapp" && campaign.whatsappId === id) {
+        this.campaigns.set(cid, { ...campaign, whatsappId: null, updatedAt: new Date() });
+      }
+    }
+
     return this.resources.delete(id);
   }
 

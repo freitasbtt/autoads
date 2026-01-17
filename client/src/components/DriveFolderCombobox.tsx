@@ -133,15 +133,17 @@ export function DriveFolderCombobox({
   }, [disabled, minSearchLength, onSearch, open, query]);
 
   const filtered = useMemo(() => {
-    if (onSearch) {
-      const trimmed = query.trim();
-      if (trimmed.length < minSearchLength) {
-        return [];
-      }
+    const trimmed = query.trim();
+    const shouldUseRemote =
+      onSearch &&
+      trimmed.length >= minSearchLength &&
+      !searchError;
+
+    if (shouldUseRemote) {
       return remoteOptions.slice(0, maxResults);
     }
 
-    const q = query.trim().toLowerCase();
+    const q = trimmed.toLowerCase();
     const enriched = folders.map((folder) => ({
       folder,
       nameLower: (folder.searchText ?? folder.name).toLowerCase(),
@@ -161,7 +163,7 @@ export function DriveFolderCombobox({
         );
 
     return pool.slice(0, maxResults).map((item) => item.folder);
-  }, [folders, maxResults, query]);
+  }, [folders, maxResults, minSearchLength, onSearch, query, remoteOptions, searchError]);
 
   const handleSelect = (next: string) => {
     const option = selectedPool.get(next);
