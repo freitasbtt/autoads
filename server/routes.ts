@@ -33,6 +33,8 @@ declare module "express-session" {
   interface SessionData {
     oauthUserId?: number;
     oauthTenantId?: number;
+    oauthState?: string;
+    oauthProvider?: "meta" | "google";
   }
 }
 
@@ -176,7 +178,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   return httpServer;
 }
-
 
 
 

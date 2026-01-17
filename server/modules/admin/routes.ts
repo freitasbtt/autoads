@@ -5,6 +5,7 @@ import { storage } from "../storage";
 import { isAdmin, isSystemAdmin } from "../../middlewares/auth";
 import { isSystemAdminRole } from "../auth/services/role.service";
 import { hashPassword } from "../auth/services/password.service";
+import { resolveMetaAppSecret } from "../meta/utils/app-config";
 
 export const adminRouter = Router();
 
@@ -30,11 +31,12 @@ adminRouter.get("/settings", isSystemAdmin, async (_req, res, next) => {
     if (!settings) {
       return res.json(null);
     }
+    const metaAppSecretConfigured = Boolean(resolveMetaAppSecret(settings));
 
     res.json({
       id: settings.id,
       metaAppId: settings.metaAppId,
-      metaAppSecret: settings.metaAppSecret ? "***configured***" : null,
+      metaAppSecret: metaAppSecretConfigured ? "***configured***" : null,
       googleClientId: settings.googleClientId,
       googleClientSecret: settings.googleClientSecret ? "***configured***" : null,
       n8nWebhookUrl: settings.n8nWebhookUrl,
@@ -47,15 +49,20 @@ adminRouter.get("/settings", isSystemAdmin, async (_req, res, next) => {
 
 adminRouter.put("/settings", isSystemAdmin, async (req, res, next) => {
   try {
-    const settings = await storage.updateAppSettings(req.body);
+    const updates = { ...req.body } as Record<string, unknown>;
+    if (process.env.META_APP_SECRET && String(process.env.META_APP_SECRET).trim().length > 0) {
+      delete updates.metaAppSecret;
+    }
+    const settings = await storage.updateAppSettings(updates);
     if (!settings) {
       return res.status(500).json({ message: "Failed to update settings" });
     }
 
+    const metaAppSecretConfigured = Boolean(resolveMetaAppSecret(settings));
     res.json({
       id: settings.id,
       metaAppId: settings.metaAppId,
-      metaAppSecret: settings.metaAppSecret ? "***configured***" : null,
+      metaAppSecret: metaAppSecretConfigured ? "***configured***" : null,
       googleClientId: settings.googleClientId,
       googleClientSecret: settings.googleClientSecret ? "***configured***" : null,
       n8nWebhookUrl: settings.n8nWebhookUrl,

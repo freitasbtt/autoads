@@ -1,10 +1,12 @@
 import { Router } from "express";
+import crypto from "crypto";
 import type { InsertIntegration, User } from "@shared/schema";
 import { storage } from "../storage";
 import { isAuthenticated } from "../../middlewares/auth";
 import { getPublicAppUrl } from "../../utils/url";
 import { encryptMetaAccessToken } from "../meta/utils/token";
 import { generateAppSecretProof } from "../meta/utils/crypto";
+import { resolveMetaAppSecret } from "../meta/utils/app-config";
 
 export const oauthRouter = Router();
 
@@ -24,19 +26,23 @@ type MetaPageWithInstagram = {
   } | null;
 };
 
-function appendSecurityParams(url: URL, accessToken: string, appSecretProof?: string) {
+function appendSecurityParams(url: URL, accessToken: string, appSecretProof: string) {
   if (!url.searchParams.has("access_token")) {
     url.searchParams.set("access_token", accessToken);
   }
-  if (appSecretProof && !url.searchParams.has("appsecret_proof")) {
+  if (!url.searchParams.has("appsecret_proof")) {
     url.searchParams.set("appsecret_proof", appSecretProof);
   }
+}
+
+function createOAuthState(): string {
+  return crypto.randomBytes(24).toString("hex");
 }
 
 async function fetchPagedMetaList<T>(
   initialUrl: URL,
   accessToken: string,
-  appSecretProof?: string,
+  appSecretProof: string,
 ): Promise<T[]> {
   const items: T[] = [];
   let nextUrl: URL | null = initialUrl;
@@ -80,7 +86,7 @@ async function fetchPagedMetaList<T>(
 
 async function fetchMetaAdAccounts(
   accessToken: string,
-  appSecretProof?: string,
+  appSecretProof: string,
 ): Promise<MetaAdAccount[]> {
   const url = new URL("https://graph.facebook.com/v24.0/me/adaccounts");
   url.searchParams.set("fields", "id,name,account_id,account_status");
@@ -90,7 +96,7 @@ async function fetchMetaAdAccounts(
 
 async function fetchMetaPagesWithInstagram(
   accessToken: string,
-  appSecretProof?: string,
+  appSecretProof: string,
 ): Promise<MetaPageWithInstagram[]> {
   const url = new URL("https://graph.facebook.com/v24.0/me/accounts");
   url.searchParams.set("fields", "id,name,instagram_business_account{id,username}");
@@ -215,14 +221,18 @@ async function syncMetaResourcesFromOAuth(options: {
 oauthRouter.get("/meta", isAuthenticated, async (req, res) => {
   try {
     const settings = await storage.getAppSettings();
-    if (!settings?.metaAppId) {
+    const metaAppSecret = resolveMetaAppSecret(settings);
+    if (!settings?.metaAppId || !metaAppSecret) {
       return res.status(500).send("Meta OAuth not configured. Please contact admin.");
     }
 
     const user = req.user as User;
 
+    const state = createOAuthState();
     req.session.oauthUserId = user.id;
     req.session.oauthTenantId = user.tenantId;
+    req.session.oauthState = state;
+    req.session.oauthProvider = "meta";
 
     await new Promise<void>((resolve, reject) => {
       req.session.save((err) => {
@@ -254,7 +264,7 @@ oauthRouter.get("/meta", isAuthenticated, async (req, res) => {
       `return_scopes=true&` +
       `auth_type=rerequest&` +
       `scope=${encodeURIComponent(scope)}&` +
-      `state=${user.id}`;
+      `state=${state}`;
 
     res.redirect(authUrl);
   } catch (err) {
@@ -268,14 +278,33 @@ oauthRouter.get("/meta/callback", async (req, res) => {
     const { code, state } = req.query;
 
     const userId = req.session.oauthUserId;
-    const tenantId = req.session.oauthTenantId;
+    const sessionState = req.session.oauthState;
+    const sessionProvider = req.session.oauthProvider;
 
-    if (!code || !userId || !tenantId || state !== String(userId)) {
+    if (
+      !code ||
+      !userId ||
+      typeof state !== "string" ||
+      state !== sessionState ||
+      sessionProvider !== "meta"
+    ) {
       return res.status(400).send("Invalid OAuth callback");
     }
 
+    const user = await storage.getUser(userId);
+    if (!user) {
+      return res.status(400).send("Invalid OAuth callback");
+    }
+    const tenantId = user.tenantId;
+
+    req.session.oauthState = undefined;
+    req.session.oauthProvider = undefined;
+    req.session.oauthUserId = undefined;
+    req.session.oauthTenantId = undefined;
+
     const settings = await storage.getAppSettings();
-    if (!settings?.metaAppId || !settings.metaAppSecret) {
+    const metaAppSecret = resolveMetaAppSecret(settings);
+    if (!settings?.metaAppId || !metaAppSecret) {
       return res.status(500).send("Meta OAuth not configured");
     }
 
@@ -285,7 +314,7 @@ oauthRouter.get("/meta/callback", async (req, res) => {
     const tokenUrl =
       `https://graph.facebook.com/v24.0/oauth/access_token?` +
       `client_id=${settings.metaAppId}&` +
-      `client_secret=${settings.metaAppSecret}&` +
+      `client_secret=${metaAppSecret}&` +
       `redirect_uri=${encodeURIComponent(redirectUri)}&` +
       `code=${code}`;
 
@@ -298,12 +327,31 @@ oauthRouter.get("/meta/callback", async (req, res) => {
     }
 
     const accessToken = tokenData.access_token;
+    const expiresInRaw = tokenData.expires_in;
+    const expiresIn =
+      typeof expiresInRaw === "number"
+        ? Number.isFinite(expiresInRaw)
+          ? expiresInRaw
+          : null
+        : typeof expiresInRaw === "string"
+          ? (() => {
+              const parsed = Number.parseInt(expiresInRaw, 10);
+              return Number.isFinite(parsed) ? parsed : null;
+            })()
+          : null;
+    const expiresAt =
+      typeof expiresIn === "number" ? Date.now() + expiresIn * 1000 : null;
 
     const storedAccessToken = encryptMetaAccessToken(accessToken);
     const metaIntegration: InsertIntegration & { tenantId: number } = {
       tenantId,
       provider: "Meta",
-      config: { accessToken: storedAccessToken, tokenType: tokenData.token_type },
+      config: {
+        accessToken: storedAccessToken,
+        tokenType: tokenData.token_type,
+        expiresIn,
+        expiresAt,
+      },
       status: "connected",
     };
     const existingIntegration = await storage.getIntegrationByProvider(tenantId, "Meta");
@@ -319,7 +367,7 @@ oauthRouter.get("/meta/callback", async (req, res) => {
     await syncMetaResourcesFromOAuth({
       tenantId,
       accessToken,
-      appSecret: settings.metaAppSecret,
+      appSecret: metaAppSecret,
     });
 
     res.redirect("/resources?oauth=success");
@@ -338,8 +386,11 @@ oauthRouter.get("/google", isAuthenticated, async (req, res) => {
 
     const user = req.user as User;
 
+    const state = createOAuthState();
     req.session.oauthUserId = user.id;
     req.session.oauthTenantId = user.tenantId;
+    req.session.oauthState = state;
+    req.session.oauthProvider = "google";
 
     await new Promise<void>((resolve, reject) => {
       req.session.save((err) => {
@@ -359,7 +410,7 @@ oauthRouter.get("/google", isAuthenticated, async (req, res) => {
       `response_type=code&` +
       `scope=${encodeURIComponent(scope)}&` +
       `access_type=offline&` +
-      `state=${user.id}`;
+      `state=${state}`;
 
     res.redirect(authUrl);
   } catch (err) {
@@ -373,11 +424,29 @@ oauthRouter.get("/google/callback", async (req, res) => {
     const { code, state } = req.query;
 
     const userId = req.session.oauthUserId;
-    const tenantId = req.session.oauthTenantId;
+    const sessionState = req.session.oauthState;
+    const sessionProvider = req.session.oauthProvider;
 
-    if (!code || !userId || !tenantId || state !== String(userId)) {
+    if (
+      !code ||
+      !userId ||
+      typeof state !== "string" ||
+      state !== sessionState ||
+      sessionProvider !== "google"
+    ) {
       return res.status(400).send("Invalid OAuth callback");
     }
+
+    const user = await storage.getUser(userId);
+    if (!user) {
+      return res.status(400).send("Invalid OAuth callback");
+    }
+    const tenantId = user.tenantId;
+
+    req.session.oauthState = undefined;
+    req.session.oauthProvider = undefined;
+    req.session.oauthUserId = undefined;
+    req.session.oauthTenantId = undefined;
 
     const settings = await storage.getAppSettings();
     if (!settings?.googleClientId || !settings.googleClientSecret) {

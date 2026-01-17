@@ -3,6 +3,10 @@ import type { User, InsertIntegration } from "@shared/schema";
 import { insertIntegrationSchema } from "@shared/schema";
 import { isAuthenticated } from "../../middlewares/auth";
 import { storage } from "../storage";
+import { decryptMetaAccessToken } from "../meta/utils/token";
+import { generateAppSecretProof } from "../meta/utils/crypto";
+import { revokeMetaAccessToken } from "../meta/services/revoke.service";
+import { resolveMetaAppSecret } from "../meta/utils/app-config";
 
 export const integrationsRouter = Router();
 
@@ -76,8 +80,49 @@ integrationsRouter.delete("/:id", async (req, res, next) => {
       return res.status(404).json({ message: "Integration not found" });
     }
 
+    let revoked = false;
+
+    if (existing.provider === "Meta") {
+      const config = (existing.config ?? {}) as Record<string, unknown>;
+      const storedToken =
+        typeof config.accessToken === "string" ? config.accessToken : null;
+      const accessToken = decryptMetaAccessToken(storedToken);
+
+      if (accessToken) {
+        const settings = await storage.getAppSettings();
+        const metaAppSecret = resolveMetaAppSecret(settings);
+        if (!metaAppSecret) {
+          console.warn("Meta app secret missing; skipping token revocation", {
+            integrationId: existing.id,
+          });
+        } else {
+          const appSecretProof = generateAppSecretProof(
+            accessToken,
+            metaAppSecret,
+          );
+
+          const revokeResult = await revokeMetaAccessToken({
+            accessToken,
+            appSecretProof,
+          });
+          revoked = revokeResult.ok;
+
+          if (!revokeResult.ok) {
+            console.warn("Meta token revocation failed", {
+              integrationId: existing.id,
+              status: revokeResult.status,
+            });
+          }
+        }
+      } else {
+        console.warn("Meta token unavailable for revocation", {
+          integrationId: existing.id,
+        });
+      }
+    }
+
     await storage.deleteIntegration(id);
-    res.json({ message: "Integration deleted successfully" });
+    res.json({ message: "Integration deleted successfully", revoked });
   } catch (err) {
     next(err);
   }

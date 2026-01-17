@@ -5,16 +5,12 @@ import type { User } from "@shared/schema";
 import { storage } from "../storage";
 import { MetaGraphClient, fetchMetaDashboardMetrics } from ".";
 import type { MetricTotals as MetaMetricTotals } from ".";
-import { decryptMetaAccessToken } from "./utils/token";
 import { getMetaAccess } from "./services/access.service";
+import { resolveMetaAppSecret } from "./utils/app-config";
 import { setNoCacheHeaders } from "../../utils/cache";
 import { isAuthenticated } from "../../middlewares/auth";
 import { generateAppSecretProof } from "./utils/crypto";
 import { isSystemAdminRole } from "../auth/services/role.service";
-
-type MetaIntegrationConfig = {
-  accessToken?: string | null;
-};
 
 const DATE_PARAM_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const dashboardMetricsQuerySchema = z.object({
@@ -221,18 +217,17 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
       });
     }
 
-    const integration = await storage.getIntegrationByProvider(user.tenantId, "Meta");
-    const metaConfig = (integration?.config ?? {}) as MetaIntegrationConfig;
-
-    const metaAccessToken = decryptMetaAccessToken(metaConfig.accessToken ?? null);
-    if (!metaAccessToken) {
+    const metaAccess = await getMetaAccess(user.tenantId);
+    if (!metaAccess) {
       return res.status(400).json({
-        message: "Integracao com Meta nao esta conectada ou token indisponivel para este tenant.",
+        message:
+          "Integracao com Meta nao esta conectada, token expirado ou app secret ausente.",
       });
     }
 
     const settings = await storage.getAppSettings();
-    if (!settings?.metaAppSecret) {
+    const metaAppSecret = resolveMetaAppSecret(settings);
+    if (!metaAppSecret) {
       return res.status(500).json({ message: "Meta app secret nao configurado." });
     }
 
@@ -269,7 +264,7 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
       previousEnd = format(previousEndDate, "yyyy-MM-dd");
     }
 
-    const client = new MetaGraphClient(metaAccessToken, settings.metaAppSecret);
+    const client = new MetaGraphClient(metaAccess.accessToken, metaAppSecret);
 
     const metrics = await fetchMetaDashboardMetrics({
       accounts: selectedAccounts,
@@ -340,22 +335,21 @@ metaRouter.get("/meta/campaigns/:id/creatives", async (req, res, next) => {
       });
     }
 
-    const integration = await storage.getIntegrationByProvider(user.tenantId, "Meta");
-    const metaConfig = (integration?.config ?? {}) as MetaIntegrationConfig;
-
-    const metaAccessToken = decryptMetaAccessToken(metaConfig.accessToken ?? null);
-    if (!metaAccessToken) {
+    const metaAccess = await getMetaAccess(user.tenantId);
+    if (!metaAccess) {
       return res.status(400).json({
-        message: "Integracao com Meta nao esta conectada ou token indisponivel para este tenant.",
+        message:
+          "Integracao com Meta nao esta conectada, token expirado ou app secret ausente.",
       });
     }
 
     const settings = await storage.getAppSettings();
-    if (!settings?.metaAppSecret) {
+    const metaAppSecret = resolveMetaAppSecret(settings);
+    if (!metaAppSecret) {
       return res.status(500).json({ message: "Meta app secret nao configurado." });
     }
 
-    const client = new MetaGraphClient(metaAccessToken, settings.metaAppSecret);
+    const client = new MetaGraphClient(metaAccess.accessToken, metaAppSecret);
 
     const accountCampaigns = await client.fetchCampaigns(accountIdParam);
     const thisCampaign = accountCampaigns.find((c) => c.id === campaignId);
@@ -388,7 +382,9 @@ metaRouter.get("/meta/search/cities", async (req, res, next) => {
 
     const access = await getMetaAccess(user.tenantId);
     if (!access) {
-      return res.status(400).json({ message: "Integracao com Meta nao configurada" });
+      return res.status(400).json({
+        message: "Integracao com Meta nao configurada, token expirado ou app secret ausente.",
+      });
     }
 
     const params = new URLSearchParams({
@@ -399,9 +395,7 @@ metaRouter.get("/meta/search/cities", async (req, res, next) => {
       access_token: access.accessToken,
     });
 
-    if (access.appSecretProof) {
-      params.set("appsecret_proof", access.appSecretProof);
-    }
+    params.set("appsecret_proof", access.appSecretProof);
 
     const response = await fetch(`https://graph.facebook.com/v24.0/search?${params.toString()}`);
     if (!response.ok) {
@@ -450,7 +444,9 @@ metaRouter.get("/meta/search/interests", async (req, res, next) => {
 
     const access = await getMetaAccess(user.tenantId);
     if (!access) {
-      return res.status(400).json({ message: "Integracao com Meta nao configurada" });
+      return res.status(400).json({
+        message: "Integracao com Meta nao configurada, token expirado ou app secret ausente.",
+      });
     }
 
     const params = new URLSearchParams({
@@ -461,9 +457,7 @@ metaRouter.get("/meta/search/interests", async (req, res, next) => {
       access_token: access.accessToken,
     });
 
-    if (access.appSecretProof) {
-      params.set("appsecret_proof", access.appSecretProof);
-    }
+    params.set("appsecret_proof", access.appSecretProof);
 
     const response = await fetch(`https://graph.facebook.com/v24.0/search?${params.toString()}`);
     if (!response.ok) {
@@ -527,27 +521,31 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
       });
       return res.status(400).json(
         attachDebug({
-          message: "Integracao com Meta nao configurada corretamente (token ausente ou invalido).",
+          message:
+            "Integracao com Meta nao configurada corretamente (token expirado, ausente ou invalido).",
         }),
       );
     }
 
     const userAccessToken = userAccess.accessToken.trim();
-    const userAppSecretProof =
-      typeof userAccess.appSecretProof === "string" && userAccess.appSecretProof.trim().length > 0
-        ? userAccess.appSecretProof.trim()
-        : undefined;
+    const userAppSecretProof = userAccess.appSecretProof.trim();
     const settings = await storage.getAppSettings();
+    const metaAppSecret = resolveMetaAppSecret(settings);
+    if (!metaAppSecret) {
+      return res.status(500).json(
+        attachDebug({ message: "Meta app secret nao configurado." }),
+      );
+    }
 
     if (debugEnabled && debugContext) {
       debugContext.metaAppIdConfigured = Boolean(settings?.metaAppId);
-      debugContext.metaAppSecretConfigured = Boolean(settings?.metaAppSecret);
+      debugContext.metaAppSecretConfigured = Boolean(metaAppSecret);
 
-      if (settings?.metaAppId && settings.metaAppSecret) {
+      if (settings?.metaAppId && metaAppSecret) {
         debugContext.userToken = await fetchMetaTokenDebug({
           token: userAccessToken,
           appId: settings.metaAppId,
-          appSecret: settings.metaAppSecret,
+          appSecret: metaAppSecret,
         });
       } else {
         debugContext.userToken = {
@@ -561,9 +559,7 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
     const pageDetailsUrl = new URL(`https://graph.facebook.com/v24.0/${encodeURIComponent(rawPageId)}`);
     pageDetailsUrl.searchParams.set("fields", "id,access_token");
     pageDetailsUrl.searchParams.set("access_token", userAccessToken);
-    if (userAppSecretProof) {
-      pageDetailsUrl.searchParams.set("appsecret_proof", userAppSecretProof);
-    }
+    pageDetailsUrl.searchParams.set("appsecret_proof", userAppSecretProof);
 
     let pageDetailsResponse: globalThis.Response;
     try {
@@ -647,27 +643,25 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
 
     const pageAccessToken = pageAccessTokenRaw.trim();
 
-    if (debugEnabled && debugContext && settings?.metaAppId && settings.metaAppSecret) {
+    if (debugEnabled && debugContext && settings?.metaAppId && metaAppSecret) {
       debugContext.pageToken = await fetchMetaTokenDebug({
         token: pageAccessToken,
         appId: settings.metaAppId,
-        appSecret: settings.metaAppSecret,
+        appSecret: metaAppSecret,
       });
     }
 
-    const pageAppSecretProof =
-      settings?.metaAppSecret && settings.metaAppSecret.length > 0
-        ? generateAppSecretProof(pageAccessToken, settings.metaAppSecret)
-        : undefined;
+    const pageAppSecretProof = generateAppSecretProof(
+      pageAccessToken,
+      metaAppSecret,
+    );
 
     const leadFormsUrl = new URL(
       `https://graph.facebook.com/v24.0/${encodeURIComponent(rawPageId)}/leadgen_forms`,
     );
     leadFormsUrl.searchParams.set("fields", "id,name,status,locale,created_time");
     leadFormsUrl.searchParams.set("access_token", pageAccessToken);
-    if (pageAppSecretProof) {
-      leadFormsUrl.searchParams.set("appsecret_proof", pageAppSecretProof);
-    }
+    leadFormsUrl.searchParams.set("appsecret_proof", pageAppSecretProof);
 
     let leadFormsResponse: globalThis.Response;
     try {
@@ -826,15 +820,13 @@ metaRouter.get("/meta/pages/:pageId/posts", async (req, res) => {
         hasToken: !!userAccess?.accessToken,
       });
       return res.status(400).json({
-        message: "Integracao com Meta nao configurada corretamente (token ausente ou invalido).",
+        message:
+          "Integracao com Meta nao configurada corretamente (token expirado, ausente ou invalido).",
       });
     }
 
     const userAccessToken = userAccess.accessToken.trim();
-    const userAppSecretProof =
-      typeof userAccess.appSecretProof === "string" && userAccess.appSecretProof.trim().length > 0
-        ? userAccess.appSecretProof.trim()
-        : undefined;
+    const userAppSecretProof = userAccess.appSecretProof.trim();
 
     console.debug("Meta user access obtido", {
       tenantId: user.tenantId,
@@ -844,9 +836,7 @@ metaRouter.get("/meta/pages/:pageId/posts", async (req, res) => {
     const pageDetailsUrl = new URL(`https://graph.facebook.com/v24.0/${encodeURIComponent(rawPageId)}`);
     pageDetailsUrl.searchParams.set("fields", "id,access_token");
     pageDetailsUrl.searchParams.set("access_token", userAccessToken);
-    if (userAppSecretProof) {
-      pageDetailsUrl.searchParams.set("appsecret_proof", userAppSecretProof);
-    }
+    pageDetailsUrl.searchParams.set("appsecret_proof", userAppSecretProof);
 
     let pageDetailsResponse: globalThis.Response;
     try {
@@ -920,10 +910,14 @@ metaRouter.get("/meta/pages/:pageId/posts", async (req, res) => {
     const pageAccessToken = pageAccessTokenRaw.trim();
 
     const settings = await storage.getAppSettings();
-    const pageAppSecretProof =
-      settings?.metaAppSecret && settings.metaAppSecret.length > 0
-        ? generateAppSecretProof(pageAccessToken, settings.metaAppSecret)
-        : undefined;
+    const metaAppSecret = resolveMetaAppSecret(settings);
+    if (!metaAppSecret) {
+      return res.status(500).json({ message: "Meta app secret nao configurado." });
+    }
+    const pageAppSecretProof = generateAppSecretProof(
+      pageAccessToken,
+      metaAppSecret,
+    );
 
     console.debug("Page access token obtido com sucesso", {
       tenantId: user.tenantId,
@@ -948,9 +942,7 @@ metaRouter.get("/meta/pages/:pageId/posts", async (req, res) => {
     );
     postsUrl.searchParams.set("limit", String(limit));
     postsUrl.searchParams.set("access_token", pageAccessToken);
-    if (pageAppSecretProof) {
-      postsUrl.searchParams.set("appsecret_proof", pageAppSecretProof);
-    }
+    postsUrl.searchParams.set("appsecret_proof", pageAppSecretProof);
 
     let postsResponse: globalThis.Response;
     try {
@@ -1077,13 +1069,16 @@ internalMetaRouter.get("/meta/token", async (req, res) => {
 
     const metaAccess = await getMetaAccess(tenantId);
     if (!metaAccess) {
-      return res.status(404).json({ message: "Meta integration not found for tenant" });
+      return res.status(404).json({
+        message: "Meta integration not found or token expired for tenant",
+      });
     }
 
     res.json({
       tenantId,
       accessToken: metaAccess.accessToken,
-      appSecretProof: metaAccess.appSecretProof ?? null,
+      appSecretProof: metaAccess.appSecretProof,
+      expiresAt: metaAccess.expiresAt,
     });
   } catch (err) {
     console.error("Internal Meta token error:", err);
