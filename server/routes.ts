@@ -24,6 +24,7 @@ import { metaRouter, internalMetaRouter } from "./modules/meta/routes";
 import { oauthRouter } from "./modules/oauth/routes";
 import { realtimeRouter } from "./modules/realtime/routes";
 import { driveRouter } from "./modules/drive/routes";
+import { existingCampaignRouter } from "./modules/existing-campaign/routes";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -170,6 +171,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/admin", adminRouter);
   app.use("/api/events", realtimeRouter);
   app.use("/api", driveRouter);
+  app.use("/api", existingCampaignRouter);
   app.use("/api", metaRouter);
   app.use("/internal", internalMetaRouter);
   app.use("/auth", oauthRouter);
@@ -178,7 +180,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   return httpServer;
 }
-
 
 
 

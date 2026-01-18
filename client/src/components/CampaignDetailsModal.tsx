@@ -1,13 +1,12 @@
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { Campaign, Resource, Audience } from "@shared/schema";
-import { Calendar, Target, DollarSign, Send, CheckCircle, XCircle, Clock, FileText, RotateCcw } from "lucide-react";
+import { Send } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useEffect, useState } from "react";
+import { objectiveLabels } from "@/features/campaigns/constants";
 
 type CooldownPayload = {
   cooldown_seconds?: number;
@@ -135,52 +134,44 @@ export function CampaignDetailsModal({
     },
   });
 
-  if (!campaign) return null;
-
   const getResourceName = (id: number | null) => {
-    if (!id) return "Não definido";
+    if (!id) return "-";
     const resource = resources.find((r) => r.id === id);
-    return resource ? resource.name : "Não encontrado";
+    return resource ? resource.name : "Nao encontrado";
+  };
+  const getResourceValue = (id: number | null) => {
+    if (!id) return "-";
+    const resource = resources.find((r) => r.id === id);
+    return resource ? resource.value : "Nao encontrado";
   };
 
-  const getStatusBadge = () => {
-    switch (campaign.status) {
-      case "draft":
-        return (
-          <Badge variant="secondary" className="flex items-center gap-1" data-testid="badge-status-draft">
-            <FileText className="h-3 w-3" />
-            Rascunho
-          </Badge>
-        );
-      case "pending":
-        return (
-          <Badge variant="secondary" className="flex items-center gap-1 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400" data-testid="badge-status-pending">
-            <Clock className="h-3 w-3 animate-spin" />
-            Processando
-          </Badge>
-        );
-      case "active":
-        return (
-          <Badge variant="secondary" className="flex items-center gap-1 bg-green-500/10 text-green-700 dark:text-green-400" data-testid="badge-status-active">
-            <CheckCircle className="h-3 w-3" />
-            Ativa
-          </Badge>
-        );
-      case "error":
-        return (
-          <Badge variant="destructive" className="flex items-center gap-1" data-testid="badge-status-error">
-            <XCircle className="h-3 w-3" />
-            Erro
-          </Badge>
-        );
-      default:
-        return <Badge variant="outline" data-testid="badge-status-default">{campaign.status}</Badge>;
-    }
-  };
-
-  const adSets = campaign.adSets as any[] | null;
-  const creatives = campaign.creatives as any[] | null;
-  const showReprocessButton = campaign.status !== "draft" || !showSendButton;
+  if (!campaign) return null;
+  const creatives = campaign?.creatives as any[] | null;
+  const rawObjectives = Array.isArray((campaign as any).objectives)
+    ? (campaign as any).objectives
+    : [];
+  const objectivesText =
+    rawObjectives.length > 0
+      ? rawObjectives
+          .map((objective: unknown) => {
+            const key = String(objective ?? "").toUpperCase();
+            return objectiveLabels[key] ?? String(objective ?? "-");
+          })
+          .join(", ")
+      : objectiveLabels[campaign.objective] ?? campaign.objective ?? "-";
+  const primaryCreative = Array.isArray(creatives) ? creatives[0] : null;
+  const copyTitle =
+    typeof campaign.title === "string" && campaign.title.trim().length > 0
+      ? campaign.title
+      : typeof primaryCreative?.title === "string" && primaryCreative.title.trim().length > 0
+        ? primaryCreative.title
+        : "-";
+  const copyText =
+    typeof campaign.message === "string" && campaign.message.trim().length > 0
+      ? campaign.message
+      : typeof primaryCreative?.text === "string" && primaryCreative.text.trim().length > 0
+        ? primaryCreative.text
+        : "-";
   const cooldownSeconds = Math.ceil(cooldownRemaining / 1000);
   const isCooldownActive = cooldownSeconds > 0;
 
@@ -188,193 +179,69 @@ export function CampaignDetailsModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto" data-testid="modal-campaign-details">
         <DialogHeader>
-          <div className="flex items-center justify-between">
-            <DialogTitle className="text-2xl" data-testid="text-campaign-name">{campaign.name}</DialogTitle>
-            {getStatusBadge()}
-          </div>
-          <DialogDescription>
-            Detalhes da campanha e configurações
-          </DialogDescription>
+          <DialogTitle className="text-2xl" data-testid="text-campaign-name">
+            #{campaign.id}
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-6">
-          {/* Configuração da Campanha */}
           <div>
-            <h3 className="font-semibold mb-3 flex items-center gap-2">
-              <Target className="h-4 w-4" />
-              Configuração da Campanha
-            </h3>
+            <h3 className="font-semibold mb-3">Configuracao da Campanha</h3>
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
                 <span className="text-muted-foreground">Conta Meta Ads:</span>
                 <p className="font-medium" data-testid="text-account">{getResourceName(campaign.accountId)}</p>
               </div>
               <div>
-                <span className="text-muted-foreground">Objetivo:</span>
-                <p className="font-medium" data-testid="text-objective">{campaign.objective}</p>
+                <span className="text-muted-foreground">
+                  Objetivos (todos selecionados no formulario):
+                </span>
+                <p className="font-medium" data-testid="text-objective">{objectivesText}</p>
               </div>
               <div>
-                <span className="text-muted-foreground">Página:</span>
+                <span className="text-muted-foreground">Pagina:</span>
                 <p className="font-medium" data-testid="text-page">{getResourceName(campaign.pageId)}</p>
               </div>
               <div>
                 <span className="text-muted-foreground">Instagram:</span>
                 <p className="font-medium" data-testid="text-instagram">{getResourceName(campaign.instagramId)}</p>
               </div>
-              {campaign.whatsappId && (
-                <div>
-                  <span className="text-muted-foreground">WhatsApp:</span>
-                  <p className="font-medium" data-testid="text-whatsapp">{getResourceName(campaign.whatsappId)}</p>
-                </div>
-              )}
-              {campaign.leadformId && (
-                <div>
-                  <span className="text-muted-foreground">Formulário de Leads:</span>
-                  <p className="font-medium" data-testid="text-leadform">{getResourceName(campaign.leadformId)}</p>
-                </div>
-              )}
+              <div>
+                <span className="text-muted-foreground">WhatsApp:</span>
+                <p className="font-medium" data-testid="text-whatsapp">{getResourceValue(campaign.whatsappId)}</p>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Formulario de Leads:</span>
+                <p className="font-medium" data-testid="text-leadform">{getResourceName(campaign.leadformId)}</p>
+              </div>
             </div>
           </div>
 
-          <Separator />
-
-          {/* Conjuntos de Anúncios */}
-          {adSets && adSets.length > 0 && (
-            <>
+          <div>
+            <h3 className="font-semibold mb-3">Copy anuncios</h3>
+            <div className="space-y-3 text-sm">
               <div>
-                <h3 className="font-semibold mb-3 flex items-center gap-2">
-                  <DollarSign className="h-4 w-4" />
-                  Conjuntos de Anúncios
-                </h3>
-                <div className="space-y-4">
-                  {adSets.map((adSet, index) => {
-                    const audience = audiences.find((a) => a.id === adSet.audienceId);
-                    return (
-                      <div key={index} className="border rounded-lg p-4" data-testid={`adset-${index}`}>
-                        <h4 className="font-medium mb-2">Conjunto {index + 1}</h4>
-                        <div className="grid grid-cols-2 gap-3 text-sm">
-                          <div>
-                            <span className="text-muted-foreground">Público:</span>
-                            <p className="font-medium">{audience?.name || "Não definido"}</p>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Orçamento:</span>
-                            <p className="font-medium">R$ {adSet.budget}</p>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Data Início:</span>
-                            <p className="font-medium">{adSet.startDate || "Não definida"}</p>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Data Fim:</span>
-                            <p className="font-medium">{adSet.endDate || "Não definida"}</p>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                <span className="text-muted-foreground">Titulo:</span>
+                <p className="font-medium">{copyTitle}</p>
               </div>
-              <Separator />
-            </>
-          )}
-
-          {/* Criativos */}
-          {creatives && creatives.length > 0 && (
-            <>
               <div>
-                <h3 className="font-semibold mb-3 flex items-center gap-2">
-                  <FileText className="h-4 w-4" />
-                  Criativos
-                </h3>
-                <div className="space-y-4">
-                  {creatives.map((creative, index) => (
-                    <div key={index} className="border rounded-lg p-4" data-testid={`creative-${index}`}>
-                      <h4 className="font-medium mb-2">Criativo {index + 1}</h4>
-                      <div className="space-y-2 text-sm">
-                        <div>
-                          <span className="text-muted-foreground">Título:</span>
-                          <p className="font-medium">{creative.title || "Não definido"}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Texto:</span>
-                          <p className="font-medium">{creative.text || "Não definido"}</p>
-                        </div>
-                        <div>
-                          <span className="text-muted-foreground">Pasta Google Drive:</span>
-                          <p className="font-medium">{creative.driveFolderId || "Não definida"}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <span className="text-muted-foreground">Texto:</span>
+                <p className="font-medium whitespace-pre-wrap">{copyText}</p>
               </div>
-              <Separator />
-            </>
-          )}
-
-          {/* Status Detail */}
-          {campaign.statusDetail && (
-            <div>
-              <h3 className="font-semibold mb-2">Detalhes do Status</h3>
-              <p className="text-sm text-muted-foreground" data-testid="text-status-detail">{campaign.statusDetail}</p>
             </div>
-          )}
-
-          {/* Legacy Data */}
-          {(campaign.budget || campaign.title || campaign.message) && (
-            <>
-              <Separator />
-              <div>
-                <h3 className="font-semibold mb-3 text-muted-foreground">Informações Adicionais</h3>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  {campaign.budget && (
-                    <div>
-                      <span className="text-muted-foreground">Orçamento:</span>
-                      <p className="font-medium">R$ {campaign.budget}</p>
-                    </div>
-                  )}
-                  {campaign.title && (
-                    <div className="col-span-2">
-                      <span className="text-muted-foreground">Título:</span>
-                      <p className="font-medium">{campaign.title}</p>
-                    </div>
-                  )}
-                  {campaign.message && (
-                    <div className="col-span-2">
-                      <span className="text-muted-foreground">Mensagem:</span>
-                      <p className="font-medium">{campaign.message}</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </>
-          )}
+          </div>
         </div>
 
-        {(showSendButton && campaign.status === "draft") || showReprocessButton ? (
+        {showSendButton && campaign.status === "draft" ? (
           <DialogFooter>
-            {showReprocessButton && (
-              <Button
-                variant="outline"
-                onClick={() => sendMutation.mutate(campaign.id)}
-                disabled={sendMutation.isPending || isCooldownActive}
-                data-testid="button-reprocess-campaign"
-              >
-                <RotateCcw className="h-4 w-4 mr-2" />
-                {sendMutation.isPending ? "Reprocessando..." : "Reprocessar"}
-              </Button>
-            )}
-            {showSendButton && campaign.status === "draft" && (
-              <Button
-                onClick={() => sendMutation.mutate(campaign.id)}
-                disabled={sendMutation.isPending || isCooldownActive}
-                data-testid="button-send-automation"
-              >
-                <Send className="h-4 w-4 mr-2" />
-                {sendMutation.isPending ? "Enviando..." : "Enviar Automação"}
-              </Button>
-            )}
+            <Button
+              onClick={() => sendMutation.mutate(campaign.id)}
+              disabled={sendMutation.isPending || isCooldownActive}
+              data-testid="button-send-automation"
+            >
+              <Send className="h-4 w-4 mr-2" />
+              {sendMutation.isPending ? "Enviando..." : "Enviar Automacao"}
+            </Button>
             {isCooldownActive && (
               <p className="text-xs text-muted-foreground">
                 Aguarde {formatCountdown(cooldownSeconds)} para reenviar para esta conta.
@@ -386,3 +253,8 @@ export function CampaignDetailsModal({
     </Dialog>
   );
 }
+
+
+
+
+

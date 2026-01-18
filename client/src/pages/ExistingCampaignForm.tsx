@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -59,6 +59,134 @@ function extractPageInstagram(resource?: Resource | null): {
   return { instagramResourceId, handle };
 }
 
+type PreviewSet = {
+  name: string;
+  ads: string[];
+};
+
+type PreviewCampaign = {
+  name: string;
+  sets: PreviewSet[];
+  adCount: number;
+  setCount: number;
+};
+
+type PreviewParsed = {
+  campaigns: PreviewCampaign[];
+  extraLines: string[];
+};
+
+const CAMPAIGN_PREVIEW_COLLAPSE_THRESHOLD = 5;
+
+function parsePreviewText(previewText: string): PreviewParsed {
+  const lines = previewText.split(/\r?\n/);
+  const campaigns: PreviewCampaign[] = [];
+  const extraLines: string[] = [];
+
+  let currentCampaign: PreviewCampaign | null = null;
+  let currentSet: PreviewSet | null = null;
+
+  const flushSet = () => {
+    if (currentCampaign && currentSet) {
+      currentCampaign.sets.push(currentSet);
+    }
+    currentSet = null;
+  };
+
+  const flushCampaign = () => {
+    if (currentCampaign) {
+      currentCampaign.setCount = currentCampaign.sets.length;
+      currentCampaign.adCount = currentCampaign.sets.reduce(
+        (total, set) => total + set.ads.length,
+        0,
+      );
+      campaigns.push(currentCampaign);
+    }
+    currentCampaign = null;
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    if (line.startsWith("Campanha:")) {
+      flushSet();
+      flushCampaign();
+      currentCampaign = {
+        name: line.replace(/^Campanha:\s*/i, "") || "Campanha",
+        sets: [],
+        adCount: 0,
+        setCount: 0,
+      };
+      continue;
+    }
+
+    if (line.startsWith("Conjunto:")) {
+      flushSet();
+      if (!currentCampaign) {
+        extraLines.push(line);
+        continue;
+      }
+      currentSet = {
+        name: line.replace(/^Conjunto:\s*/i, "") || "Conjunto",
+        ads: [],
+      };
+      continue;
+    }
+
+    if (line.startsWith("Anuncio:")) {
+      if (!currentSet) {
+        extraLines.push(line);
+        continue;
+      }
+      const adLabel = line.replace(/^Anuncio:\s*/i, "");
+      currentSet.ads.push(adLabel || "Anuncio");
+      continue;
+    }
+
+    if (line.startsWith("+")) {
+      if (currentSet) {
+        currentSet.ads.push(line);
+      } else {
+        extraLines.push(line);
+      }
+      continue;
+    }
+
+    extraLines.push(line);
+  }
+
+  flushSet();
+  flushCampaign();
+
+  return { campaigns, extraLines };
+}
+
+type PreflightIssue = {
+  code: string;
+  message?: string;
+  count?: number;
+  examples?: string[];
+};
+
+type PreflightResponse = {
+  run_id: string;
+  status: "OK" | "WARN" | "ERROR";
+  can_continue: boolean;
+  preview_text?: string;
+  warnings?: PreflightIssue[];
+  errors?: PreflightIssue[];
+  summary?: Record<string, unknown>;
+};
+
+const COOLDOWN_STORAGE_KEY = "campaignsCooldowns";
+
+type CooldownCheckResponse = {
+  active?: boolean;
+  remaining_seconds?: number;
+  cooldown_until?: string;
+};
+
 export default function ExistingCampaignForm() {
   const [selectedObjectives, setSelectedObjectives] = useState<string[]>([]);
   const [accountId, setAccountId] = useState<string>("");
@@ -68,8 +196,24 @@ export default function ExistingCampaignForm() {
   const [leadFormId, setLeadFormId] = useState<string>("");
   const [websiteUrl, setWebsiteUrl] = useState<string>("");
   const [driveFolderId, setDriveFolderId] = useState<string>("");
+  const [driveFolderName, setDriveFolderName] = useState<string>("");
   const [title, setTitle] = useState<string>("");
   const [message, setMessage] = useState<string>("");
+  const [cooldowns, setCooldowns] = useState<Record<string, number>>({});
+  const [cooldownNow, setCooldownNow] = useState(Date.now());
+  const [serverCooldownUntil, setServerCooldownUntil] = useState<number | null>(null);
+  const [sendLocked, setSendLocked] = useState(false);
+  const sendLockRef = useRef(false);
+  const [preflightOpen, setPreflightOpen] = useState(false);
+  const [preflightResult, setPreflightResult] = useState<PreflightResponse | null>(null);
+  const [pendingPayload, setPendingPayload] = useState<Record<string, unknown> | null>(null);
+  const [pendingCampaignPayload, setPendingCampaignPayload] = useState<Record<string, unknown> | null>(
+    null,
+  );
+  const [pendingCampaignId, setPendingCampaignId] = useState<number | null>(null);
+  const [expandedCampaigns, setExpandedCampaigns] = useState<Record<string, boolean>>({});
+  const [confirmAccount, setConfirmAccount] = useState(false);
+  const [confirmPage, setConfirmPage] = useState(false);
   const [isWhatsappDialogOpen, setIsWhatsappDialogOpen] = useState(false);
   const [newWhatsappName, setNewWhatsappName] = useState("");
   const [newWhatsappValue, setNewWhatsappValue] = useState("");
@@ -81,6 +225,34 @@ export default function ExistingCampaignForm() {
   
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const loadCooldowns = useCallback(() => {
+    const stored = window.localStorage.getItem(COOLDOWN_STORAGE_KEY);
+    if (!stored) {
+      setCooldowns({});
+      return;
+    }
+    try {
+      const parsed = JSON.parse(stored) as Record<string, number>;
+      const now = Date.now();
+      const normalized: Record<string, number> = {};
+      Object.entries(parsed).forEach(([key, value]) => {
+        if (typeof value !== "number" || value <= now) {
+          return;
+        }
+        const normalizedKey = key.replace(/\D+/g, "").trim();
+        if (!normalizedKey) {
+          return;
+        }
+        normalized[normalizedKey] = Math.max(normalized[normalizedKey] ?? 0, value);
+      });
+      setCooldowns(normalized);
+      if (Object.keys(normalized).length === 0) {
+        window.localStorage.removeItem(COOLDOWN_STORAGE_KEY);
+      }
+    } catch {
+      setCooldowns({});
+    }
+  }, []);
   const openDriveFolderManager = () => {
     window.open("/resources?type=drive_folder&new=1", "_blank", "noopener");
   };
@@ -155,12 +327,44 @@ export default function ExistingCampaignForm() {
     },
     [],
   );
+  const ensureDriveFolderResource = useCallback(
+    async (folder: { name: string; value: string }) => {
+      const value = folder?.value?.trim();
+      if (!value) {
+        return;
+      }
+      const alreadyExists = driveFolders.some((item) => item.value === value);
+      if (alreadyExists) {
+        return;
+      }
+      try {
+        await apiRequest("POST", "/api/resources", {
+          type: "drive_folder",
+          name: folder.name?.trim() || value,
+          value,
+          metadata: { source: "drive_search" },
+        });
+        await queryClient.invalidateQueries({ queryKey: ["/api/resources"] });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Nao foi possivel salvar a pasta.";
+        toast({
+          title: "Falha ao salvar pasta do Drive",
+          description: message,
+          variant: "destructive",
+        });
+      }
+    },
+    [driveFolders, toast],
+  );
   const accountOptions = adAccounts.map((account) => ({
     id: account.id,
     name: account.name,
     value: String(account.id),
     searchText: `${account.name} ${account.value}`.trim(),
   }));
+  const selectedAccountResource =
+    adAccounts.find((account) => String(account.id) === accountId) ?? null;
   const pageOptions = pages.map((page) => {
     const handle = extractPageInstagram(page).handle;
     const label = handle ? `${page.name} (${handle})` : page.name;
@@ -173,6 +377,22 @@ export default function ExistingCampaignForm() {
   });
   const selectedPageResource = pages.find((page) => String(page.id) === pageId);
   const selectedPageValue = selectedPageResource?.value ?? "";
+  const selectedInstagramResource =
+    resources.find(
+      (resource) => resource.type === "instagram" && String(resource.id) === instagramId,
+    ) ?? null;
+  const selectedWhatsappResource =
+    resources.find(
+      (resource) => resource.type === "whatsapp" && String(resource.id) === whatsappId,
+    ) ?? null;
+  const selectedLeadformResource =
+    resources.find(
+      (resource) => resource.type === "leadform" && String(resource.id) === leadFormId,
+    ) ?? null;
+  const selectedDriveFolderResource =
+    driveFolders.find((folder) => folder.value === driveFolderId) ?? null;
+  const driveFolderDisplayName =
+    selectedDriveFolderResource?.name || driveFolderName || "";
   const pageInstagram = extractPageInstagram(selectedPageResource);
   const filteredWhatsappNumbers = selectedPageValue
     ? whatsappNumbers.filter((whatsapp) => {
@@ -221,6 +441,56 @@ export default function ExistingCampaignForm() {
     setLeadFormId("");
     setWhatsappId("");
   }, [pageInstagram.instagramResourceId, selectedPageValue]);
+  useEffect(() => {
+    setExpandedCampaigns({});
+    setConfirmAccount(false);
+    setConfirmPage(false);
+  }, [preflightResult?.run_id]);
+  useEffect(() => {
+    loadCooldowns();
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === COOLDOWN_STORAGE_KEY) {
+        loadCooldowns();
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [loadCooldowns]);
+  useEffect(() => {
+    const hasActiveCooldown = Object.values(cooldowns).some(
+      (timestamp) => timestamp > cooldownNow,
+    );
+    if (!hasActiveCooldown) {
+      return;
+    }
+    const intervalId = window.setInterval(() => setCooldownNow(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [cooldowns, cooldownNow]);
+  useEffect(() => {
+    const now = Date.now();
+    const cleaned = Object.fromEntries(
+      Object.entries(cooldowns).filter(
+        ([, value]) => typeof value === "number" && value > now,
+      ),
+    );
+    if (Object.keys(cleaned).length > 0) {
+      window.localStorage.setItem(
+        COOLDOWN_STORAGE_KEY,
+        JSON.stringify(cleaned),
+      );
+    } else {
+      window.localStorage.removeItem(COOLDOWN_STORAGE_KEY);
+    }
+  }, [cooldowns]);
+  useEffect(() => {
+    if (!driveFolderId) {
+      setDriveFolderName("");
+      return;
+    }
+    if (selectedDriveFolderResource?.name) {
+      setDriveFolderName(selectedDriveFolderResource.name);
+    }
+  }, [driveFolderId, selectedDriveFolderResource?.name]);
 
   const {
     data: leadForms = [],
@@ -287,31 +557,262 @@ export default function ExistingCampaignForm() {
     return Array.from(byId.values());
   })();
 
+  const handleDriveFolderSelect = useCallback(
+    (folder: { name: string; value: string }) => {
+      setDriveFolderName(folder?.name ?? "");
+      ensureDriveFolderResource(folder);
+    },
+    [ensureDriveFolderResource],
+  );
 
-  const createDraftMutation = useMutation({
-    mutationFn: async (payload: any) => {
-      return await apiRequest("POST", "/api/campaigns", payload);
+
+  const preflightMutation = useMutation({
+    mutationFn: async (payload: Record<string, unknown>) => {
+      const response = await apiRequest(
+        "POST",
+        "/api/existing-campaign/preflight",
+        payload,
+      );
+      return (await response.json()) as PreflightResponse;
+    },
+    onSuccess: (data, variables) => {
+      setPreflightResult(data);
+      setPendingPayload(variables);
+      setPreflightOpen(true);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Erro ao validar",
+        description: error.message || "Nao foi possivel validar a campanha",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const sendToN8nMutation = useMutation({
+    mutationFn: async () => {
+      if (!pendingCampaignPayload || !pendingPayload) {
+        throw new Error("Dados da campanha nao encontrados.");
+      }
+      let campaignId = pendingCampaignId;
+      if (!campaignId) {
+        const createResponse = await apiRequest(
+          "POST",
+          "/api/campaigns",
+          pendingCampaignPayload,
+        );
+        const createdCampaign = (await createResponse.json()) as { id: number };
+        campaignId = createdCampaign.id;
+        setPendingCampaignId(campaignId);
+      }
+      const webhookPayload = {
+        ...pendingPayload,
+        external_id: String(campaignId),
+      };
+      await apiRequest("POST", "/api/webhooks/n8n", webhookPayload);
+      await apiRequest("PATCH", `/api/campaigns/${campaignId}`, {
+        status: "pending",
+        statusDetail: "Aguardando processamento do n8n",
+      });
+      return { id: campaignId };
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/campaigns"] });
       toast({
-        title: "Rascunho criado!",
-        description: "A campanha foi salva como rascunho com sucesso.",
+        title: "Enviado!",
+        description: "Campanha enviada para automacao com sucesso.",
       });
-      // Small delay to allow toast to appear before navigation
+      setPreflightOpen(false);
+      setPreflightResult(null);
+      setPendingPayload(null);
+      setPendingCampaignPayload(null);
+      setPendingCampaignId(null);
+      await queryClient.invalidateQueries({ queryKey: ["/api/campaigns"] });
       setTimeout(() => {
         setLocation("/campaigns");
       }, 100);
     },
     onError: (error: any) => {
       toast({
-        title: "Erro ao criar rascunho",
-        description: error.message || "Não foi possível criar o rascunho",
+        title: "Erro ao enviar",
+        description: error.message || "Nao foi possivel enviar para automacao.",
         variant: "destructive",
       });
     },
   });
+  const handleSendToN8n = () => {
+    if (sendLockRef.current || !pendingCampaignPayload) {
+      return;
+    }
+    sendLockRef.current = true;
+    setSendLocked(true);
+    sendToN8nMutation.mutate(undefined, {
+      onSettled: () => {
+        sendLockRef.current = false;
+        setSendLocked(false);
+      },
+    });
+  };
+  const preflightErrors = preflightResult?.errors ?? [];
+  const preflightWarnings = preflightResult?.warnings ?? [];
+  const previewText = preflightResult?.preview_text ?? "";
+  const statusBadgeMap: Record<
+    string,
+    { label: string; icon?: string; className: string }
+  > = {
+    OK: {
+      label: "OK",
+      icon: "✅",
+      className: "border-emerald-200 bg-emerald-100 text-emerald-800",
+    },
+    WARN: {
+      label: "WARN",
+      icon: "⚠️",
+      className: "border-amber-200 bg-amber-100 text-amber-800",
+    },
+    ERROR: {
+      label: "ERROR",
+      icon: "⛔",
+      className: "border-red-200 bg-red-100 text-red-800",
+    },
+    LOADING: {
+      label: "Validando",
+      className: "border-muted bg-muted text-foreground",
+    },
+  };
+  const statusKey = preflightResult?.status ?? "LOADING";
+  const statusBadge = statusBadgeMap[statusKey] ?? statusBadgeMap.LOADING;
+  const objectiveLabelMap = useMemo(() => {
+    const map = new Map<string, string>();
+    objectives.forEach((objective) => {
+      map.set(objective.value, objective.label);
+    });
+    return map;
+  }, [objectives]);
+  const objectiveSummary =
+    selectedObjectives.length > 0
+      ? selectedObjectives
+          .map((value) => objectiveLabelMap.get(value) ?? value)
+          .join(", ")
+      : "-";
+  const formatResourceSummary = (resource?: Resource | null, fallback?: string) => {
+    if (resource) {
+      return `${resource.name} (${resource.value})`;
+    }
+    return fallback ?? "-";
+  };
+  const issueMessages: Record<string, string> = {
+    DRIVE_NO_ACCESS: "Sem permissao na pasta do Drive.",
+    DRIVE_EMPTY: "Pasta do Drive sem arquivos.",
+    NO_COMPLETE_PAIRS: "Nenhum par FEED+STORIES completo encontrado.",
+    INVALID_FILE_NAMING:
+      "Arquivos com nome fora do padrao (ID_VERSAO_PRODUTO_POSICIONAMENTO).",
+    FILE_EXT_UNSUPPORTED: "Arquivos com extensao nao suportada.",
+    DUPLICATE_POSITIONING: "Posicionamento duplicado no mesmo par.",
+    DRIVE_ORPHAN_FILES: "Arquivos sem par FEED+STORIES completo.",
+    NO_CAMPAIGN_MATCH:
+      "Nenhuma campanha no ad_account_id contem os tokens dos pares.",
+    ADSET_END_DATE_EXPIRED: "Conjuntos com data de fim de veiculacao vencida.",
+    PAGE_INSTAGRAM_MISMATCH: "Instagram nao vinculado a pagina informada.",
+    PAGE_LEADFORM_MISMATCH: "Formulario nao vinculado a pagina informada.",
+    META_FETCH_FAILED:
+      "Falha ao consultar campanhas na Meta. Validacao de campanha incompleta.",
+  };
+  const formatIssue = (issue: PreflightIssue) => {
+    const message = issueMessages[issue.code] ?? issue.message ?? issue.code;
+    const countSuffix = typeof issue.count === "number" ? ` (${issue.count})` : "";
+    return `${message}${countSuffix}`;
+  };
+  const normalizeAdAccountId = useCallback(
+    (value: string) => value.replace(/\D+/g, "").trim(),
+    [],
+  );
+  const formatCooldown = (remainingMs: number) => {
+    const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  };
+  const accountCooldownKey = useMemo(() => {
+    if (!selectedAccountResource) {
+      return "";
+    }
+    return normalizeAdAccountId(selectedAccountResource.value ?? "");
+  }, [selectedAccountResource, normalizeAdAccountId]);
+  const accountCooldownUntil = (() => {
+    const now = cooldownNow;
+    const localUntil = accountCooldownKey ? cooldowns[accountCooldownKey] : null;
+    const localValid =
+      typeof localUntil === "number" && localUntil > now ? localUntil : null;
+    const serverValid =
+      typeof serverCooldownUntil === "number" && serverCooldownUntil > now
+        ? serverCooldownUntil
+        : null;
+    if (localValid && serverValid) {
+      return Math.max(localValid, serverValid);
+    }
+    return localValid ?? serverValid ?? null;
+  })();
+  const accountCooldownRemainingMs = accountCooldownUntil
+    ? Math.max(0, accountCooldownUntil - cooldownNow)
+    : 0;
+  useEffect(() => {
+    if (!selectedAccountResource) {
+      setServerCooldownUntil(null);
+      return;
+    }
+    const adAccountId = normalizeAdAccountId(selectedAccountResource.value ?? "");
+    if (!adAccountId) {
+      setServerCooldownUntil(null);
+      return;
+    }
 
+    let isActive = true;
+
+    const fetchCooldown = async () => {
+      try {
+        const response = await apiRequest(
+          "GET",
+          `/api/campaigns/cooldown?ad_account_id=${encodeURIComponent(adAccountId)}`,
+        );
+        const data = (await response.json()) as CooldownCheckResponse;
+        if (!isActive) {
+          return;
+        }
+
+        if (data?.active) {
+          let untilMs: number | null = null;
+          if (typeof data.remaining_seconds === "number" && data.remaining_seconds > 0) {
+            untilMs = Date.now() + data.remaining_seconds * 1000;
+          } else if (data.cooldown_until) {
+            const parsed = Date.parse(data.cooldown_until);
+            if (Number.isFinite(parsed)) {
+              untilMs = parsed;
+            }
+          }
+          setServerCooldownUntil(untilMs);
+          if (untilMs) {
+            setCooldowns((prev) => ({ ...prev, [adAccountId]: untilMs! }));
+          }
+        } else {
+          setServerCooldownUntil(null);
+        }
+      } catch {
+        if (!isActive) {
+          return;
+        }
+        setServerCooldownUntil(null);
+      }
+    };
+
+    fetchCooldown();
+
+    return () => {
+      isActive = false;
+    };
+  }, [selectedAccountResource, normalizeAdAccountId]);
+  const parsedPreview = useMemo(() => parsePreviewText(previewText), [previewText]);
+  const shouldCollapsePreview =
+    parsedPreview.campaigns.length > CAMPAIGN_PREVIEW_COLLAPSE_THRESHOLD;
   const createWhatsappMutation = useMutation({
     mutationFn: async (payload: {
       type: "whatsapp";
@@ -513,32 +1014,112 @@ export default function ExistingCampaignForm() {
     const normalizedTitle = title.trim();
     const normalizedMessage = message.trim();
 
-    // Create campaign as draft matching InsertCampaignSchema
-    // Use the title as campaign name for better visibility
-    const payload = {
-      name: normalizedTitle, // Use creative title as campaign name
-      objective: selectedObjectives[0], // Use first objective as primary
-      status: "draft",
+    const accountResource = adAccounts.find((account) => String(account.id) === accountId);
+    if (!accountResource?.value) {
+      toast({
+        title: "Conta invalida",
+        description: "Conta de anuncios nao encontrada.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const pageResource = pages.find((page) => String(page.id) === pageId);
+    if (!pageResource?.value) {
+      toast({
+        title: "Pagina invalida",
+        description: "Pagina selecionada nao encontrada.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const instagramResource = resources.find(
+      (resource) => resource.type === "instagram" && String(resource.id) === instagramId,
+    );
+    if (!instagramResource?.value) {
+      toast({
+        title: "Instagram invalido",
+        description: "Instagram selecionado nao encontrado.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const whatsappResource = resources.find(
+      (resource) => resource.type === "whatsapp" && String(resource.id) === whatsappId,
+    );
+    if (needsWhatsApp && !whatsappResource?.value) {
+      toast({
+        title: "WhatsApp invalido",
+        description: "Numero WhatsApp selecionado nao encontrado.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const leadformResource = resources.find(
+      (resource) => resource.type === "leadform" && String(resource.id) === leadFormId,
+    );
+    if (needsLeadForm && !leadformResource?.value) {
+      toast({
+        title: "Formulario invalido",
+        description: "Formulario selecionado nao encontrado.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+      const payload: Record<string, unknown> = {
+        ad_account_id: normalizeAdAccountId(accountResource.value),
+        campaign_name: normalizedTitle,
+        objective: selectedObjectives[0],
+        objectives: selectedObjectives,
+        page_id: pageResource.value,
+      page_name: pageResource.name,
+      instagram_user_id: instagramResource.value,
+      instagram_name: instagramResource.name,
+      whatsapp_number_id: whatsappResource?.value ?? "",
+      whatsapp_name: whatsappResource?.name ?? "",
+      lead_form_id: leadformResource?.value ?? "",
+      lead_form_name: leadformResource?.name ?? "",
+      leadgen_form_id: leadformResource?.value ?? "",
+      leadgen_form_name: leadformResource?.name ?? "",
+      drive_folder_id: driveFolderId,
+      title_text: normalizedTitle,
+      message_text: normalizedMessage,
+      website_url: websiteUrl || "",
+    };
+
+    const campaignPayload: Record<string, unknown> = {
+      name: normalizedTitle,
+      objective: selectedObjectives[0],
       accountId: accountId ? Number(accountId) : undefined,
       pageId: pageId ? Number(pageId) : undefined,
       instagramId: instagramId ? Number(instagramId) : undefined,
       whatsappId: whatsappId ? Number(whatsappId) : undefined,
-      leadformId: leadFormId ? Number(leadFormId) : undefined,
-      websiteUrl: websiteUrl || undefined,
-      driveFolderId: driveFolderId || undefined,
-      title: normalizedTitle || undefined,
-      message: normalizedMessage || undefined,
-      adSets: [], // Empty for existing campaign form
-      creatives: [
-        {
-          title: normalizedTitle,
-          text: normalizedMessage,
-          driveFolderId: driveFolderId,
-        },
-      ],
+      leadformId:
+        needsLeadForm && leadformResource ? Number(leadformResource.id) : undefined,
+        websiteUrl: websiteUrl || undefined,
+        driveFolderId: driveFolderId || undefined,
+        title: normalizedTitle || undefined,
+        message: normalizedMessage || undefined,
+        adSets: [],
+        creatives: [
+          {
+            title: normalizedTitle,
+            text: normalizedMessage,
+            driveFolderId: driveFolderId,
+            driveFolderName: driveFolderDisplayName || undefined,
+          },
+        ],
     };
 
-    createDraftMutation.mutate(payload);
+    setPreflightResult(null);
+    setPendingPayload(payload);
+    setPendingCampaignPayload(campaignPayload);
+    setPendingCampaignId(null);
+    preflightMutation.mutate(payload);
   };
 
   if (loadingResources) {
@@ -588,18 +1169,23 @@ export default function ExistingCampaignForm() {
             <CardTitle>Recursos</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="account">Conta Meta Ads *</Label>
-              <DriveFolderCombobox
-                folders={accountOptions}
-                value={accountId}
-                onChange={setAccountId}
-                placeholder="Buscar conta por nome"
-                emptyLabel="Nenhuma conta disponivel"
-                maxResults={50}
-                testId="select-account"
-              />
-            </div>
+              <div className="space-y-2">
+                <Label htmlFor="account">Conta Meta Ads *</Label>
+                <DriveFolderCombobox
+                  folders={accountOptions}
+                  value={accountId}
+                  onChange={setAccountId}
+                  placeholder="Buscar conta por nome"
+                  emptyLabel="Nenhuma conta disponivel"
+                  maxResults={50}
+                  testId="select-account"
+                />
+                {accountCooldownRemainingMs > 0 && (
+                  <p className="text-sm text-amber-600">
+                    Conta em cooldown. Aguarde {formatCooldown(accountCooldownRemainingMs)} para reenviar.
+                  </p>
+                )}
+              </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -813,13 +1399,14 @@ export default function ExistingCampaignForm() {
                   Nova pasta
                 </Button>
               </div>
-              <DriveFolderCombobox
-                folders={driveFolders}
-                value={driveFolderId}
-                onChange={setDriveFolderId}
-                placeholder="Buscar pasta por nome"
-                emptyLabel="Nenhuma pasta disponivel"
-                onSearch={searchDriveFolders}
+                <DriveFolderCombobox
+                  folders={driveFolders}
+                  value={driveFolderId}
+                  onChange={setDriveFolderId}
+                  onSelectOption={handleDriveFolderSelect}
+                  placeholder="Buscar pasta por nome"
+                  emptyLabel="Nenhuma pasta disponivel"
+                  onSearch={searchDriveFolders}
                 minSearchLength={3}
                 maxResults={10}
                 testId="select-drive-folder"
@@ -839,16 +1426,16 @@ export default function ExistingCampaignForm() {
           </Button>
           <Button
             type="submit"
-            disabled={createDraftMutation.isPending}
+            disabled={preflightMutation.isPending}
             data-testid="button-submit"
           >
-            {createDraftMutation.isPending ? (
+            {preflightMutation.isPending ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Criando...
+                Validando...
               </>
             ) : (
-              "Criar Rascunho"
+              "Validar e enviar"
             )}
           </Button>
         </div>
@@ -985,6 +1572,292 @@ export default function ExistingCampaignForm() {
               disabled={createLeadFormMutation.isPending}
             >
               {createLeadFormMutation.isPending ? "Salvando..." : "Salvar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={preflightOpen} onOpenChange={setPreflightOpen}>
+        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto p-0">
+          <DialogHeader className="sticky top-0 z-20 border-b bg-background px-6 pt-6 pb-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <DialogTitle>Validar campanha</DialogTitle>
+                <DialogDescription>
+                  Revise e aprove para iniciar a automacao.
+                </DialogDescription>
+              </div>
+              <span
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm font-semibold ${statusBadge.className}`}
+              >
+                {statusBadge.icon ? <span aria-hidden>{statusBadge.icon}</span> : null}
+                {statusBadge.label}
+              </span>
+            </div>
+          </DialogHeader>
+
+          <div className="space-y-4 px-6 pt-4 pb-6">
+            {!preflightResult ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Preparando validacao...
+              </div>
+            ) : (
+              <>
+                <div className="rounded-md border p-4">
+                  <div className="text-sm font-semibold">Dados do formulario</div>
+                  <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <span className="text-muted-foreground">Conta Meta Ads:</span>
+                      <p className="font-medium">
+                        {formatResourceSummary(selectedAccountResource, accountId || "-")}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Objetivos:</span>
+                      <p className="font-medium">{objectiveSummary}</p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Pagina:</span>
+                      <p className="font-medium">
+                        {formatResourceSummary(selectedPageResource ?? null, pageId || "-")}
+                      </p>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Instagram:</span>
+                      <p className="font-medium">
+                        {formatResourceSummary(selectedInstagramResource, instagramId || "-")}
+                      </p>
+                    </div>
+                    {needsWhatsApp && (
+                      <div>
+                        <span className="text-muted-foreground">WhatsApp:</span>
+                        <p className="font-medium">
+                          {formatResourceSummary(selectedWhatsappResource, whatsappId || "-")}
+                        </p>
+                      </div>
+                    )}
+                    {needsLeadForm && (
+                      <div>
+                        <span className="text-muted-foreground">Formulario:</span>
+                        <p className="font-medium">
+                          {formatResourceSummary(selectedLeadformResource, leadFormId || "-")}
+                        </p>
+                      </div>
+                    )}
+                    {needsWebsite && (
+                      <div>
+                        <span className="text-muted-foreground">Website:</span>
+                        <p className="font-medium">{websiteUrl || "-"}</p>
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-muted-foreground">Pasta Drive:</span>
+                      <p className="font-medium">
+                        {selectedDriveFolderResource
+                          ? formatResourceSummary(selectedDriveFolderResource, driveFolderId || "-")
+                          : driveFolderDisplayName || driveFolderId || "-"}
+                      </p>
+                    </div>
+                    <div className="col-span-2">
+                      <span className="text-muted-foreground">Titulo:</span>
+                      <p className="font-medium">{title || "-"}</p>
+                    </div>
+                    <div className="col-span-2">
+                      <span className="text-muted-foreground">Mensagem:</span>
+                      <p className="font-medium whitespace-pre-wrap">{message || "-"}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-md border p-4">
+                  <div className="text-sm font-semibold">Confirmacao obrigatoria</div>
+                  <div className="mt-3 space-y-3 text-sm">
+                    <div className="flex items-start gap-2">
+                      <Checkbox
+                        id="confirm-account"
+                        checked={confirmAccount}
+                        onCheckedChange={(value) => setConfirmAccount(Boolean(value))}
+                      />
+                      <Label htmlFor="confirm-account" className="leading-relaxed">
+                        Confirmo a conta de anuncios:{" "}
+                        <span className="font-medium">
+                          {formatResourceSummary(selectedAccountResource, accountId || "-")}
+                        </span>
+                      </Label>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Checkbox
+                        id="confirm-page"
+                        checked={confirmPage}
+                        onCheckedChange={(value) => setConfirmPage(Boolean(value))}
+                      />
+                      <Label htmlFor="confirm-page" className="leading-relaxed">
+                        Confirmo a pagina:{" "}
+                        <span className="font-medium">
+                          {formatResourceSummary(selectedPageResource ?? null, pageId || "-")}
+                        </span>
+                      </Label>
+                    </div>
+                    {(!confirmAccount || !confirmPage) && (
+                      <div className="text-xs text-muted-foreground">
+                        Marque as duas confirmacoes para liberar o envio.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {preflightErrors.length > 0 && (
+                  <div className="rounded-md border border-destructive/40 bg-destructive/5 p-4">
+                    <div className="font-semibold text-destructive">Erros</div>
+                    <ul className="mt-2 space-y-2 text-sm text-destructive">
+                      {preflightErrors.map((issue, index) => (
+                        <li key={`${issue.code}-${index}`}>
+                          <span className="font-medium">{formatIssue(issue)}</span>
+                          {issue.examples && issue.examples.length > 0 ? (
+                            <div className="text-xs text-muted-foreground">
+                              Ex: {issue.examples.join(", ")}
+                            </div>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {preflightWarnings.length > 0 && (
+                  <div className="rounded-md border border-yellow-500/40 bg-yellow-500/5 p-4">
+                    <div className="font-semibold text-yellow-700">Avisos</div>
+                    <ul className="mt-2 space-y-2 text-sm text-yellow-700">
+                      {preflightWarnings.map((issue, index) => (
+                        <li key={`${issue.code}-${index}`}>
+                          <span className="font-medium">{formatIssue(issue)}</span>
+                          {issue.examples && issue.examples.length > 0 ? (
+                            <div className="text-xs text-muted-foreground">
+                              Ex: {issue.examples.join(", ")}
+                            </div>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                  <div className="rounded-md border p-4">
+                    <div className="text-sm font-semibold">Preview</div>
+                  {previewText ? (
+                    <div className="mt-2 space-y-4">
+                      {parsedPreview.extraLines.length > 0 && (
+                        <div className="text-sm text-muted-foreground whitespace-pre-wrap">
+                          {parsedPreview.extraLines.join("\n")}
+                        </div>
+                      )}
+                      {parsedPreview.campaigns.length === 0 ? (
+                        parsedPreview.extraLines.length === 0 ? (
+                          <div className="text-sm text-muted-foreground">
+                            Nenhuma campanha encontrada.
+                          </div>
+                        ) : null
+                      ) : (
+                        <div className="space-y-6">
+                          {parsedPreview.campaigns.map((campaign, index) => {
+                            const campaignKey = `${campaign.name}-${index}`;
+                            const isExpanded =
+                              expandedCampaigns[campaignKey] ?? !shouldCollapsePreview;
+                            return (
+                              <div key={campaignKey} className="rounded-md border p-4">
+                                <div className="flex items-start justify-between gap-4">
+                                  <div>
+                                    <div className="text-sm font-semibold">
+                                      {campaign.name}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                      Conjuntos: {campaign.setCount} | Anuncios: {campaign.adCount}
+                                    </div>
+                                  </div>
+                                  {shouldCollapsePreview && (
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={() =>
+                                        setExpandedCampaigns((prev) => ({
+                                          ...prev,
+                                          [campaignKey]: !isExpanded,
+                                        }))
+                                      }
+                                    >
+                                      {isExpanded ? "Ocultar detalhes" : "Ver detalhes"}
+                                    </Button>
+                                  )}
+                                </div>
+                                {isExpanded && (
+                                  <div className="mt-4 space-y-4">
+                                    {campaign.sets.map((set, setIndex) => (
+                                      <div key={`${campaignKey}-set-${setIndex}`} className="space-y-2">
+                                        <div className="text-sm font-medium">{set.name}</div>
+                                        {set.ads.length > 0 ? (
+                                          <ul className="list-disc pl-5 text-sm">
+                                            {set.ads.map((ad, adIndex) => (
+                                              <li key={`${campaignKey}-ad-${adIndex}`}>
+                                                {ad}
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        ) : (
+                                          <div className="text-sm text-muted-foreground">
+                                            Nenhum anuncio listado.
+                                          </div>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="mt-2 text-sm text-muted-foreground">
+                      Nenhum preview disponivel.
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+            <DialogFooter className="px-6 pb-6">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setPreflightOpen(false)}
+              >
+              Voltar
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSendToN8n}
+              disabled={
+                !pendingCampaignPayload ||
+                !pendingPayload ||
+                sendToN8nMutation.isPending ||
+                sendLocked ||
+                !preflightResult?.can_continue ||
+                !confirmAccount ||
+                !confirmPage
+              }
+            >
+              {sendToN8nMutation.isPending || sendLocked ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Enviando...
+                </>
+              ) : (
+                "Enviar"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

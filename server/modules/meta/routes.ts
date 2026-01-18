@@ -754,33 +754,50 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
       return metaPageId === rawPageId && source === "manual";
     });
     const manualValueSet = new Set(manualLeadforms.map((resource) => resource.value));
-    const toDelete = existingLeadforms.filter((resource) => {
-      const metadata = (resource.metadata ?? {}) as Record<string, unknown>;
-      const metaPageId = typeof metadata.pageId === "string" ? metadata.pageId : null;
-      const source = typeof metadata.source === "string" ? metadata.source : null;
-      return metaPageId === rawPageId && source !== "manual";
-    });
+    const existingMetaByValue = new Map(
+      existingLeadforms
+        .filter((resource) => {
+          const metadata = (resource.metadata ?? {}) as Record<string, unknown>;
+          const metaPageId = typeof metadata.pageId === "string" ? metadata.pageId : null;
+          const source = typeof metadata.source === "string" ? metadata.source : null;
+          return metaPageId === rawPageId && source !== "manual";
+        })
+        .map((resource) => [resource.value, resource]),
+    );
 
-    for (const resource of toDelete) {
-      await storage.deleteResource(resource.id);
-    }
+    const syncedForms = await Promise.all(
+      forms.map((form: any) => {
+        if (manualValueSet.has(form.id)) {
+          return null;
+        }
 
-    const formsToCreate = forms.filter((form: any) => !manualValueSet.has(form.id));
-    const createdForms = await Promise.all(
-      formsToCreate.map((form: any) =>
-        storage.createResource({
+        const existing = existingMetaByValue.get(form.id);
+        const metadata = {
+          pageId: rawPageId,
+          pageName: pageResource?.name ?? null,
+          status: form.status ?? null,
+          source: "meta",
+        };
+
+        if (existing) {
+          return storage.updateResource(existing.id, {
+            name: form.name,
+            metadata,
+          });
+        }
+
+        return storage.createResource({
           tenantId: user.tenantId,
           type: "leadform",
           name: form.name,
           value: form.id,
-          metadata: {
-            pageId: rawPageId,
-            pageName: pageResource?.name ?? null,
-            status: form.status ?? null,
-            source: "meta",
-          },
-        }),
-      ),
+          metadata,
+        });
+      }),
+    );
+
+    const createdForms = syncedForms.filter(
+      (resource): resource is NonNullable<typeof resource> => Boolean(resource),
     );
 
     setNoCacheHeaders(res);

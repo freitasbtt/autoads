@@ -4,11 +4,13 @@ import type {
   Automation,
   Campaign,
   CampaignMetric,
+  ExistingCampaignRun,
   InsertAppSettings,
   InsertAudience,
   InsertAutomation,
   InsertCampaign,
   InsertCampaignMetric,
+  InsertExistingCampaignRun,
   InsertIntegration,
   InsertResource,
   InsertTenant,
@@ -93,6 +95,10 @@ export interface IStorage {
     automation: Partial<InsertAutomation>,
   ): Promise<Automation | undefined>;
 
+  createExistingCampaignRun(
+    run: InsertExistingCampaignRun & { tenantId: number },
+  ): Promise<ExistingCampaignRun>;
+
   getAppSettings(): Promise<AppSettings | undefined>;
   createAppSettings(settings: InsertAppSettings): Promise<AppSettings>;
   updateAppSettings(settings: Partial<InsertAppSettings>): Promise<AppSettings | undefined>;
@@ -104,11 +110,13 @@ export type {
   Automation,
   Campaign,
   CampaignMetric,
+  ExistingCampaignRun,
   InsertAppSettings,
   InsertAudience,
   InsertAutomation,
   InsertCampaign,
   InsertCampaignMetric,
+  InsertExistingCampaignRun,
   InsertIntegration,
   InsertResource,
   InsertTenant,

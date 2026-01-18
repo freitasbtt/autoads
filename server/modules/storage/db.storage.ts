@@ -8,11 +8,13 @@ import type {
   Automation,
   Campaign,
   CampaignMetric,
+  ExistingCampaignRun,
   InsertAppSettings,
   InsertAudience,
   InsertAutomation,
   InsertCampaign,
   InsertCampaignMetric,
+  InsertExistingCampaignRun,
   InsertIntegration,
   InsertResource,
   InsertTenant,
@@ -422,6 +424,16 @@ export class DbStorage implements IStorage {
       .where(eq(schema.automations.id, id))
       .returning();
     return updated;
+  }
+
+  async createExistingCampaignRun(
+    run: InsertExistingCampaignRun & { tenantId: number },
+  ): Promise<ExistingCampaignRun> {
+    const [created] = await db
+      .insert(schema.existingCampaignRuns)
+      .values(run)
+      .returning();
+    return created;
   }
 
   async getAppSettings(): Promise<AppSettings | undefined> {

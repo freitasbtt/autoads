@@ -65,6 +65,8 @@ const OBJECTIVE_OPTIONS: Record<
   },
 };
 
+const COOLDOWN_STORAGE_KEY = "campaignsCooldowns";
+
 interface AdSet {
   audienceId: string;
   budget: string;
@@ -76,6 +78,7 @@ interface Creative {
   title: string;
   text: string;
   driveFolderId: string;
+  driveFolderName?: string;
   mode?: "manual" | "existing_post";
   postId?: string;
   objectStoryId?: string;
@@ -129,6 +132,38 @@ function extractPageInstagram(resource?: Resource | null): {
 export default function CampaignForm() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const normalizeAdAccountId = useCallback(
+    (value: string) => value.replace(/\D+/g, "").trim(),
+    [],
+  );
+  const loadCooldowns = useCallback(() => {
+    const stored = window.localStorage.getItem(COOLDOWN_STORAGE_KEY);
+    if (!stored) {
+      setCooldowns({});
+      return;
+    }
+    try {
+      const parsed = JSON.parse(stored) as Record<string, number>;
+      const now = Date.now();
+      const normalized: Record<string, number> = {};
+      Object.entries(parsed).forEach(([key, value]) => {
+        if (typeof value !== "number" || value <= now) {
+          return;
+        }
+        const normalizedKey = normalizeAdAccountId(key);
+        if (!normalizedKey) {
+          return;
+        }
+        normalized[normalizedKey] = Math.max(normalized[normalizedKey] ?? 0, value);
+      });
+      setCooldowns(normalized);
+      if (Object.keys(normalized).length === 0) {
+        window.localStorage.removeItem(COOLDOWN_STORAGE_KEY);
+      }
+    } catch {
+      setCooldowns({});
+    }
+  }, [normalizeAdAccountId]);
   const [currentStep, setCurrentStep] = useState(1);
 
   // Step 1: Campaign Configuration
@@ -143,6 +178,8 @@ export default function CampaignForm() {
     whatsappId: "",
     leadformId: "",
   });
+  const [cooldowns, setCooldowns] = useState<Record<string, number>>({});
+  const [cooldownNow, setCooldownNow] = useState(Date.now());
 
   // Step 2: Ad Sets (can add multiple)
   const [adSets, setAdSets] = useState<AdSet[]>([
@@ -151,7 +188,7 @@ export default function CampaignForm() {
 
   // Step 3: Creatives (can add multiple)
   const [creatives, setCreatives] = useState<Creative[]>([
-    { title: "", text: "", driveFolderId: "" },
+    { title: "", text: "", driveFolderId: "", driveFolderName: "" },
   ]);
   const [creativeMode, setCreativeMode] = useState<CreativeMode>("manual");
   const [selectedPost, setSelectedPost] = useState<PagePostSummary | null>(
@@ -209,12 +246,64 @@ export default function CampaignForm() {
     },
     [],
   );
+  const ensureDriveFolderResource = useCallback(
+    async (folder: { name: string; value: string }) => {
+      const value = folder?.value?.trim();
+      if (!value) {
+        return;
+      }
+      const alreadyExists = driveFolders.some((item) => item.value === value);
+      if (alreadyExists) {
+        return;
+      }
+      try {
+        await apiRequest("POST", "/api/resources", {
+          type: "drive_folder",
+          name: folder.name?.trim() || value,
+          value,
+          metadata: { source: "drive_search" },
+        });
+        await queryClient.invalidateQueries({ queryKey: ["/api/resources"] });
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Nao foi possivel salvar a pasta.";
+        toast({
+          title: "Falha ao salvar pasta do Drive",
+          description: message,
+          variant: "destructive",
+        });
+      }
+    },
+    [driveFolders, toast],
+  );
   const accountOptions = accounts.map((account) => ({
     id: account.id,
     name: account.name,
     value: String(account.id),
     searchText: `${account.name} ${account.value}`.trim(),
   }));
+  const selectedAccountResource =
+    accounts.find((account) => String(account.id) === config.accountId) ?? null;
+  const formatCooldown = (remainingMs: number) => {
+    const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  };
+  const accountCooldownUntil = (() => {
+    if (!selectedAccountResource) {
+      return null;
+    }
+    const key = normalizeAdAccountId(selectedAccountResource.value ?? "");
+    if (!key) {
+      return null;
+    }
+    const timestamp = cooldowns[key];
+    return timestamp && timestamp > cooldownNow ? timestamp : null;
+  })();
+  const accountCooldownRemainingMs = accountCooldownUntil
+    ? Math.max(0, accountCooldownUntil - cooldownNow)
+    : 0;
   const pageOptions = pages.map((page) => {
     const handle = extractPageInstagram(page).handle;
     const label = handle ? `${page.name} (${handle})` : page.name;
@@ -352,6 +441,28 @@ export default function CampaignForm() {
     setSelectedPost(null);
   }, [selectedPageValue]);
 
+  useEffect(() => {
+    loadCooldowns();
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === COOLDOWN_STORAGE_KEY) {
+        loadCooldowns();
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [loadCooldowns]);
+
+  useEffect(() => {
+    const hasActiveCooldown = Object.values(cooldowns).some(
+      (timestamp) => timestamp > cooldownNow,
+    );
+    if (!hasActiveCooldown) {
+      return;
+    }
+    const intervalId = window.setInterval(() => setCooldownNow(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [cooldowns, cooldownNow]);
+
   // Add/Remove Ad Set
   const addAdSet = () => {
     setAdSets([
@@ -374,7 +485,10 @@ export default function CampaignForm() {
 
   // Add/Remove Creative
   const addCreative = () => {
-    setCreatives([...creatives, { title: "", text: "", driveFolderId: "" }]);
+    setCreatives([
+      ...creatives,
+      { title: "", text: "", driveFolderId: "", driveFolderName: "" },
+    ]);
   };
 
   const removeCreative = (index: number) => {
@@ -554,6 +668,7 @@ export default function CampaignForm() {
             title: creative.title,
             text: creative.text,
             driveFolderId: creative.driveFolderId || null,
+            driveFolderName: creative.driveFolderName || undefined,
             mode: "manual",
           }));
 
@@ -691,16 +806,21 @@ export default function CampaignForm() {
               <Label htmlFor="accountId">
                 Conta Meta Ads <span className="text-destructive">*</span>
               </Label>
-              <DriveFolderCombobox
-                folders={accountOptions}
-                value={config.accountId}
-                onChange={(value) => setConfig({ ...config, accountId: value })}
-                placeholder="Buscar conta por nome"
-                emptyLabel="Nenhuma conta disponivel"
-                maxResults={50}
-                testId="select-account"
-              />
-            </div>
+                <DriveFolderCombobox
+                  folders={accountOptions}
+                  value={config.accountId}
+                  onChange={(value) => setConfig({ ...config, accountId: value })}
+                  placeholder="Buscar conta por nome"
+                  emptyLabel="Nenhuma conta disponivel"
+                  maxResults={50}
+                  testId="select-account"
+                />
+                {accountCooldownRemainingMs > 0 && (
+                  <p className="text-sm text-amber-600">
+                    Conta em cooldown. Aguarde {formatCooldown(accountCooldownRemainingMs)} para reenviar.
+                  </p>
+                )}
+              </div>
 
             <div className="space-y-2">
               <Label htmlFor="name">
@@ -1114,17 +1234,21 @@ export default function CampaignForm() {
                               Nova pasta
                             </Button>
                           </div>
-                          <DriveFolderCombobox
-                            folders={driveFolders}
-                            value={creative.driveFolderId}
-                            onChange={(value) =>
-                              updateCreative(index, "driveFolderId", value)
-                            }
-                            placeholder="Buscar pasta por nome"
-                            emptyLabel="Nenhuma pasta encontrada"
-                            onSearch={searchDriveFolders}
-                            minSearchLength={3}
-                            maxResults={10}
+                            <DriveFolderCombobox
+                              folders={driveFolders}
+                              value={creative.driveFolderId}
+                              onChange={(value) =>
+                                updateCreative(index, "driveFolderId", value)
+                              }
+                              onSelectOption={(option) => {
+                                updateCreative(index, "driveFolderName", option.name);
+                                ensureDriveFolderResource(option);
+                              }}
+                              placeholder="Buscar pasta por nome"
+                              emptyLabel="Nenhuma pasta encontrada"
+                              onSearch={searchDriveFolders}
+                              minSearchLength={3}
+                              maxResults={10}
                             testId={`select-drive-folder-${index}`}
                           />
                         </div>

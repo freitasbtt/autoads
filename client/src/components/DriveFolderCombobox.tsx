@@ -27,6 +27,7 @@ type DriveFolderComboboxProps = {
   folders: DriveFolderOption[];
   value: string;
   onChange: (next: string) => void;
+  onSelectOption?: (option: DriveFolderOption) => void;
   placeholder?: string;
   emptyLabel?: string;
   testId?: string;
@@ -40,6 +41,7 @@ export function DriveFolderCombobox({
   folders,
   value,
   onChange,
+  onSelectOption,
   placeholder = "Pesquisar pasta",
   emptyLabel = "Nenhuma pasta encontrada",
   testId,
@@ -118,7 +120,20 @@ export function DriveFolderCombobox({
       } catch (error) {
         if (!isActive) return;
         setRemoteOptions([]);
-        setSearchError("Falha ao buscar");
+        const message =
+          typeof (error as { message?: unknown })?.message === "string"
+            ? String((error as { message?: unknown }).message)
+            : "";
+        const normalizedMessage = message.toLowerCase();
+        if (
+          normalizedMessage.includes("unauthenticated") ||
+          normalizedMessage.includes("sessao do google drive expirada") ||
+          normalizedMessage.includes("integracoes")
+        ) {
+          setSearchError("Sessao do Google Drive expirada. Relogue em Integracoes.");
+        } else {
+          setSearchError("Falha ao buscar");
+        }
       } finally {
         if (isActive) {
           setIsSearching(false);
@@ -173,6 +188,9 @@ export function DriveFolderCombobox({
         map.set(option.value, option);
         return Array.from(map.values());
       });
+      if (onSelectOption) {
+        onSelectOption(option);
+      }
     }
     onChange(next);
     setOpen(false);

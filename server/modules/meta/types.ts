@@ -51,6 +51,14 @@ export type GraphAdsetInsightRow = {
   cost_per_action_type?: GraphActionEntry[];
 };
 
+export type GraphAdset = {
+  id: string;
+  name?: string;
+  campaign_id?: string;
+  end_time?: string;
+  status?: string;
+};
+
 export type GraphAdLevelInsightRow = {
   ad_id?: string;
   ad_name?: string;

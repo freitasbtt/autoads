@@ -1,0 +1,25 @@
+[33m9bd7e6d[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m HEAD@{Sat Jan 17 20:39:01 2026}: reset: moving to 9bd7e6d
+[33m7843ff1[m HEAD@{Sat Jan 17 18:39:47 2026}: commit: fix:Correção Modal Campanha
+[33mfd4e2b3[m HEAD@{Sat Jan 17 12:41:08 2026}: commit: security:token atividado com appSecretProof
+[33m301dcd2[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m HEAD@{Thu Jan 8 12:29:42 2026}: commit: feat:Pesquisa Na Adição de Campanhas Exi.
+[33m70be992[m[33m ([m[1;31morigin/feature/novogetapiouath[m[33m, [m[1;32mfeature/novogetapiouath[m[33m)[m HEAD@{Mon Dec 1 18:05:00 2025}: merge feature/novogetapiouath: Fast-forward
+[33m845ef67[m HEAD@{Mon Dec 1 18:00:46 2025}: checkout: moving from feature/novogetapiouath to main
+[33m70be992[m[33m ([m[1;31morigin/feature/novogetapiouath[m[33m, [m[1;32mfeature/novogetapiouath[m[33m)[m HEAD@{Mon Dec 1 17:41:00 2025}: commit: fix: getapiouath
+[33m845ef67[m HEAD@{Mon Dec 1 17:39:59 2025}: checkout: moving from main to feature/novogetapiouath
+[33m845ef67[m HEAD@{Tue Nov 25 11:33:08 2025}: commit (merge): fix: porta externa compose postgrees
+[33m5c76265[m HEAD@{Tue Nov 25 11:28:37 2025}: checkout: moving from feature/filtrosdrivecampanha to main
+[33md5ad5d1[m[33m ([m[1;32mfeature/filtrosdrivecampanha[m[33m)[m HEAD@{Tue Nov 25 11:28:28 2025}: commit: fix: recursos do google removidos + botão
+[33m9bd7e6d[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m HEAD@{Tue Nov 25 11:00:06 2025}: checkout: moving from main to feature/filtrosdrivecampanha
+[33m5c76265[m HEAD@{Mon Nov 24 16:36:02 2025}: commit: Remove .env from versioning
+[33m9bd7e6d[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m HEAD@{Mon Nov 24 16:32:21 2025}: merge feature/filtrosdrivecampanha: Fast-forward
+[33m938baa0[m HEAD@{Mon Nov 24 16:31:41 2025}: checkout: moving from feature/filtrosdrivecampanha to main
+[33m9bd7e6d[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m HEAD@{Mon Nov 24 16:30:30 2025}: commit: fix:barra pesquisa GOOGLE drive
+[33m361e2b7[m[33m ([m[1;31morigin/feature/filtrosdrivecampanha[m[33m)[m HEAD@{Mon Nov 24 11:55:10 2025}: commit: feat: Remoção de recuros por get no meta
+[33m5835bb6[m HEAD@{Wed Nov 19 21:40:50 2025}: checkout: moving from main to feature/filtrosdrivecampanha
+[33m938baa0[m HEAD@{Wed Nov 19 21:37:20 2025}: reset: moving to origin/main
+[33m9aa31bb[m HEAD@{Wed Nov 19 21:36:12 2025}: reset: moving to HEAD
+[33m9aa31bb[m HEAD@{Mon Nov 17 22:10:29 2025}: commit: fix: aplicar gitignore
+[33m938baa0[m HEAD@{Mon Nov 17 22:08:04 2025}: commit: fix: gitignore
+[33mdf107cc[m[33m ([m[1;31morigin/feature/atualizacao_rep[m[33m, [m[1;32mfeature/atualizacao_rep[m[33m)[m HEAD@{Mon Nov 17 22:04:30 2025}: merge feature/atualizacao_rep: Fast-forward
+[33mcf0f4c0[m HEAD@{Mon Nov 17 22:02:26 2025}: checkout: moving from feature/atualizacao_rep to main
+[33mdf107cc[m[33m ([m[1;31morigin/feature/atualizacao_rep[m[33m, [m[1;32mfeature/atualizacao_rep[m[33m)[m HEAD@{Mon Nov 17 17:51:55 2025}: clone: from https://github.com/freitasbtt/autoads/

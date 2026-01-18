@@ -4,11 +4,13 @@ import type {
   Automation,
   Campaign,
   CampaignMetric,
+  ExistingCampaignRun,
   InsertAppSettings,
   InsertAudience,
   InsertAutomation,
   InsertCampaign,
   InsertCampaignMetric,
+  InsertExistingCampaignRun,
   InsertIntegration,
   InsertResource,
   InsertTenant,
@@ -29,6 +31,7 @@ export class MemStorage implements IStorage {
   private integrations = new Map<number, Integration>();
   private automations = new Map<number, Automation>();
   private campaignMetrics = new Map<number, CampaignMetric>();
+  private existingCampaignRuns = new Map<string, ExistingCampaignRun>();
   private nextId = 1;
   private appSettings: AppSettings | undefined;
 
@@ -437,6 +440,17 @@ export class MemStorage implements IStorage {
     const updated = { ...existing, ...automation };
     this.automations.set(id, updated);
     return updated;
+  }
+
+  async createExistingCampaignRun(
+    run: InsertExistingCampaignRun & { tenantId: number },
+  ): Promise<ExistingCampaignRun> {
+    const created: ExistingCampaignRun = {
+      ...run,
+      createdAt: new Date(),
+    };
+    this.existingCampaignRuns.set(run.runId, created);
+    return created;
   }
 
   async getAppSettings(): Promise<AppSettings | undefined> {

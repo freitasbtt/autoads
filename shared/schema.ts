@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, jsonb, serial, pgEnum, date as pgDate, numeric, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, jsonb, serial, pgEnum, date as pgDate, numeric, uniqueIndex, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -222,6 +222,43 @@ export const insertAutomationSchema = createInsertSchema(automations).omit({
 });
 export type InsertAutomation = z.infer<typeof insertAutomationSchema>;
 export type Automation = typeof automations.$inferSelect;
+
+// Existing campaign preflight runs
+export const existingCampaignRuns = pgTable("existing_campaign_runs", {
+  runId: text("run_id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  externalId: text("external_id"),
+  payloadOriginal: jsonb("payload_original")
+    .$type<Record<string, unknown>>()
+    .default(sql`'{}'::jsonb`)
+    .notNull(),
+  pairsArray: jsonb("pairs_array")
+    .$type<Array<Record<string, unknown>>>()
+    .default(sql`'[]'::jsonb`)
+    .notNull(),
+  previewText: text("preview_text").notNull().default(""),
+  warnings: jsonb("warnings")
+    .$type<Array<Record<string, unknown>>>()
+    .default(sql`'[]'::jsonb`)
+    .notNull(),
+  errors: jsonb("errors")
+    .$type<Array<Record<string, unknown>>>()
+    .default(sql`'[]'::jsonb`)
+    .notNull(),
+  summary: jsonb("summary")
+    .$type<Record<string, unknown>>()
+    .default(sql`'{}'::jsonb`)
+    .notNull(),
+  status: text("status").notNull(),
+  canContinue: boolean("can_continue").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertExistingCampaignRunSchema = createInsertSchema(existingCampaignRuns).omit({
+  createdAt: true,
+});
+export type InsertExistingCampaignRun = z.infer<typeof insertExistingCampaignRunSchema>;
+export type ExistingCampaignRun = typeof existingCampaignRuns.$inferSelect;
 
 // Campaign metrics table - aggregated performance data per campaign/account
 export const campaignMetrics = pgTable("campaign_metrics", {

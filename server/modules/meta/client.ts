@@ -8,6 +8,7 @@ import type {
   GraphAd,
   GraphAdCreative,
   GraphAdLevelInsightRow,
+  GraphAdset,
   GraphAdsetInsightRow,
   GraphCampaign,
   GraphInsightRow,
@@ -118,6 +119,13 @@ export class MetaGraphClient implements MetaGraphApiClient {
   async fetchCampaigns(accountId: string): Promise<GraphCampaign[]> {
     return this.fetchEdge<GraphCampaign>(`/${accountId}/campaigns`, {
       fields: "id,name,status,objective",
+      limit: "200",
+    });
+  }
+
+  async fetchAdsets(accountId: string): Promise<GraphAdset[]> {
+    return this.fetchEdge<GraphAdset>(`/${accountId}/adsets`, {
+      fields: "id,name,campaign_id,end_time,status",
       limit: "200",
     });
   }

@@ -107,6 +107,28 @@ function ensureCount(value: unknown): number {
   return 0;
 }
 
+async function resolveLeadformResourceId(
+  tenantId: number,
+  leadformId: number | null | undefined,
+): Promise<number | null | undefined> {
+  if (leadformId === null || leadformId === undefined) {
+    return leadformId;
+  }
+
+  const leadforms = await storage.getResourcesByType(tenantId, "leadform");
+  const directMatch = leadforms.find((resource) => resource.id === leadformId);
+  if (directMatch) {
+    return directMatch.id;
+  }
+
+  const valueMatch = leadforms.find((resource) => resource.value === String(leadformId));
+  if (valueMatch) {
+    return valueMatch.id;
+  }
+
+  return undefined;
+}
+
 export const campaignsRouter = Router();
 export const campaignWebhookRouter = Router();
 
@@ -117,6 +139,51 @@ campaignsRouter.get("/", async (req, res, next) => {
     const user = req.user as User;
     const campaigns = await storage.getCampaignsByTenant(user.tenantId);
     res.json(campaigns);
+  } catch (err) {
+    next(err);
+  }
+});
+
+campaignsRouter.get("/cooldown", async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const adAccountRaw =
+      req.query.ad_account_id ??
+      req.query.account_id ??
+      req.query.adAccountId ??
+      req.query.accountId;
+    const resourceIdRaw = req.query.account_resource_id ?? req.query.accountResourceId;
+
+    let adAccountValue = typeof adAccountRaw === "string" ? adAccountRaw : "";
+    if (!adAccountValue && typeof resourceIdRaw === "string") {
+      const resourceId = Number.parseInt(resourceIdRaw, 10);
+      if (Number.isFinite(resourceId)) {
+        const resource = await storage.getResource(resourceId);
+        adAccountValue = resource?.value ?? "";
+      }
+    }
+
+    if (!adAccountValue) {
+      return res.status(400).json({ message: "ad_account_id obrigatorio" });
+    }
+
+    const adAccountId = String(adAccountValue).replace(/\D+/g, "");
+    if (!adAccountId) {
+      return res.status(400).json({ message: "ad_account_id invalido" });
+    }
+
+    const remainingMs = getCooldownRemainingMs(user.tenantId, adAccountId);
+    if (remainingMs <= 0) {
+      return res.json({ active: false, remaining_seconds: 0 });
+    }
+
+    const remainingSeconds = Math.ceil(remainingMs / 1000);
+    const cooldownUntil = new Date(Date.now() + remainingMs).toISOString();
+    return res.json({
+      active: true,
+      remaining_seconds: remainingSeconds,
+      cooldown_until: cooldownUntil,
+    });
   } catch (err) {
     next(err);
   }
@@ -143,10 +210,55 @@ campaignsRouter.post("/", async (req, res, next) => {
   try {
     const user = req.user as User;
     const data = insertCampaignSchema.parse(req.body);
+    const isExistingCampaignFlow =
+      Array.isArray(data.adSets) && data.adSets.length === 0;
+
+    if (isExistingCampaignFlow) {
+      const recentCampaigns = await storage.getCampaignsByTenant(user.tenantId);
+      const cutoff = Date.now() - 2 * 60 * 1000;
+      const duplicate = recentCampaigns.find((campaign) => {
+        const createdAt =
+          campaign.createdAt instanceof Date ? campaign.createdAt.getTime() : 0;
+        if (createdAt < cutoff) {
+          return false;
+        }
+        const status = (campaign.status ?? "").toLowerCase();
+        if (status !== "draft" && status !== "pending") {
+          return false;
+        }
+        return (
+          campaign.accountId === data.accountId &&
+          campaign.pageId === data.pageId &&
+          campaign.instagramId === data.instagramId &&
+          campaign.whatsappId === data.whatsappId &&
+          campaign.leadformId === data.leadformId &&
+          (campaign.driveFolderId ?? "") === (data.driveFolderId ?? "") &&
+          (campaign.title ?? "") === (data.title ?? "") &&
+          (campaign.message ?? "") === (data.message ?? "")
+        );
+      });
+
+      if (duplicate) {
+        return res.status(200).json(duplicate);
+      }
+    }
+
+    const resolvedLeadformId = await resolveLeadformResourceId(user.tenantId, data.leadformId);
+    if (
+      data.leadformId !== undefined &&
+      data.leadformId !== null &&
+      resolvedLeadformId === undefined
+    ) {
+      return res.status(400).json({
+        message:
+          "Formulario de leads nao encontrado no sistema. Atualize a lista da pagina e selecione novamente.",
+      });
+    }
     const campaignValues: InsertCampaign & { tenantId: number } = {
       ...data,
       tenantId: user.tenantId,
       status: "draft",
+      ...(resolvedLeadformId !== undefined ? { leadformId: resolvedLeadformId } : {}),
     };
     const campaign = await storage.createCampaign(campaignValues);
     res.status(201).json(campaign);
@@ -169,7 +281,21 @@ campaignsRouter.patch("/:id", async (req, res, next) => {
     }
 
     const data = insertCampaignSchema.partial().parse(req.body);
-    const campaign = await storage.updateCampaign(id, { ...data });
+    const updateValues: Partial<InsertCampaign> = { ...data };
+    if (data.leadformId !== undefined) {
+      let resolvedLeadformId = data.leadformId;
+      if (data.leadformId !== null) {
+        resolvedLeadformId = await resolveLeadformResourceId(user.tenantId, data.leadformId);
+        if (resolvedLeadformId === undefined) {
+          return res.status(400).json({
+            message:
+              "Formulario de leads nao encontrado no sistema. Atualize a lista da pagina e selecione novamente.",
+          });
+        }
+      }
+      updateValues.leadformId = resolvedLeadformId;
+    }
+    const campaign = await storage.updateCampaign(id, updateValues);
     res.json(campaign);
   } catch (err) {
     next(err);
@@ -685,6 +811,11 @@ campaignWebhookRouter.post("/n8n", isAuthenticated, async (req, res, next) => {
       }
 
       return res.status(500).json({ message: userMessage });
+    }
+
+    const cooldownAccountId = String(sanitizedAdAccountId).replace(/\D+/g, "");
+    if (cooldownAccountId) {
+      setAdAccountCooldown(user.tenantId, cooldownAccountId);
     }
 
     res.json({ message: "Dados enviados para n8n com sucesso" });
