@@ -1,4 +1,4 @@
-import { Home, Settings, FileText, LayoutDashboard, Users, Plug, LogOut, Shield } from "lucide-react";
+﻿import { Home, Settings, FileText, LayoutDashboard, Users, Plug, LogOut, Shield } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -13,13 +13,14 @@ import {
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/hooks/use-toast";
 
 const items = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Dashboard", url: "/", icon: LayoutDashboard, blocked: true },
   { title: "Campanhas", url: "/campaigns", icon: FileText },
-  { title: "Públicos", url: "/audiences", icon: Users },
+  { title: "Publicos", url: "/audiences", icon: Users, blocked: true },
   { title: "Recursos", url: "/resources", icon: Settings },
-  { title: "Integrações", url: "/integrations", icon: Plug },
+  { title: "Integracoes", url: "/integrations", icon: Plug },
 ];
 
 const adminItems = [
@@ -29,6 +30,7 @@ const adminItems = [
 export function AppSidebar() {
   const [location] = useLocation();
   const { logout, user } = useAuth();
+  const { toast } = useToast();
 
   const isAdmin = user ? user.role === "system_admin" || user.role === "tenant_admin" : false;
 
@@ -36,19 +38,41 @@ export function AppSidebar() {
     <Sidebar>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Meta Ads Manager</SidebarGroupLabel>
+          <SidebarGroupLabel className="justify-center">
+            <img
+              src="/logo_orygo_vetor.svg"
+              alt="Orygo"
+              className="h-8 w-auto"
+            />
+          </SidebarGroupLabel>
           <SidebarGroupContent>
-            <SidebarMenu>
-              {items.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location === item.url}>
-                    <Link href={item.url} data-testid={`link-${item.title.toLowerCase()}`}>
-                      <item.icon />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              <SidebarMenu>
+                {items.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    {item.blocked ? (
+                      <SidebarMenuButton
+                        isActive={false}
+                        onClick={() =>
+                          toast({
+                            title: "Funcao Disponivel em Breve",
+                          })
+                        }
+                        className="cursor-not-allowed opacity-60"
+                        data-testid={`link-${item.title.toLowerCase()}`}
+                      >
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </SidebarMenuButton>
+                    ) : (
+                      <SidebarMenuButton asChild isActive={location === item.url}>
+                        <Link href={item.url} data-testid={`link-${item.title.toLowerCase()}`}>
+                          <item.icon />
+                          <span>{item.title}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    )}
+                  </SidebarMenuItem>
+                ))}
               {isAdmin && adminItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild isActive={location === item.url}>
@@ -83,3 +107,6 @@ export function AppSidebar() {
     </Sidebar>
   );
 }
+
+
+

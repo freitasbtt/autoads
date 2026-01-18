@@ -50,8 +50,15 @@ export default function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl">Meta Ads Campaign Manager</CardTitle>
+        <CardHeader className="space-y-2">
+          <div className="flex justify-center">
+            <img
+              src="/logo_orygo_vetor.svg"
+              alt="Orygo"
+              className="h-10 w-auto"
+            />
+          </div>
+          <CardTitle className="text-2xl text-center">Meta Ads Campaign Manager</CardTitle>
           <CardDescription>
             Entre com suas credenciais para acessar a plataforma
           </CardDescription>

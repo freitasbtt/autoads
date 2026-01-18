@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CampaignDetailsModal } from "@/components/CampaignDetailsModal";
-import { Edit, Pause, Play, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Edit, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { CampaignStatusBadge } from "../components/CampaignStatusBadge";
 import { useCampaignListData } from "../hooks/useCampaignListData";
 import { useCampaignMutations } from "../hooks/useCampaignMutations";
@@ -64,7 +64,7 @@ export function CampaignsPage() {
   const [cooldowns, setCooldowns] = useState<Record<string, number>>({});
   const [cooldownNow, setCooldownNow] = useState(Date.now());
   const { campaigns, isLoading, resources, audiences } = useCampaignListData();
-  const { toggleStatus, deleteCampaign } = useCampaignMutations();
+  const { deleteCampaign } = useCampaignMutations();
   useCampaignRealtime();
   const accountLookup = useMemo(() => {
     const map = new Map<number, { name: string; value: string }>();
@@ -259,12 +259,6 @@ export function CampaignsPage() {
     },
   });
 
-  const handleToggleStatus = (campaign: Campaign, e: MouseEvent<HTMLButtonElement>) => {
-    e.stopPropagation();
-    const newStatus = campaign.status === "active" ? "paused" : "active";
-    toggleStatus({ id: campaign.id, status: newStatus });
-  };
-
   const handleReprocess = (campaign: Campaign, e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     reprocessMutation.mutate({ campaignId: campaign.id });
@@ -292,14 +286,23 @@ export function CampaignsPage() {
         </div>
         <div className="flex gap-2">
           <Button
-            variant="outline"
+            className="bg-blue-600 text-white hover:bg-blue-700"
             onClick={() => setLocation("/campaigns/existing")}
             data-testid="button-add-to-existing"
           >
             <Plus className="h-4 w-4 mr-2" />
-            Adicionar a Campanha Existente
+            Adicionar Criativos
           </Button>
-          <Button onClick={() => setLocation("/campaigns/new")} data-testid="button-new-campaign">
+          <Button
+            variant="outline"
+            className="opacity-70"
+            onClick={() =>
+              toast({
+                title: "Funcao Disponivel em Breve",
+              })
+            }
+            data-testid="button-new-campaign"
+          >
             <Plus className="h-4 w-4 mr-2" />
             Nova Campanha
           </Button>
@@ -427,7 +430,8 @@ export function CampaignsPage() {
                                 const isProcessing =
                                   reprocessMutation.isPending &&
                                   reprocessMutation.variables?.campaignId === campaign.id;
-                                return isCooldownActive || isProcessing;
+                                const isCompleted = campaign.status === "completed";
+                                return isCooldownActive || isProcessing || isCompleted;
                               })()}
                             >
                               <RotateCcw className="h-4 w-4" />
@@ -459,19 +463,6 @@ export function CampaignsPage() {
                             data-testid={`button-edit-campaign-${campaign.id}`}
                           >
                             <Edit className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8"
-                            onClick={(e) => handleToggleStatus(campaign, e)}
-                            data-testid={`button-toggle-campaign-${campaign.id}`}
-                          >
-                            {campaign.status === "active" ? (
-                              <Pause className="h-4 w-4" />
-                            ) : (
-                              <Play className="h-4 w-4" />
-                            )}
                           </Button>
                           <Button
                             size="icon"
