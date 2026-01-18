@@ -269,9 +269,13 @@ existingCampaignRouter.post("/existing-campaign/preflight", async (req, res, nex
       payload.external_id ?? payload.campaign_id ?? payload.externalId,
     );
 
-    if (!adAccountId) {
+    const adAccountNumeric = adAccountId.replace(/\D+/g, "");
+    if (!adAccountNumeric) {
       return res.status(400).json({ message: "ad_account_id obrigatorio" });
     }
+    const adAccountIdForMeta = adAccountId.toLowerCase().startsWith("act_")
+      ? adAccountId
+      : `act_${adAccountNumeric}`;
     if (!driveFolderId) {
       return res.status(400).json({ message: "drive_folder_id obrigatorio" });
     }
@@ -491,13 +495,13 @@ existingCampaignRouter.post("/existing-campaign/preflight", async (req, res, nex
     } else {
       try {
         const client = new MetaGraphClient(metaAccess.accessToken, metaAppSecret);
-        const fetchedCampaigns = await client.fetchCampaigns(adAccountId);
+        const fetchedCampaigns = await client.fetchCampaigns(adAccountIdForMeta);
         const activeCampaigns = fetchedCampaigns.filter(
           (campaign) => (campaign.status ?? "").toUpperCase() === "ACTIVE",
         );
         campaigns = activeCampaigns;
 
-        const fetchedAdsets = await client.fetchAdsets(adAccountId);
+        const fetchedAdsets = await client.fetchAdsets(adAccountIdForMeta);
         const activeCampaignIds = new Set(activeCampaigns.map((campaign) => campaign.id));
         if (activeCampaignIds.size > 0) {
           adsets = fetchedAdsets.filter((adset) =>
