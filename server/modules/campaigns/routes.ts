@@ -3,7 +3,7 @@ import type { NextFunction, Request, Response } from "express";
 import crypto from "crypto";
 import { isAuthenticated } from "../../middlewares/auth";
 import { storage } from "../storage";
-import type { InsertCampaign, User } from "@shared/schema";
+import type { InsertCampaign, Resource, User } from "@shared/schema";
 import { insertCampaignSchema } from "@shared/schema";
 import { getPublicAppUrl } from "../../utils/url";
 import { broadcastCampaignUpdate } from "../realtime/sse";
@@ -107,6 +107,46 @@ function ensureCount(value: unknown): number {
   return 0;
 }
 
+function isPositiveResourceId(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+async function loadTenantResource(
+  tenantId: number,
+  id: number | null | undefined,
+): Promise<{ resource: Resource | null; invalid: boolean }> {
+  if (id === null || id === undefined) {
+    return { resource: null, invalid: false };
+  }
+  if (!isPositiveResourceId(id)) {
+    return { resource: null, invalid: true };
+  }
+
+  const resource = await storage.getResource(id);
+  if (!resource || resource.tenantId !== tenantId) {
+    return { resource: null, invalid: true };
+  }
+
+  return { resource, invalid: false };
+}
+
+async function findInvalidTenantResources(
+  tenantId: number,
+  refs: Array<{ id?: number | null; label: string }>,
+): Promise<string[]> {
+  const invalid: string[] = [];
+  for (const ref of refs) {
+    if (ref.id === undefined) {
+      continue;
+    }
+    const { invalid: isInvalid } = await loadTenantResource(tenantId, ref.id);
+    if (isInvalid) {
+      invalid.push(ref.label);
+    }
+  }
+  return invalid;
+}
+
 async function resolveLeadformResourceId(
   tenantId: number,
   leadformId: number | null | undefined,
@@ -158,7 +198,10 @@ campaignsRouter.get("/cooldown", async (req, res, next) => {
     if (!adAccountValue && typeof resourceIdRaw === "string") {
       const resourceId = Number.parseInt(resourceIdRaw, 10);
       if (Number.isFinite(resourceId)) {
-        const resource = await storage.getResource(resourceId);
+        const { resource, invalid } = await loadTenantResource(user.tenantId, resourceId);
+        if (invalid) {
+          return res.status(404).json({ message: "Resource not found" });
+        }
         adAccountValue = resource?.value ?? "";
       }
     }
@@ -243,6 +286,18 @@ campaignsRouter.post("/", async (req, res, next) => {
       }
     }
 
+    const invalidResources = await findInvalidTenantResources(user.tenantId, [
+      { id: data.accountId, label: "accountId" },
+      { id: data.pageId, label: "pageId" },
+      { id: data.instagramId, label: "instagramId" },
+      { id: data.whatsappId, label: "whatsappId" },
+    ]);
+    if (invalidResources.length > 0) {
+      return res.status(400).json({
+        message: `Recursos invalidos ou fora do tenant: ${invalidResources.join(", ")}`,
+      });
+    }
+
     const resolvedLeadformId = await resolveLeadformResourceId(user.tenantId, data.leadformId);
     if (
       data.leadformId !== undefined &&
@@ -281,6 +336,26 @@ campaignsRouter.patch("/:id", async (req, res, next) => {
     }
 
     const data = insertCampaignSchema.partial().parse(req.body);
+    const resourceRefs: Array<{ id?: number | null; label: string }> = [];
+    if (data.accountId !== undefined) {
+      resourceRefs.push({ id: data.accountId, label: "accountId" });
+    }
+    if (data.pageId !== undefined) {
+      resourceRefs.push({ id: data.pageId, label: "pageId" });
+    }
+    if (data.instagramId !== undefined) {
+      resourceRefs.push({ id: data.instagramId, label: "instagramId" });
+    }
+    if (data.whatsappId !== undefined) {
+      resourceRefs.push({ id: data.whatsappId, label: "whatsappId" });
+    }
+    const invalidResources = await findInvalidTenantResources(user.tenantId, resourceRefs);
+    if (invalidResources.length > 0) {
+      return res.status(400).json({
+        message: `Recursos invalidos ou fora do tenant: ${invalidResources.join(", ")}`,
+      });
+    }
+
     const updateValues: Partial<InsertCampaign> = { ...data };
     if (data.leadformId !== undefined) {
       let resolvedLeadformId = data.leadformId;
@@ -342,11 +417,30 @@ campaignsRouter.post("/:id/send-webhook", async (req, res, next) => {
         .json({ message: "Webhook n8n nao configurado. Configure em Admin > Configuracoes" });
     }
 
-    const accountResource = campaign.accountId ? await storage.getResource(campaign.accountId) : null;
-    const pageResource = campaign.pageId ? await storage.getResource(campaign.pageId) : null;
-    const instagramResource = campaign.instagramId ? await storage.getResource(campaign.instagramId) : null;
-    const whatsappResource = campaign.whatsappId ? await storage.getResource(campaign.whatsappId) : null;
-    const leadformResource = campaign.leadformId ? await storage.getResource(campaign.leadformId) : null;
+    const accountResult = await loadTenantResource(user.tenantId, campaign.accountId);
+    const pageResult = await loadTenantResource(user.tenantId, campaign.pageId);
+    const instagramResult = await loadTenantResource(user.tenantId, campaign.instagramId);
+    const whatsappResult = await loadTenantResource(user.tenantId, campaign.whatsappId);
+    const leadformResult = await loadTenantResource(user.tenantId, campaign.leadformId);
+
+    const invalidResources = [
+      accountResult.invalid ? "accountId" : null,
+      pageResult.invalid ? "pageId" : null,
+      instagramResult.invalid ? "instagramId" : null,
+      whatsappResult.invalid ? "whatsappId" : null,
+      leadformResult.invalid ? "leadformId" : null,
+    ].filter((value): value is string => Boolean(value));
+    if (invalidResources.length > 0) {
+      return res.status(400).json({
+        message: `Recursos da campanha nao pertencem ao tenant atual: ${invalidResources.join(", ")}`,
+      });
+    }
+
+    const accountResource = accountResult.resource;
+    const pageResource = pageResult.resource;
+    const instagramResource = instagramResult.resource;
+    const whatsappResource = whatsappResult.resource;
+    const leadformResource = leadformResult.resource;
     const adAccountId = accountResource?.value ? accountResource.value.replace(/\D+/g, "") : "";
     const adAccountKey = adAccountId;
     if (adAccountKey) {
