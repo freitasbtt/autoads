@@ -20,7 +20,7 @@ import { campaignsRouter, campaignWebhookRouter } from "./modules/campaigns/rout
 import { integrationsRouter } from "./modules/integrations/routes";
 import { authRouter } from "./modules/auth/routes";
 import { adminRouter } from "./modules/admin/routes";
-import { metaRouter, internalMetaRouter } from "./modules/meta/routes";
+import { metaRouter, internalMetaRouter, publicMetaRouter } from "./modules/meta/routes";
 import { oauthRouter } from "./modules/oauth/routes";
 import { realtimeRouter } from "./modules/realtime/routes";
 import { driveRouter } from "./modules/drive/routes";
@@ -173,6 +173,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api", driveRouter);
   app.use("/api", existingCampaignRouter);
   app.use("/api", metaRouter);
+  app.use("/api/public", publicMetaRouter);
   app.use("/internal", internalMetaRouter);
   app.use("/auth", oauthRouter);
 
@@ -180,6 +181,5 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   return httpServer;
 }
-
 
 

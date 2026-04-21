@@ -7,6 +7,7 @@ import type {
   CampaignAdReport,
   GraphAd,
   GraphAdCreative,
+  GraphAdImageAsset,
   GraphAdLevelInsightRow,
   GraphAdset,
   GraphAdsetInsightRow,
@@ -17,8 +18,12 @@ import type {
   TimeRange,
 } from "./types";
 import {
+  LEAD_RESULT_ACTION_TYPES,
+  MESSAGE_RESULT_ACTION_TYPES,
+  MESSAGING_CONVERSATION_STARTED_ACTION_TYPES,
+} from "./constants";
+import {
   extractEntryTotal,
-  formatResultLabel,
   normalizeActionType,
   parseNumber,
   parsePercentToNumber,
@@ -32,6 +37,20 @@ export class MetaApiError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+function pickPreferredActionQuantity(
+  actionTotals: Record<string, number>,
+  actionTypes: string[],
+): number {
+  for (const actionType of actionTypes) {
+    const quantity = actionTotals[actionType.toLowerCase()] ?? 0;
+    if (quantity > 0) {
+      return quantity;
+    }
+  }
+
+  return 0;
 }
 
 export class MetaGraphClient implements MetaGraphApiClient {
@@ -157,14 +176,21 @@ export class MetaGraphClient implements MetaGraphApiClient {
   async fetchAdsetInsights(
     accountId: string,
     timeRange: TimeRange,
+    options?: {
+      timeIncrement?: number;
+    },
   ): Promise<GraphAdsetInsightRow[]> {
     const params: Record<string, string> = {
       level: "adset",
       fields:
-        "campaign_id,campaign_name,adset_id,adset_name,optimization_goal,spend,impressions,reach,clicks,actions,cost_per_action_type",
+        "campaign_id,campaign_name,adset_id,adset_name,optimization_goal,date_start,date_stop,spend,impressions,reach,clicks,actions,cost_per_action_type",
       limit: "200",
       action_attribution_windows: JSON.stringify(DEFAULT_ATTRIBUTION_WINDOWS),
     };
+
+    if (typeof options?.timeIncrement === "number" && options.timeIncrement > 0) {
+      params.time_increment = String(options.timeIncrement);
+    }
 
     if (timeRange && timeRange.since && timeRange.until) {
       params.time_range = JSON.stringify({
@@ -185,7 +211,7 @@ export class MetaGraphClient implements MetaGraphApiClient {
     const params: Record<string, string> = {
       level: "ad",
       fields:
-        "ad_id,ad_name,impressions,clicks,spend,actions,cost_per_action_type,ctr",
+        "ad_id,ad_name,impressions,clicks,spend,frequency,actions,cost_per_action_type,ctr",
       limit: "200",
       action_attribution_windows: JSON.stringify(DEFAULT_ATTRIBUTION_WINDOWS),
     };
@@ -204,16 +230,19 @@ export class MetaGraphClient implements MetaGraphApiClient {
 
   private async fetchCampaignAdCreativeMap(
     campaignId: string,
-  ): Promise<Map<string, string>> {
+  ): Promise<Map<string, { creativeId: string; status: string | null }>> {
     const ads = await this.fetchEdge<GraphAd>(`/${campaignId}/ads`, {
-      fields: "id,creative{id}",
+      fields: "id,status,effective_status,creative{id}",
       limit: "200",
     });
 
-    const map = new Map<string, string>();
+    const map = new Map<string, { creativeId: string; status: string | null }>();
     for (const ad of ads) {
       if (ad.id && ad.creative?.id) {
-        map.set(ad.id, ad.creative.id);
+        map.set(ad.id, {
+          creativeId: ad.creative.id,
+          status: ad.effective_status ?? ad.status ?? null,
+        });
       }
     }
     return map;
@@ -237,7 +266,7 @@ export class MetaGraphClient implements MetaGraphApiClient {
       const params = new URLSearchParams({
         ids: chunk.join(","),
         fields:
-          "id,name,thumbnail_url,object_story_spec{link_data{picture,image_hash,link},video_data{image_url,video_id}},asset_feed_spec{images{hash,url},videos{video_id,thumbnail_url}}",
+          "id,name,image_url,thumbnail_url,object_story_spec{link_data{picture,image_hash,link},video_data{image_url,video_id}},asset_feed_spec{images{hash,url},videos{video_id,thumbnail_url}}",
       });
 
       const url = this.buildUrl("/", Object.fromEntries(params.entries()));
@@ -253,16 +282,100 @@ export class MetaGraphClient implements MetaGraphApiClient {
     return creativeMap;
   }
 
-  private pickCreativeThumbnail(meta: GraphAdCreative | undefined): string | null {
-    if (!meta) return null;
-    if (meta.thumbnail_url) return meta.thumbnail_url;
+  private getCreativeImageHashes(meta: GraphAdCreative | undefined): string[] {
+    if (!meta) return [];
 
-    if (meta.object_story_spec?.link_data?.picture) {
-      return meta.object_story_spec.link_data.picture;
+    const hashes = new Set<string>();
+    const linkHash = meta.object_story_spec?.link_data?.image_hash;
+    if (typeof linkHash === "string" && linkHash.length > 0) {
+      hashes.add(linkHash);
     }
 
-    if (meta.object_story_spec?.video_data?.image_url) {
-      return meta.object_story_spec.video_data.image_url;
+    if (meta.asset_feed_spec?.images) {
+      meta.asset_feed_spec.images.forEach((image) => {
+        if (typeof image.hash === "string" && image.hash.length > 0) {
+          hashes.add(image.hash);
+        }
+      });
+    }
+
+    return Array.from(hashes);
+  }
+
+  private async fetchAdImagesByHashes(
+    accountId: string,
+    hashes: string[],
+  ): Promise<Map<string, GraphAdImageAsset>> {
+    if (hashes.length === 0) {
+      return new Map();
+    }
+
+    const chunks: string[][] = [];
+    for (let i = 0; i < hashes.length; i += 50) {
+      chunks.push(hashes.slice(i, i + 50));
+    }
+
+    const imageMap = new Map<string, GraphAdImageAsset>();
+
+    for (const chunk of chunks) {
+      let result:
+        | {
+            images?: Record<string, GraphAdImageAsset | null>;
+            data?: GraphAdImageAsset[];
+          }
+        | Record<string, unknown>;
+
+      try {
+        const url = this.buildUrl(`/${accountId}/adimages`, {
+          hashes: JSON.stringify(chunk),
+          fields: "hash,url,original_url,permalink_url",
+        });
+        result = await this.request<
+          | {
+              images?: Record<string, GraphAdImageAsset | null>;
+              data?: GraphAdImageAsset[];
+            }
+          | Record<string, unknown>
+        >(url);
+      } catch {
+        continue;
+      }
+
+      if ("images" in result && result.images && typeof result.images === "object") {
+        for (const [hash, asset] of Object.entries(result.images)) {
+          if (!asset) continue;
+          imageMap.set(hash, asset);
+        }
+      }
+
+      if ("data" in result && Array.isArray(result.data)) {
+        for (const asset of result.data) {
+          if (!asset?.hash) continue;
+          imageMap.set(asset.hash, asset);
+        }
+      }
+    }
+
+    return imageMap;
+  }
+
+  private pickCreativeThumbnail(
+    meta: GraphAdCreative | undefined,
+    adImageAssets?: Map<string, GraphAdImageAsset>,
+  ): string | null {
+    if (!meta) return null;
+
+    const imageHashes = this.getCreativeImageHashes(meta);
+    for (const hash of imageHashes) {
+      const asset = adImageAssets?.get(hash);
+      if (!asset) continue;
+      if (asset.original_url) return asset.original_url;
+      if (asset.url) return asset.url;
+      if (asset.permalink_url) return asset.permalink_url;
+    }
+
+    if (meta.image_url) {
+      return meta.image_url;
     }
 
     if (meta.asset_feed_spec?.images && meta.asset_feed_spec.images.length > 0) {
@@ -272,12 +385,22 @@ export class MetaGraphClient implements MetaGraphApiClient {
       }
     }
 
+    if (meta.object_story_spec?.link_data?.picture) {
+      return meta.object_story_spec.link_data.picture;
+    }
+
+    if (meta.object_story_spec?.video_data?.image_url) {
+      return meta.object_story_spec.video_data.image_url;
+    }
+
     if (meta.asset_feed_spec?.videos && meta.asset_feed_spec.videos.length > 0) {
       const video = meta.asset_feed_spec.videos[0];
       if (video.thumbnail_url) {
         return video.thumbnail_url;
       }
     }
+
+    if (meta.thumbnail_url) return meta.thumbnail_url;
 
     return null;
   }
@@ -301,11 +424,22 @@ export class MetaGraphClient implements MetaGraphApiClient {
     const creativeIds = Array.from(
       new Set(
         rows
-          .map((r) => (r.ad_id ? adCreativeMap.get(r.ad_id) : undefined))
+          .map((r) => (r.ad_id ? adCreativeMap.get(r.ad_id)?.creativeId : undefined))
           .filter(Boolean) as string[],
       ),
     );
     const creativeMetadataMap = await this.fetchCreativesMetadata(creativeIds);
+    const creativeImageHashes = Array.from(
+      new Set(
+        creativeIds.flatMap((creativeId) =>
+          this.getCreativeImageHashes(creativeMetadataMap.get(creativeId)),
+        ),
+      ),
+    );
+    const adImageAssets = await this.fetchAdImagesByHashes(
+      accountId,
+      creativeImageHashes,
+    );
 
     const objectiveRule = getObjectiveResultRule(campaignObjective ?? null);
 
@@ -321,6 +455,7 @@ export class MetaGraphClient implements MetaGraphApiClient {
       const clicks = parseNumber(row.clicks);
       const spend = parseNumber(row.spend);
       const ctr = parsePercentToNumber(row.ctr);
+      const frequency = row.frequency ? Number(row.frequency) : null;
 
       const actionTotals: Record<string, number> = {};
       if (Array.isArray(row.actions)) {
@@ -333,49 +468,53 @@ export class MetaGraphClient implements MetaGraphApiClient {
         }
       }
 
-      let resultQty = 0;
+      const leadQty = pickPreferredActionQuantity(
+        actionTotals,
+        LEAD_RESULT_ACTION_TYPES,
+      );
 
-      if (objectiveRule) {
-        const normalizedTypes = objectiveRule.actionTypes.map((t) =>
-          t.toLowerCase(),
-        );
-
-        if (objectiveRule.mode === "first") {
-          for (const t of normalizedTypes) {
-            const qty = actionTotals[t] ?? 0;
-            if (qty > 0) {
-              resultQty = qty;
-              break;
-            }
-          }
-        } else {
-          for (const t of normalizedTypes) {
-            resultQty += actionTotals[t] ?? 0;
+      let messagingQty = pickPreferredActionQuantity(
+        actionTotals,
+        MESSAGE_RESULT_ACTION_TYPES,
+      );
+      if (messagingQty === 0) {
+        for (const actionType of MESSAGING_CONVERSATION_STARTED_ACTION_TYPES) {
+          const quantity = actionTotals[actionType] ?? 0;
+          if (quantity > 0) {
+            messagingQty = quantity;
+            break;
           }
         }
       }
 
-      if (resultQty === 0) {
-        let bestQty = 0;
-        for (const qty of Object.values(actionTotals)) {
-          if (qty > bestQty) {
-            bestQty = qty;
-          }
-        }
-        resultQty = bestQty;
+      let resultQty = 0;
+
+      if (objectiveRule?.label === "Leads") {
+        resultQty = leadQty;
+      } else if (objectiveRule?.label === "Conversas iniciadas") {
+        resultQty = messagingQty;
+      } else if (leadQty > 0) {
+        resultQty = leadQty;
+      } else if (messagingQty > 0) {
+        resultQty = messagingQty;
       }
 
       const costPerResult = resultQty > 0 ? spend / resultQty : null;
 
-      const creativeId = adCreativeMap.get(adId) ?? null;
+      const adInfo = adCreativeMap.get(adId);
+      const creativeId = adInfo?.creativeId ?? null;
       const creativeMeta = creativeId
         ? creativeMetadataMap.get(creativeId)
         : undefined;
-      const thumbnailUrl = this.pickCreativeThumbnail(creativeMeta);
+      const thumbnailUrl = this.pickCreativeThumbnail(
+        creativeMeta,
+        adImageAssets,
+      );
 
       reports.push({
         ad_id: adId,
         ad_name: adName,
+        ad_status: adInfo?.status ?? null,
         creative_id: creativeId,
         thumbnailUrl: thumbnailUrl ?? null,
         metrics: {
@@ -383,6 +522,9 @@ export class MetaGraphClient implements MetaGraphApiClient {
           clicks,
           spend,
           ctr,
+          frequency: Number.isFinite(frequency) ? frequency : null,
+          leadQty,
+          messagingQty,
           resultQty,
           costPerResult,
         },

@@ -295,12 +295,7 @@ export function CampaignsPage() {
           </Button>
           <Button
             variant="outline"
-            className="opacity-70"
-            onClick={() =>
-              toast({
-                title: "Funcao Disponivel em Breve",
-              })
-            }
+            onClick={() => setLocation("/campaigns/new")}
             data-testid="button-new-campaign"
           >
             <Plus className="h-4 w-4 mr-2" />

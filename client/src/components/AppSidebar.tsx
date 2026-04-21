@@ -16,9 +16,9 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 
 const items = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard, blocked: true },
+  { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Campanhas", url: "/campaigns", icon: FileText },
-  { title: "Publicos", url: "/audiences", icon: Users, blocked: true },
+  { title: "Publicos", url: "/audiences", icon: Users },
   { title: "Recursos", url: "/resources", icon: Settings },
   { title: "Integracoes", url: "/integrations", icon: Plug },
 ];
@@ -38,14 +38,14 @@ export function AppSidebar() {
     <Sidebar>
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel className="justify-center">
+          <SidebarGroupLabel className="h-auto justify-center px-4 pb-5 pt-7">
             <img
               src="/logo_orygo_vetor.svg"
               alt="Orygo"
-              className="h-8 w-auto"
+              className="h-9 w-auto object-contain"
             />
           </SidebarGroupLabel>
-          <SidebarGroupContent>
+          <SidebarGroupContent className="mt-2">
               <SidebarMenu>
                 {items.map((item) => (
                   <SidebarMenuItem key={item.title}>
@@ -107,6 +107,5 @@ export function AppSidebar() {
     </Sidebar>
   );
 }
-
 
 

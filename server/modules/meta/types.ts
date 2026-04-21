@@ -43,6 +43,8 @@ export type GraphAdsetInsightRow = {
   adset_id: string;
   adset_name?: string;
   optimization_goal?: string;
+  date_start?: string;
+  date_stop?: string;
   spend?: string;
   impressions?: string;
   clicks?: string;
@@ -65,6 +67,7 @@ export type GraphAdLevelInsightRow = {
   impressions?: string;
   clicks?: string;
   spend?: string;
+  frequency?: string;
   actions?: GraphActionEntry[];
   cost_per_action_type?: GraphActionEntry[];
   ctr?: string;
@@ -73,6 +76,7 @@ export type GraphAdLevelInsightRow = {
 export type GraphAdCreative = {
   id: string;
   name?: string;
+  image_url?: string;
   thumbnail_url?: string;
   object_story_spec?: {
     link_data?: {
@@ -99,9 +103,18 @@ export type GraphAdCreative = {
 
 export type GraphAd = {
   id?: string;
+  status?: string;
+  effective_status?: string;
   creative?: {
     id?: string;
   };
+};
+
+export type GraphAdImageAsset = {
+  hash?: string;
+  url?: string;
+  original_url?: string;
+  permalink_url?: string;
 };
 
 export type MetricTotals = {
@@ -109,7 +122,9 @@ export type MetricTotals = {
   resultSpend: number;
   impressions: number;
   clicks: number;
+  reach: number;
   leads: number;
+  messagingConversationsStarted: number;
   results: number;
   costPerResult: number | null;
 };
@@ -159,12 +174,25 @@ export type DashboardAccountMetrics = {
   name: string;
   value: string;
   metrics: MetricTotals;
+  previousMetrics?: MetricTotals;
   campaigns: DashboardCampaignMetrics[];
+  timeline?: DailyTimelinePoint[];
+};
+
+export type DailyTimelinePoint = {
+  date: string;
+  spend: number;
+  impressions: number;
+  reach: number;
+  leads: number;
+  messagingConversationsStarted: number;
+  costPerLead: number | null;
 };
 
 export type MetaDashboardResult = {
   totals: MetricTotals;
   accounts: DashboardAccountMetrics[];
+  timeline: DailyTimelinePoint[];
 };
 
 export type CampaignHeaderSnapshot = {
@@ -178,6 +206,7 @@ export type CampaignHeaderSnapshot = {
 export type CampaignAdReport = {
   ad_id: string;
   ad_name: string | null;
+  ad_status: string | null;
   creative_id: string | null;
   thumbnailUrl: string | null;
   metrics: {
@@ -185,9 +214,46 @@ export type CampaignAdReport = {
     clicks: number;
     spend: number;
     ctr: number | null;
+    frequency: number | null;
+    leadQty: number;
+    messagingQty: number;
     resultQty: number;
     costPerResult: number | null;
   };
+};
+
+export type DashboardTopCreative = {
+  accountId: number;
+  accountName: string;
+  accountValue: string;
+  campaignId: string;
+  campaignName: string | null;
+  campaignObjective: string | null;
+  campaignStatus: string | null;
+  resultLabel: string;
+  ad_id: string;
+  ad_name: string | null;
+  ad_status: string | null;
+  creative_id: string | null;
+  thumbnailUrl: string | null;
+  metrics: {
+    impressions: number;
+    clicks: number;
+    spend: number;
+    ctr: number | null;
+    frequency: number | null;
+    leadQty: number;
+    messagingQty: number;
+    resultQty: number;
+    costPerResult: number | null;
+  };
+};
+
+export type DashboardTopCreativesAccountGroup = {
+  accountId: number;
+  accountName: string;
+  accountValue: string;
+  creatives: DashboardTopCreative[];
 };
 
 export type TimeRange =
@@ -240,6 +306,7 @@ export type AdsetBundle = {
   clicks: number;
   reach: number;
   leads: number;
+  messagingConversationsStarted: number;
   actions: ResultDetail[];
   officialResult: ResultDetail | null;
   resultQuantity: number;
@@ -265,7 +332,13 @@ export type CampaignActionAggregation = Record<
 
 export interface MetaGraphApiClient {
   fetchCampaigns(accountId: string): Promise<GraphCampaign[]>;
-  fetchAdsetInsights(accountId: string, timeRange: TimeRange): Promise<GraphAdsetInsightRow[]>;
+  fetchAdsetInsights(
+    accountId: string,
+    timeRange: TimeRange,
+    options?: {
+      timeIncrement?: number;
+    },
+  ): Promise<GraphAdsetInsightRow[]>;
 }
 
 export type DashboardBuilderOptions = {
@@ -273,6 +346,7 @@ export type DashboardBuilderOptions = {
   client: MetaGraphApiClient;
 
   campaignFilterSet?: Set<string>;
+  campaignNameSearch?: string;
   objectiveFilterSet?: Set<string>;
   optimizationGoalFilterSet?: Set<string>;
   statusFilterSet?: Set<string>;

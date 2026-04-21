@@ -16,6 +16,7 @@ import Integrations from "@/pages/Integrations";
 import Onboarding from "@/pages/Onboarding";
 import Admin from "@/pages/Admin";
 import Login from "@/pages/Login";
+import SharedDashboard from "@/pages/SharedDashboard";
 import NotFound from "@/pages/not-found";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { useEffect } from "react";
@@ -34,6 +35,7 @@ function PrivateRouter() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
+      <Route path="/shared/dashboard" component={SharedDashboard} />
       <Route path="/campaigns" component={CampaignsPage} />
       <Route path="/campaigns/new" component={CampaignForm} />
       <Route path="/campaigns/existing" component={ExistingCampaignForm} />
@@ -55,6 +57,7 @@ function PublicRouter() {
   return (
     <Switch>
       <Route path="/login" component={Login} />
+      <Route path="/shared/dashboard" component={SharedDashboard} />
       <Route path="/landing" component={LandingRedirect} />
       {/* fallback público: manda para login */}
       <Route component={Login} />

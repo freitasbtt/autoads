@@ -20,6 +20,13 @@ export const LEAD_ACTION_TYPES = new Set([
   "contact",
 ]);
 
+export const MESSAGING_CONVERSATION_STARTED_ACTION_TYPES = new Set([
+  "onsite_conversion.messaging_conversation_started_7d",
+  "messaging_conversation_started_7d",
+  "messaging_new_conversation",
+  "onsite_conversion.messaging_total_conversation_starters",
+]);
+
 export const DEFAULT_ATTRIBUTION_WINDOWS = [
   "7d_click",
   "1d_click",
@@ -189,7 +196,7 @@ export const FALLBACK_RESULT_ACTION_TYPES: string[] = [
   "offsite_content_view_add_meta_leads",
 ];
 
-const LEAD_RESULT_ACTION_TYPES = [
+export const LEAD_RESULT_ACTION_TYPES = [
   "lead",
   "leadgen",
   "leadgen.other",
@@ -198,7 +205,7 @@ const LEAD_RESULT_ACTION_TYPES = [
   "offsite_conversion.fb_pixel_lead",
 ];
 
-const MESSAGE_RESULT_ACTION_TYPES = [
+export const MESSAGE_RESULT_ACTION_TYPES = [
   "onsite_conversion.messaging_conversation_started_7d",
   "messaging_conversation_started_7d",
   "onsite_conversion.messaging_first_reply",

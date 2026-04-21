@@ -1,7 +1,8 @@
 import {
   CAMPAIGN_OBJECTIVE_ALIASES,
   FALLBACK_RESULT_ACTION_TYPES,
-  LEAD_ACTION_TYPES,
+  LEAD_RESULT_ACTION_TYPES,
+  MESSAGING_CONVERSATION_STARTED_ACTION_TYPES,
   OBJECTIVE_RESULT_RULES,
   OPTIMIZATION_GOAL_TO_ACTION_TYPES,
 } from "../constants";
@@ -26,6 +27,20 @@ import {
   parseNumber,
 } from "./parsing";
 import { createEmptyTotals } from "./metrics";
+
+function pickPreferredQuantity(
+  actions: AggregatedActionRecord,
+  preferredTypes: string[],
+): number {
+  for (const type of preferredTypes) {
+    const quantity = actions[type]?.quantity ?? 0;
+    if (quantity > 0) {
+      return quantity;
+    }
+  }
+
+  return 0;
+}
 
 export function aggregateInsightRowsByAdset(
   rows: GraphAdsetInsightRow[],
@@ -215,11 +230,13 @@ export function buildAdsetBundle(agg: AggregatedAdsetMetrics): AdsetBundle {
     }))
     .sort((a, b) => b.quantity - a.quantity);
 
-  let leads = 0;
-  LEAD_ACTION_TYPES.forEach((leadType) => {
-    const info = agg.actions[leadType];
+  const leads = pickPreferredQuantity(agg.actions, LEAD_RESULT_ACTION_TYPES);
+
+  let messagingConversationsStarted = 0;
+  MESSAGING_CONVERSATION_STARTED_ACTION_TYPES.forEach((actionType) => {
+    const info = agg.actions[actionType];
     if (info) {
-      leads += info.quantity;
+      messagingConversationsStarted += info.quantity;
     }
   });
 
@@ -246,6 +263,7 @@ export function buildAdsetBundle(agg: AggregatedAdsetMetrics): AdsetBundle {
     clicks: agg.clicks,
     reach: agg.reach,
     leads,
+    messagingConversationsStarted,
     actions: actionsArray,
     officialResult: official ?? null,
     resultQuantity: officialQty,
@@ -269,7 +287,9 @@ export function buildCampaignBundle(
     metrics.spend += adset.spend;
     metrics.impressions += adset.impressions;
     metrics.clicks += adset.clicks;
+    metrics.reach += adset.reach;
     metrics.leads += adset.leads;
+    metrics.messagingConversationsStarted += adset.messagingConversationsStarted;
 
     const canonical = normalizeOptimizationGoal(adset.optimizationGoal);
     const key = canonical ?? "__UNKNOWN__";

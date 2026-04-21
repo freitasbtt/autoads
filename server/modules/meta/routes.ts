@@ -1,9 +1,13 @@
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { differenceInCalendarDays, format, isValid, parseISO, subDays } from "date-fns";
-import type { User } from "@shared/schema";
+import type { Resource, User } from "@shared/schema";
 import { storage } from "../storage";
-import { MetaGraphClient, fetchMetaDashboardMetrics } from ".";
+import {
+  MetaGraphClient,
+  fetchMetaDashboardMetrics,
+  fetchMetaDashboardTopCreatives,
+} from ".";
 import type { MetricTotals as MetaMetricTotals } from ".";
 import { getMetaAccess } from "./services/access.service";
 import { resolveMetaAppSecret } from "./utils/app-config";
@@ -11,12 +15,41 @@ import { setNoCacheHeaders } from "../../utils/cache";
 import { isAuthenticated } from "../../middlewares/auth";
 import { generateAppSecretProof } from "./utils/crypto";
 import { isSystemAdminRole } from "../auth/services/role.service";
+import {
+  createDashboardShareToken,
+  verifyDashboardShareToken,
+  type DashboardShareClaims,
+} from "./utils/dashboard-share";
+import {
+  buildDashboardCacheKey,
+  getOrCreateDashboardCache,
+} from "./utils/dashboard-cache";
 
 const DATE_PARAM_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const dashboardMetricsQuerySchema = z.object({
   startDate: z.string().regex(DATE_PARAM_REGEX).optional(),
   endDate: z.string().regex(DATE_PARAM_REGEX).optional(),
 });
+const dashboardShareBodySchema = z.object({
+  startDate: z.string().regex(DATE_PARAM_REGEX),
+  endDate: z.string().regex(DATE_PARAM_REGEX),
+  accountIds: z.array(z.number().int().positive()).min(1),
+  campaignId: z.string().min(1).nullable().optional(),
+  objective: z.string().min(1).nullable().optional(),
+  status: z.string().min(1).nullable().optional(),
+  expiresInHours: z.number().int().min(1).max(168).optional(),
+});
+
+const DASHBOARD_METRICS_CACHE_TTL_MS = 60_000;
+const DASHBOARD_TOP_CREATIVES_CACHE_TTL_MS = 90_000;
+
+function sortStrings(values?: Iterable<string>): string[] {
+  return Array.from(values ?? []).sort((a, b) => a.localeCompare(b, "pt-BR"));
+}
+
+function sortNumbers(values?: Iterable<number>): number[] {
+  return Array.from(values ?? []).sort((a, b) => a - b);
+}
 
 function normalizeQueryArray(value: unknown): string[] | undefined {
   if (value === undefined || value === null) {
@@ -67,7 +100,9 @@ function emptyTotals(): MetaMetricTotals {
     resultSpend: 0,
     impressions: 0,
     clicks: 0,
+    reach: 0,
     leads: 0,
+    messagingConversationsStarted: 0,
     results: 0,
     costPerResult: null,
   };
@@ -178,8 +213,213 @@ async function fetchWithTimeoutRetry(
 
 export const metaRouter = Router();
 export const internalMetaRouter = Router();
+export const publicMetaRouter = Router();
+
+async function resolveDashboardShareContext(token: string): Promise<{
+  claims: DashboardShareClaims;
+  selectedAccounts: Resource[];
+  campaignFilterSet: Set<string> | undefined;
+  objectiveFilterSet: Set<string> | undefined;
+  statusFilterSet: Set<string> | undefined;
+}> {
+  let claims: DashboardShareClaims;
+  try {
+    claims = verifyDashboardShareToken(token);
+  } catch {
+    const error = new Error("Link compartilhado invalido ou expirado.");
+    (error as Error & { status?: number }).status = 401;
+    throw error;
+  }
+  const allResources = await storage.getResourcesByTenant(claims.tenantId);
+  const accountResources = allResources.filter((resource) => resource.type === "account");
+  const selectedAccounts = accountResources.filter((resource) =>
+    claims.accountIds.includes(resource.id),
+  );
+
+  if (selectedAccounts.length === 0) {
+    const error = new Error("Nenhuma conta encontrada para este link compartilhado.");
+    (error as Error & { status?: number }).status = 404;
+    throw error;
+  }
+
+  return {
+    claims,
+    selectedAccounts,
+    campaignFilterSet: claims.campaignId ? new Set([claims.campaignId]) : undefined,
+    objectiveFilterSet: claims.objective ? new Set([claims.objective.toUpperCase()]) : undefined,
+    statusFilterSet: claims.status ? new Set([claims.status.toUpperCase()]) : undefined,
+  };
+}
 
 metaRouter.use(isAuthenticated);
+
+metaRouter.post("/dashboard/share", async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const body = dashboardShareBodySchema.parse(req.body);
+
+    const expiresAt = new Date(
+      Date.now() + (body.expiresInHours ?? 72) * 60 * 60 * 1000,
+    ).toISOString();
+
+    const token = createDashboardShareToken({
+      tenantId: user.tenantId,
+      startDate: body.startDate,
+      endDate: body.endDate,
+      accountIds: body.accountIds,
+      campaignId: body.campaignId ?? null,
+      objective: body.objective ?? null,
+      status: body.status ?? null,
+      expiresAt,
+    });
+
+    return res.json({
+      token,
+      path: `/shared/dashboard?token=${encodeURIComponent(token)}`,
+      expiresAt,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+publicMetaRouter.get("/dashboard/share/metadata", async (req, res, next) => {
+  try {
+    const token = parseQueryParam(req.query.token);
+    const { claims, selectedAccounts } = await resolveDashboardShareContext(token);
+
+    return res.json({
+      expiresAt: claims.expiresAt,
+      dateRange: {
+        start: claims.startDate,
+        end: claims.endDate,
+      },
+      filters: {
+        campaignId: claims.campaignId ?? null,
+        objective: claims.objective ?? null,
+        status: claims.status ?? null,
+      },
+      accounts: selectedAccounts.map((account) => ({
+        id: account.id,
+        name: account.name,
+        value: account.value,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+publicMetaRouter.get("/dashboard/metrics", async (req, res, next) => {
+  try {
+    const token = parseQueryParam(req.query.token);
+    const { claims, selectedAccounts, campaignFilterSet, objectiveFilterSet, statusFilterSet } =
+      await resolveDashboardShareContext(token);
+
+    const metaAccess = await getMetaAccess(claims.tenantId);
+    if (!metaAccess) {
+      return res.status(400).json({
+        message:
+          "Integracao com Meta nao esta conectada, token expirado ou app secret ausente.",
+      });
+    }
+
+    const settings = await storage.getAppSettings();
+    const metaAppSecret = resolveMetaAppSecret(settings);
+    if (!metaAppSecret) {
+      return res.status(500).json({ message: "Meta app secret nao configurado." });
+    }
+
+    const startDate = parseISO(claims.startDate);
+    const endDate = parseISO(claims.endDate);
+    const rangeDays = differenceInCalendarDays(endDate, startDate) + 1;
+    const previousEndDate = subDays(startDate, 1);
+    const previousStartDate = subDays(previousEndDate, Math.max(rangeDays - 1, 0));
+    const previousStart = format(previousStartDate, "yyyy-MM-dd");
+    const previousEnd = format(previousEndDate, "yyyy-MM-dd");
+
+    const client = new MetaGraphClient(metaAccess.accessToken, metaAppSecret);
+    const payload = await getOrCreateDashboardCache(
+      buildDashboardCacheKey("public-dashboard-metrics", { token }),
+      DASHBOARD_METRICS_CACHE_TTL_MS,
+      async () => {
+        const metrics = await fetchMetaDashboardMetrics({
+          accounts: selectedAccounts,
+          client,
+          campaignFilterSet,
+          objectiveFilterSet,
+          statusFilterSet,
+          startDate: claims.startDate,
+          endDate: claims.endDate,
+          previousStartDate: previousStart,
+          previousEndDate: previousEnd,
+        });
+
+        return {
+          dateRange: {
+            start: claims.startDate,
+            end: claims.endDate,
+            previousStart,
+            previousEnd,
+          },
+          totals: metrics.totals,
+          previousTotals: metrics.previousTotals,
+          accounts: metrics.accounts,
+          timeline: metrics.timeline,
+        };
+      },
+    );
+
+    return res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+publicMetaRouter.get("/dashboard/top-creatives", async (req, res, next) => {
+  try {
+    const token = parseQueryParam(req.query.token);
+    const { claims, selectedAccounts, campaignFilterSet, objectiveFilterSet, statusFilterSet } =
+      await resolveDashboardShareContext(token);
+
+    const metaAccess = await getMetaAccess(claims.tenantId);
+    if (!metaAccess) {
+      return res.status(400).json({
+        message:
+          "Integracao com Meta nao esta conectada, token expirado ou app secret ausente.",
+      });
+    }
+
+    const settings = await storage.getAppSettings();
+    const metaAppSecret = resolveMetaAppSecret(settings);
+    if (!metaAppSecret) {
+      return res.status(500).json({ message: "Meta app secret nao configurado." });
+    }
+
+    const client = new MetaGraphClient(metaAccess.accessToken, metaAppSecret);
+    const payload = await getOrCreateDashboardCache(
+      buildDashboardCacheKey("public-dashboard-top-creatives", { token }),
+      DASHBOARD_TOP_CREATIVES_CACHE_TTL_MS,
+      async () => {
+        const accountsWithCreatives = await fetchMetaDashboardTopCreatives({
+          accounts: selectedAccounts,
+          client,
+          campaignFilterSet,
+          objectiveFilterSet,
+          statusFilterSet,
+          startDate: claims.startDate,
+          endDate: claims.endDate,
+        });
+
+        return { accounts: accountsWithCreatives };
+      },
+    );
+
+    return res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
 
 metaRouter.get("/dashboard/metrics", async (req, res, next) => {
   try {
@@ -192,6 +432,7 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
 
     const accountIds = parseNumberQueryParam(req.query.accountId);
     const campaignIdParams = parseStringQueryParam(req.query.campaignId);
+    const campaignNameSearch = parseQueryParam(req.query.campaignSearch).trim();
     const objectivesParam = parseStringQueryParam(req.query.objective);
     const statusParam = parseStringQueryParam(req.query.status);
 
@@ -214,6 +455,7 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
         totals: emptyTotals(),
         previousTotals: emptyTotals(),
         accounts: [],
+        timeline: [],
       });
     }
 
@@ -265,30 +507,141 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
     }
 
     const client = new MetaGraphClient(metaAccess.accessToken, metaAppSecret);
-
-    const metrics = await fetchMetaDashboardMetrics({
-      accounts: selectedAccounts,
-      client,
-      campaignFilterSet,
-      objectiveFilterSet,
-      statusFilterSet,
-      startDate: query.startDate ?? undefined,
-      endDate: query.endDate ?? undefined,
-      previousStartDate: previousStart ?? undefined,
-      previousEndDate: previousEnd ?? undefined,
+    const cacheKey = buildDashboardCacheKey("dashboard-metrics", {
+      tenantId: user.tenantId,
+      startDate: query.startDate ?? null,
+      endDate: query.endDate ?? null,
+      accountIds: sortNumbers(selectedAccounts.map((account) => account.id)),
+      campaignIds: sortStrings(campaignFilterSet),
+      campaignNameSearch: campaignNameSearch || null,
+      objectives: sortStrings(objectiveFilterSet),
+      status: sortStrings(statusFilterSet),
     });
 
-    res.json({
-      dateRange: {
-        start: query.startDate ?? null,
-        end: query.endDate ?? null,
-        previousStart,
-        previousEnd,
+    const payload = await getOrCreateDashboardCache(
+      cacheKey,
+      DASHBOARD_METRICS_CACHE_TTL_MS,
+      async () => {
+        const metrics = await fetchMetaDashboardMetrics({
+          accounts: selectedAccounts,
+          client,
+          campaignFilterSet,
+          campaignNameSearch: campaignNameSearch || undefined,
+          objectiveFilterSet,
+          statusFilterSet,
+          startDate: query.startDate ?? undefined,
+          endDate: query.endDate ?? undefined,
+          previousStartDate: previousStart ?? undefined,
+          previousEndDate: previousEnd ?? undefined,
+        });
+
+        return {
+          dateRange: {
+            start: query.startDate ?? null,
+            end: query.endDate ?? null,
+            previousStart,
+            previousEnd,
+          },
+          totals: metrics.totals,
+          previousTotals: metrics.previousTotals,
+          accounts: metrics.accounts,
+          timeline: metrics.timeline,
+        };
       },
-      totals: metrics.totals,
-      previousTotals: metrics.previousTotals,
-      accounts: metrics.accounts,
+    );
+
+    res.json(payload);
+  } catch (err) {
+    next(err);
+  }
+});
+
+metaRouter.get("/dashboard/top-creatives", async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const query = dashboardMetricsQuerySchema.parse(req.query);
+
+    if ((query.startDate && !query.endDate) || (!query.startDate && query.endDate)) {
+      return res.status(400).json({ message: "Forneca startDate e endDate juntos ou nenhum deles." });
+    }
+
+    const accountIds = parseNumberQueryParam(req.query.accountId);
+    const campaignIdParams = parseStringQueryParam(req.query.campaignId);
+    const campaignNameSearch = parseQueryParam(req.query.campaignSearch).trim();
+    const objectivesParam = parseStringQueryParam(req.query.objective);
+    const statusParam = parseStringQueryParam(req.query.status);
+
+    const allResources = await storage.getResourcesByTenant(user.tenantId);
+    const accountResources = allResources.filter((resource) => resource.type === "account");
+
+    const selectedAccounts =
+      accountIds && accountIds.length > 0
+        ? accountResources.filter((resource) => accountIds.includes(resource.id))
+        : [];
+
+    if (selectedAccounts.length === 0) {
+      return res.json({ accounts: [] });
+    }
+
+    const metaAccess = await getMetaAccess(user.tenantId);
+    if (!metaAccess) {
+      return res.status(400).json({
+        message:
+          "Integracao com Meta nao esta conectada, token expirado ou app secret ausente.",
+      });
+    }
+
+    const settings = await storage.getAppSettings();
+    const metaAppSecret = resolveMetaAppSecret(settings);
+    if (!metaAppSecret) {
+      return res.status(500).json({ message: "Meta app secret nao configurado." });
+    }
+
+    const campaignFilterSet =
+      campaignIdParams && campaignIdParams.length > 0
+        ? new Set(campaignIdParams.map(String))
+        : undefined;
+    const objectiveFilterSet =
+      objectivesParam && objectivesParam.length > 0
+        ? new Set(objectivesParam.map((value) => value.toUpperCase()))
+        : undefined;
+    const statusFilterSet =
+      statusParam && statusParam.length > 0
+        ? new Set(statusParam.map((value) => value.toUpperCase()))
+        : undefined;
+
+    const client = new MetaGraphClient(metaAccess.accessToken, metaAppSecret);
+    const cacheKey = buildDashboardCacheKey("dashboard-top-creatives", {
+      tenantId: user.tenantId,
+      startDate: query.startDate ?? null,
+      endDate: query.endDate ?? null,
+      accountIds: sortNumbers(selectedAccounts.map((account) => account.id)),
+      campaignIds: sortStrings(campaignFilterSet),
+      campaignNameSearch: campaignNameSearch || null,
+      objectives: sortStrings(objectiveFilterSet),
+      status: sortStrings(statusFilterSet),
     });
+
+    const payload = await getOrCreateDashboardCache(
+      cacheKey,
+      DASHBOARD_TOP_CREATIVES_CACHE_TTL_MS,
+      async () => {
+        const accountsWithCreatives = await fetchMetaDashboardTopCreatives({
+          accounts: selectedAccounts,
+          client,
+          campaignFilterSet,
+          campaignNameSearch: campaignNameSearch || undefined,
+          objectiveFilterSet,
+          statusFilterSet,
+          startDate: query.startDate ?? undefined,
+          endDate: query.endDate ?? undefined,
+        });
+
+        return { accounts: accountsWithCreatives };
+      },
+    );
+
+    return res.json(payload);
   } catch (err) {
     next(err);
   }

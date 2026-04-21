@@ -10,6 +10,13 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 /* ------------------------------------------
  * Tipos herdados do Dashboard
@@ -79,6 +86,7 @@ type CampaignAdReport = {
     clicks: number;
     spend: number;
     ctr: number | null;
+    frequency: number | null;
     resultQty: number;
     costPerResult: number | null;
   };
@@ -140,6 +148,11 @@ function formatCTR(v: number | null | undefined) {
   return `${v.toFixed(2)}%`;
 }
 
+function formatFrequency(v: number | null | undefined) {
+  if (v === null || v === undefined || isNaN(v)) return "—";
+  return `${v.toFixed(2)}x`;
+}
+
 /* ------------------------------------------
  * Componente principal
  * ------------------------------------------ */
@@ -155,6 +168,7 @@ export function CampaignCreativesDialog({
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [creatives, setCreatives] = useState<CampaignAdReport[]>([]);
+  const [sortBy, setSortBy] = useState<"best" | "spend" | "name">("best");
 
   const canRequest = !!campaign?.id && !!account;
 
@@ -246,6 +260,45 @@ export function CampaignCreativesDialog({
     loadCreatives();
   }, [open, canRequest, account, campaign, startDate, endDate]);
 
+  const sortedCreatives = useMemo(() => {
+    const list = [...creatives];
+
+    if (sortBy === "spend") {
+      list.sort((a, b) => b.metrics.spend - a.metrics.spend);
+      return list;
+    }
+
+    if (sortBy === "name") {
+      list.sort((a, b) =>
+        (a.ad_name ?? a.ad_id).localeCompare(b.ad_name ?? b.ad_id, "pt-BR"),
+      );
+      return list;
+    }
+
+    list.sort((a, b) => {
+      const resultDiff = b.metrics.resultQty - a.metrics.resultQty;
+      if (resultDiff !== 0) {
+        return resultDiff;
+      }
+
+      const aCost =
+        a.metrics.costPerResult === null
+          ? Number.POSITIVE_INFINITY
+          : a.metrics.costPerResult;
+      const bCost =
+        b.metrics.costPerResult === null
+          ? Number.POSITIVE_INFINITY
+          : b.metrics.costPerResult;
+      if (aCost !== bCost) {
+        return aCost - bCost;
+      }
+
+      return b.metrics.spend - a.metrics.spend;
+    });
+
+    return list;
+  }, [creatives, sortBy]);
+
   /* ------------------------------------------
    * Render helpers
    * ------------------------------------------ */
@@ -256,20 +309,20 @@ export function CampaignCreativesDialog({
     clicks,
     results,
     costPerResult,
-    ctr,
+    frequency,
   }: {
     spend: number | null | undefined;
     impressions: number | null | undefined;
     clicks: number | null | undefined;
     results: number | null | undefined;
     costPerResult: number | null | undefined;
-    ctr: number | null | undefined;
+    frequency: number | null | undefined;
   }) {
     const cells = [
       { label: "Investimento", value: formatMoney(spend) },
       { label: "Impressões", value: formatImpressions(impressions as number) },
       { label: "Cliques", value: formatInt(clicks as number) },
-      { label: "CTR", value: formatCTR(ctr) },
+      { label: "Frequência", value: formatFrequency(frequency) },
       { label: "Resultados", value: formatInt(results as number) },
       { label: "Custo / Resultado", value: formatMoney(costPerResult) },
     ];
@@ -312,13 +365,14 @@ export function CampaignCreativesDialog({
 
         {/* Preview grande da peça */}
         <div className="flex items-center justify-center p-4">
-          <div className="flex h-48 w-48 items-center justify-center overflow-hidden rounded-md border bg-muted">
+          <div className="flex min-h-[280px] w-full items-center justify-center overflow-hidden rounded-lg border bg-muted/40 p-3">
             {item.thumbnailUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={item.thumbnailUrl}
                 alt="preview do criativo"
-                className="h-full w-full object-cover"
+                className="max-h-[360px] w-full rounded-md object-contain"
+                loading="lazy"
               />
             ) : (
               <ImageIcon className="h-10 w-10 text-muted-foreground" />
@@ -333,7 +387,7 @@ export function CampaignCreativesDialog({
           clicks={m.clicks}
           results={m.resultQty}
           costPerResult={m.costPerResult}
-          ctr={m.ctr}
+          frequency={m.frequency}
         />
       </div>
     );
@@ -451,12 +505,34 @@ export function CampaignCreativesDialog({
 
   return (
     <Dialog open={open} onOpenChange={(val) => !val && onClose()}>
-      <DialogContent className="max-h-[90vh] w-full max-w-4xl overflow-hidden p-0">
+      <DialogContent className="max-h-[90vh] w-full max-w-6xl overflow-hidden p-0">
         {/* HEADER */}
         <ModalHeader />
 
         {/* CONTEÚDO SCROLLÁVEL */}
         <div className="max-h-[70vh] overflow-y-auto p-4">
+          {!loading && !errorMsg && creatives.length > 0 && (
+            <div className="mb-4 flex justify-end">
+              <div className="w-full max-w-[220px]">
+                <Select
+                  value={sortBy}
+                  onValueChange={(value) =>
+                    setSortBy(value as "best" | "spend" | "name")
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Ordenar criativos" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="best">Melhores</SelectItem>
+                    <SelectItem value="spend">Maior gasto</SelectItem>
+                    <SelectItem value="name">Nome A-Z</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          )}
+
           {loading ? (
             <div className="flex flex-col items-center justify-center gap-2 py-10 text-center text-sm text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin" />
@@ -482,8 +558,8 @@ export function CampaignCreativesDialog({
               Nenhuma peça criativa veiculada nesse período.
             </div>
           ) : (
-            <div className="grid gap-4 md:grid-cols-2">
-              {creatives.map((item) => (
+            <div className="grid gap-4 xl:grid-cols-2">
+              {sortedCreatives.map((item) => (
                 <CreativeCard
                   key={item.ad_id ?? item.creative_id ?? Math.random().toString(36)}
                   {...item}
