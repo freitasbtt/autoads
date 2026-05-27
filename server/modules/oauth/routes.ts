@@ -311,14 +311,20 @@ oauthRouter.get("/meta/callback", async (req, res) => {
     const baseUrl = getPublicAppUrl(req);
     const redirectUri = `${baseUrl}/auth/meta/callback`;
 
-    const tokenUrl =
-      `https://graph.facebook.com/v24.0/oauth/access_token?` +
-      `client_id=${settings.metaAppId}&` +
-      `client_secret=${metaAppSecret}&` +
-      `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-      `code=${code}`;
+    const tokenParams = new URLSearchParams({
+      client_id: settings.metaAppId,
+      client_secret: metaAppSecret,
+      redirect_uri: redirectUri,
+      code: String(code),
+    });
 
-    const tokenResponse = await fetch(tokenUrl);
+    const tokenResponse = await fetch("https://graph.facebook.com/v24.0/oauth/access_token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: tokenParams.toString(),
+    });
     const tokenData: any = await tokenResponse.json();
 
     if (!tokenData.access_token) {

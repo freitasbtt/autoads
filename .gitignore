@@ -9,3 +9,5 @@ env/
 venv/
 .env
 .venv
+focus-copilot-430220-a8-9affb0c35e8a.json
+.local/secrets/

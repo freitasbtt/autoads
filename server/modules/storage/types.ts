@@ -12,11 +12,27 @@ import type {
   InsertCampaignMetric,
   InsertExistingCampaignRun,
   InsertIntegration,
+  InsertMetaAccountSnapshot,
+  InsertMetaAdsetSnapshot,
+  InsertMetaCampaignSnapshot,
+  InsertMetaDestinationSnapshot,
   InsertResource,
+  InsertStorageUpload,
+  InsertStorageUploadLink,
+  InsertStorageTask,
+  InsertStorageTaskUpload,
   InsertTenant,
   InsertUser,
   Integration,
+  MetaAccountSnapshot,
+  MetaAdsetSnapshot,
+  MetaCampaignSnapshot,
+  MetaDestinationSnapshot,
   Resource,
+  StorageTask,
+  StorageTaskUpload,
+  StorageUpload,
+  StorageUploadLink,
   Tenant,
   User,
 } from "@shared/schema";
@@ -48,6 +64,40 @@ export interface IStorage {
   updateResource(id: number, resource: Partial<InsertResource>): Promise<Resource | undefined>;
   deleteResource(id: number): Promise<boolean>;
   deleteResourcesByType(tenantId: number, type: string): Promise<number>;
+  getMetaDestinationSnapshot(
+    tenantId: number,
+    adAccountId: string,
+    campaignId: string,
+    adsetId: string,
+  ): Promise<MetaDestinationSnapshot | undefined>;
+  getMetaAccountSnapshot(
+    tenantId: number,
+    adAccountId: string,
+  ): Promise<MetaAccountSnapshot | undefined>;
+  upsertMetaAccountSnapshot(
+    snapshot: InsertMetaAccountSnapshot & { tenantId: number },
+  ): Promise<MetaAccountSnapshot>;
+  getMetaCampaignSnapshotsByAccount(
+    tenantId: number,
+    adAccountId: string,
+  ): Promise<MetaCampaignSnapshot[]>;
+  replaceMetaCampaignSnapshotsByAccount(
+    tenantId: number,
+    adAccountId: string,
+    snapshots: Array<InsertMetaCampaignSnapshot & { tenantId: number }>,
+  ): Promise<MetaCampaignSnapshot[]>;
+  getMetaAdsetSnapshotsByAccount(
+    tenantId: number,
+    adAccountId: string,
+  ): Promise<MetaAdsetSnapshot[]>;
+  replaceMetaAdsetSnapshotsByAccount(
+    tenantId: number,
+    adAccountId: string,
+    snapshots: Array<InsertMetaAdsetSnapshot & { tenantId: number }>,
+  ): Promise<MetaAdsetSnapshot[]>;
+  upsertMetaDestinationSnapshot(
+    snapshot: InsertMetaDestinationSnapshot & { tenantId: number },
+  ): Promise<MetaDestinationSnapshot>;
 
   getAudience(id: number): Promise<Audience | undefined>;
   getAudiencesByTenant(tenantId: number): Promise<Audience[]>;
@@ -99,6 +149,30 @@ export interface IStorage {
     run: InsertExistingCampaignRun & { tenantId: number },
   ): Promise<ExistingCampaignRun>;
 
+  getStorageUploadLink(id: number): Promise<StorageUploadLink | undefined>;
+  getStorageUploadLinksByTenant(tenantId: number): Promise<StorageUploadLink[]>;
+  getStorageUploadLinkByPublicId(publicId: string): Promise<StorageUploadLink | undefined>;
+  createStorageUploadLink(link: InsertStorageUploadLink): Promise<StorageUploadLink>;
+  revokeStorageUploadLink(id: number, revokedAt: Date): Promise<StorageUploadLink | undefined>;
+
+  getStorageUploadsByTenant(tenantId: number): Promise<StorageUpload[]>;
+  createStorageUpload(upload: InsertStorageUpload): Promise<StorageUpload>;
+
+  getStorageTasksByTenant(tenantId: number): Promise<StorageTask[]>;
+  getStorageTask(id: number): Promise<StorageTask | undefined>;
+  getStorageTaskByBatch(
+    tenantId: number,
+    uploadLinkId: number | null,
+    batchId: string,
+  ): Promise<StorageTask | undefined>;
+  createStorageTask(task: InsertStorageTask): Promise<StorageTask>;
+  updateStorageTask(
+    id: number,
+    task: Partial<InsertStorageTask>,
+  ): Promise<StorageTask | undefined>;
+  getStorageTaskUploads(taskId: number): Promise<StorageTaskUpload[]>;
+  createStorageTaskUpload(taskUpload: InsertStorageTaskUpload): Promise<StorageTaskUpload>;
+
   getAppSettings(): Promise<AppSettings | undefined>;
   createAppSettings(settings: InsertAppSettings): Promise<AppSettings>;
   updateAppSettings(settings: Partial<InsertAppSettings>): Promise<AppSettings | undefined>;
@@ -118,11 +192,27 @@ export type {
   InsertCampaignMetric,
   InsertExistingCampaignRun,
   InsertIntegration,
+  InsertMetaAccountSnapshot,
+  InsertMetaAdsetSnapshot,
+  InsertMetaCampaignSnapshot,
+  InsertMetaDestinationSnapshot,
   InsertResource,
+  InsertStorageUpload,
+  InsertStorageUploadLink,
+  InsertStorageTask,
+  InsertStorageTaskUpload,
   InsertTenant,
   InsertUser,
   Integration,
+  MetaAccountSnapshot,
+  MetaAdsetSnapshot,
+  MetaCampaignSnapshot,
+  MetaDestinationSnapshot,
   Resource,
+  StorageTask,
+  StorageTaskUpload,
+  StorageUpload,
+  StorageUploadLink,
   Tenant,
   User,
 };

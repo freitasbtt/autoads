@@ -17,15 +17,19 @@ import Onboarding from "@/pages/Onboarding";
 import Admin from "@/pages/Admin";
 import Login from "@/pages/Login";
 import SharedDashboard from "@/pages/SharedDashboard";
+import StoragePage from "@/pages/Storage";
+import PublicStorageUpload from "@/pages/PublicStorageUpload";
+import TasksPage from "@/pages/Tasks";
+import TaskDetailPage from "@/pages/TaskDetail";
+import TaskDistributionPage from "@/pages/TaskDistribution";
+import TaskDistributionReviewPage from "@/pages/TaskDistributionReview";
 import NotFound from "@/pages/not-found";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { useEffect } from "react";
 
-/** Rota “falsa” que apenas envia o usuário para o arquivo estático */
 function LandingRedirect() {
   const [, navigate] = useLocation();
   useEffect(() => {
-    // se preferir SPA, troque por navigate("/landing.html", { replace: true })
     window.location.assign("/landing.html");
   }, [navigate]);
   return null;
@@ -43,6 +47,37 @@ function PrivateRouter() {
       <Route path="/resources" component={Resources} />
       <Route path="/integrations" component={Integrations} />
       <Route path="/onboarding" component={Onboarding} />
+      <Route path="/storage">
+        <ProtectedRoute requiredRoles={["system_admin", "tenant_admin"]}>
+          <StoragePage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/tasks">
+        <ProtectedRoute>
+          <TasksPage />
+        </ProtectedRoute>
+      </Route>
+      <Route path="/tasks/:id/distribution/review">
+        {(params) => (
+          <ProtectedRoute>
+            <TaskDistributionReviewPage taskId={params.id} />
+          </ProtectedRoute>
+        )}
+      </Route>
+      <Route path="/tasks/:id/distribution">
+        {(params) => (
+          <ProtectedRoute>
+            <TaskDistributionPage taskId={params.id} />
+          </ProtectedRoute>
+        )}
+      </Route>
+      <Route path="/tasks/:id">
+        {(params) => (
+          <ProtectedRoute>
+            <TaskDetailPage taskId={params.id} />
+          </ProtectedRoute>
+        )}
+      </Route>
       <Route path="/admin">
         <ProtectedRoute requiredRoles={["system_admin", "tenant_admin"]}>
           <Admin />
@@ -59,14 +94,21 @@ function PublicRouter() {
       <Route path="/login" component={Login} />
       <Route path="/shared/dashboard" component={SharedDashboard} />
       <Route path="/landing" component={LandingRedirect} />
-      {/* fallback público: manda para login */}
+      <Route path="/upload/:publicId">
+        {(params) => <PublicStorageUpload publicId={params.publicId} />}
+      </Route>
       <Route component={Login} />
     </Switch>
   );
 }
 
 function AppContent() {
+  const [location] = useLocation();
   const { isAuthenticated, isLoading } = useAuth();
+
+  if (location.startsWith("/upload/")) {
+    return <PublicRouter />;
+  }
 
   if (isLoading) {
     return (

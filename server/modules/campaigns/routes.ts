@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { NextFunction, Request, Response } from "express";
 import crypto from "crypto";
 import { isAuthenticated } from "../../middlewares/auth";
+import { createRateLimit } from "../../middlewares/rate-limit";
 import { storage } from "../storage";
 import type { InsertCampaign, Resource, User } from "@shared/schema";
 import { insertCampaignSchema } from "@shared/schema";
@@ -65,6 +66,45 @@ function setAdAccountCooldown(tenantId: number, adAccountId: string, now = Date.
   const expiresAt = now + AD_ACCOUNT_COOLDOWN_MS;
   adAccountCooldowns.set(key, expiresAt);
   return expiresAt;
+}
+
+function validateInternalWebhookRequest(req: Request): {
+  valid: boolean;
+  status: number;
+  message: string;
+} {
+  const configuredSecret = process.env.INTERNAL_API_SECRET?.trim();
+  if (!configuredSecret) {
+    return {
+      valid: false,
+      status: 500,
+      message: "Internal webhook secret not configured",
+    };
+  }
+
+  const providedSecret = req.get("x-internal-api-secret")?.trim();
+  if (!providedSecret) {
+    return {
+      valid: false,
+      status: 401,
+      message: "Missing x-internal-api-secret header",
+    };
+  }
+
+  const expectedBuffer = Buffer.from(configuredSecret, "utf8");
+  const providedBuffer = Buffer.from(providedSecret, "utf8");
+  if (
+    expectedBuffer.length !== providedBuffer.length ||
+    !crypto.timingSafeEqual(expectedBuffer, providedBuffer)
+  ) {
+    return {
+      valid: false,
+      status: 401,
+      message: "Unauthorized",
+    };
+  }
+
+  return { valid: true, status: 200, message: "ok" };
 }
 
 function mapObjectiveToOutcome(value: unknown): string {
@@ -171,6 +211,13 @@ async function resolveLeadformResourceId(
 
 export const campaignsRouter = Router();
 export const campaignWebhookRouter = Router();
+
+const n8nStatusWebhookRateLimit = createRateLimit({
+  name: "webhook-n8n-status",
+  windowMs: 60 * 1000,
+  max: 120,
+  message: "Muitas atualizacoes de status recebidas. Tente novamente em instantes.",
+});
 
 campaignsRouter.use(isAuthenticated);
 
@@ -918,8 +965,13 @@ campaignWebhookRouter.post("/n8n", isAuthenticated, async (req, res, next) => {
   }
 });
 
-campaignWebhookRouter.post("/n8n/status", async (req, res, next) => {
+campaignWebhookRouter.post("/n8n/status", n8nStatusWebhookRateLimit, async (req, res, next) => {
   try {
+    const validation = validateInternalWebhookRequest(req);
+    if (!validation.valid) {
+      return res.status(validation.status).json({ message: validation.message });
+    }
+
     const { campaign_id, external_id, status, status_detail } = req.body;
 
     if (campaign_id && external_id && String(campaign_id) !== String(external_id)) {

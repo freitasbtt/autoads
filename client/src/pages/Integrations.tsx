@@ -18,13 +18,21 @@ import {
 } from "@/components/ui/card";
 import StatusBadge from "@/components/StatusBadge";
 import { useToast } from "@/hooks/use-toast";
-import { queryClient } from "@/lib/queryClient";
+import { buildCsrfHeaders, captureCsrfTokenFromResponse, queryClient } from "@/lib/queryClient";
 
 interface Integration {
   id: number;
   tenantId: number;
   provider: string; // "Meta" | "Google Drive" etc.
-  config: any;
+  config?: {
+    accountName?: string | null;
+    email?: string | null;
+    tokenType?: string | null;
+    expiresAt?: string | number | null;
+    expiresIn?: string | number | null;
+    hasAccessToken?: boolean;
+    hasRefreshToken?: boolean;
+  };
   status: string; // "connected" | "pending" etc.
   createdAt?: string;
   updatedAt?: string;
@@ -129,8 +137,11 @@ export default function Integrations() {
           `/api/integrations/${integration.id}`,
           {
             method: "DELETE",
+            headers: buildCsrfHeaders(),
+            credentials: "include",
           },
         );
+        captureCsrfTokenFromResponse(res);
 
         if (!res.ok) {
           const body = await res.json().catch(() => null);

@@ -12,13 +12,21 @@ import UserManagement from "@/pages/UserManagement";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface AppSettings {
-  id: number;
+  id: number | null;
   metaAppId: string | null;
   metaAppSecret: string | null;
   googleClientId: string | null;
   googleClientSecret: string | null;
+  gcsConfigured?: boolean;
+  gcsBucketName: string | null;
+  gcsClientEmail?: string | null;
+  gcsProjectId?: string | null;
+  gcsSourceLabel?: string | null;
+  gcsFilePath?: string | null;
+  gcsReason?: string | null;
+  gcsMessage?: string | null;
   n8nWebhookUrl: string | null;
-  updatedAt: Date;
+  updatedAt: Date | null;
 }
 
 export default function Admin() {
@@ -203,6 +211,52 @@ export default function Admin() {
                       <p className="text-xs text-muted-foreground">{settings.googleClientSecret}</p>
                     )}
                   </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center gap-2">
+                    <Key className="h-5 w-5 text-amber-600" />
+                    <CardTitle>Google Cloud Storage</CardTitle>
+                  </div>
+                  <CardDescription>
+                    O GCS agora e lido diretamente do ambiente ou de arquivo local no servidor, sem depender de configuracao manual na UI.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground leading-relaxed">
+                    <div>
+                      <span className="font-medium text-foreground">Configurado:</span>{" "}
+                      {settings?.gcsConfigured ? "Sim" : "Nao"}
+                    </div>
+                    <div>
+                      <span className="font-medium text-foreground">Bucket:</span>{" "}
+                      {settings?.gcsBucketName ?? "-"}
+                    </div>
+                    <div>
+                      <span className="font-medium text-foreground">Projeto:</span>{" "}
+                      {settings?.gcsProjectId ?? "-"}
+                    </div>
+                    <div>
+                      <span className="font-medium text-foreground">Service account:</span>{" "}
+                      {settings?.gcsClientEmail ?? "-"}
+                    </div>
+                    <div>
+                      <span className="font-medium text-foreground">Origem:</span>{" "}
+                      {settings?.gcsSourceLabel ?? "-"}
+                    </div>
+                    <div>
+                      <span className="font-medium text-foreground">Arquivo:</span>{" "}
+                      {settings?.gcsFilePath ?? "-"}
+                    </div>
+                  </div>
+                  {settings?.gcsMessage && (
+                    <p className="text-xs text-destructive">{settings.gcsMessage}</p>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    A configuracao do GCS deve ser feita no servidor usando `GCS_BUCKET_NAME` e um arquivo local ou variavel `GCS_SERVICE_ACCOUNT_*`.
+                  </p>
                 </CardContent>
               </Card>
 

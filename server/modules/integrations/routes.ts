@@ -1,5 +1,5 @@
 import { Router } from "express";
-import type { User, InsertIntegration } from "@shared/schema";
+import type { User, InsertIntegration, Integration } from "@shared/schema";
 import { insertIntegrationSchema } from "@shared/schema";
 import { isAuthenticated } from "../../middlewares/auth";
 import { storage } from "../storage";
@@ -12,11 +12,49 @@ export const integrationsRouter = Router();
 
 integrationsRouter.use(isAuthenticated);
 
+function serializeIntegration(integration: Integration) {
+  const config = (integration.config ?? {}) as Record<string, unknown>;
+
+  return {
+    id: integration.id,
+    tenantId: integration.tenantId,
+    provider: integration.provider,
+    status: integration.status,
+    lastChecked: integration.lastChecked,
+    createdAt: integration.createdAt,
+    updatedAt: integration.updatedAt,
+    config: {
+      accountName:
+        typeof config.accountName === "string" && config.accountName.trim().length > 0
+          ? config.accountName.trim()
+          : null,
+      email:
+        typeof config.email === "string" && config.email.trim().length > 0
+          ? config.email.trim()
+          : null,
+      tokenType:
+        typeof config.tokenType === "string" && config.tokenType.trim().length > 0
+          ? config.tokenType.trim()
+          : null,
+      expiresAt:
+        typeof config.expiresAt === "number" || typeof config.expiresAt === "string"
+          ? config.expiresAt
+          : null,
+      expiresIn:
+        typeof config.expiresIn === "number" || typeof config.expiresIn === "string"
+          ? config.expiresIn
+          : null,
+      hasAccessToken: typeof config.accessToken === "string" && config.accessToken.trim().length > 0,
+      hasRefreshToken: typeof config.refreshToken === "string" && config.refreshToken.trim().length > 0,
+    },
+  };
+}
+
 integrationsRouter.get("/", async (req, res, next) => {
   try {
     const user = req.user as User;
     const integrations = await storage.getIntegrationsByTenant(user.tenantId);
-    res.json(integrations);
+    res.json(integrations.map(serializeIntegration));
   } catch (err) {
     next(err);
   }
@@ -34,7 +72,7 @@ integrationsRouter.get("/:provider", async (req, res, next) => {
       return res.status(404).json({ message: "Integration not found" });
     }
 
-    res.json(integration);
+    res.json(serializeIntegration(integration));
   } catch (err) {
     next(err);
   }
@@ -52,7 +90,7 @@ integrationsRouter.post("/", async (req, res, next) => {
 
     if (existing) {
       const updated = await storage.updateIntegration(existing.id, bodyData);
-      return res.json(updated);
+      return res.json(updated ? serializeIntegration(updated) : updated);
     }
 
     const integrationValues: InsertIntegration & { tenantId: number } = {
@@ -61,7 +99,7 @@ integrationsRouter.post("/", async (req, res, next) => {
     };
     const integration = await storage.createIntegration(integrationValues);
 
-    res.status(201).json(integration);
+    res.status(201).json(serializeIntegration(integration));
   } catch (err) {
     next(err);
   }

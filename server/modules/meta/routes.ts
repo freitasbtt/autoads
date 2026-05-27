@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { differenceInCalendarDays, format, isValid, parseISO, subDays } from "date-fns";
@@ -13,6 +14,7 @@ import { getMetaAccess } from "./services/access.service";
 import { resolveMetaAppSecret } from "./utils/app-config";
 import { setNoCacheHeaders } from "../../utils/cache";
 import { isAuthenticated } from "../../middlewares/auth";
+import { createRateLimit } from "../../middlewares/rate-limit";
 import { generateAppSecretProof } from "./utils/crypto";
 import { isSystemAdminRole } from "../auth/services/role.service";
 import {
@@ -123,8 +125,8 @@ function validateInternalRequest(req: Request): {
   status?: number;
   message?: string;
 } {
-  const configuredSecret = process.env.INTERNAL_API_SECRET;
-  if (!configuredSecret || configuredSecret.length === 0) {
+  const configuredSecret = process.env.INTERNAL_API_SECRET?.trim();
+  if (!configuredSecret) {
     return {
       valid: false,
       status: 500,
@@ -132,11 +134,21 @@ function validateInternalRequest(req: Request): {
     };
   }
 
-  const headerSecret = req.get("x-internal-api-secret");
-  const querySecret = typeof req.query.api_secret === "string" ? req.query.api_secret : undefined;
-  const providedSecret = headerSecret ?? querySecret;
+  const providedSecret = req.get("x-internal-api-secret")?.trim();
+  if (!providedSecret) {
+    return {
+      valid: false,
+      status: 401,
+      message: "Missing x-internal-api-secret header",
+    };
+  }
 
-  if (providedSecret !== configuredSecret) {
+  const expectedBuffer = Buffer.from(configuredSecret, "utf8");
+  const providedBuffer = Buffer.from(providedSecret, "utf8");
+  if (
+    expectedBuffer.length !== providedBuffer.length ||
+    !crypto.timingSafeEqual(expectedBuffer, providedBuffer)
+  ) {
     return { valid: false, status: 401, message: "Unauthorized" };
   }
 
@@ -180,6 +192,100 @@ type FetchRetryOptions = {
   retryDelayMs: number;
 };
 
+type LeadformPageCacheEntry = {
+  forms: Resource[];
+  expiresAtMs: number;
+};
+
+const leadformPageMemoryCache = new Map<string, LeadformPageCacheEntry>();
+
+function getLeadformCacheTtlMs() {
+  const ttlHoursRaw = Number.parseInt(process.env.META_PAGE_LEADFORMS_TTL_HOURS ?? "24", 10);
+  const ttlHours = Number.isFinite(ttlHoursRaw) && ttlHoursRaw > 0 ? ttlHoursRaw : 24;
+  return ttlHours * 60 * 60 * 1000;
+}
+
+function buildLeadformCacheKey(tenantId: number, pageId: string) {
+  return `${tenantId}:${pageId}`;
+}
+
+function asResourceMetadata(resource: Resource) {
+  return (resource.metadata ?? {}) as Record<string, unknown>;
+}
+
+function parseMetadataDate(value: unknown) {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return null;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function sortLeadformResources(forms: Resource[]) {
+  return [...forms].sort((a, b) => {
+    const aMeta = asResourceMetadata(a);
+    const bMeta = asResourceMetadata(b);
+    const aCreatedTime = parseMetadataDate(aMeta.createdTime) ?? a.createdAt.getTime();
+    const bCreatedTime = parseMetadataDate(bMeta.createdTime) ?? b.createdAt.getTime();
+    return bCreatedTime - aCreatedTime;
+  });
+}
+
+function getFreshMemoryLeadforms(tenantId: number, pageId: string) {
+  const key = buildLeadformCacheKey(tenantId, pageId);
+  const cached = leadformPageMemoryCache.get(key);
+  if (!cached) {
+    return null;
+  }
+  if (cached.expiresAtMs <= Date.now()) {
+    leadformPageMemoryCache.delete(key);
+    return null;
+  }
+  return cached.forms;
+}
+
+function setMemoryLeadforms(tenantId: number, pageId: string, forms: Resource[], expiresAt: Date) {
+  const key = buildLeadformCacheKey(tenantId, pageId);
+  leadformPageMemoryCache.set(key, {
+    forms,
+    expiresAtMs: expiresAt.getTime(),
+  });
+}
+
+async function getStoredLeadformsByPage(tenantId: number, pageId: string) {
+  const [leadforms, syncMarkers] = await Promise.all([
+    storage.getResourcesByType(tenantId, "leadform"),
+    storage.getResourcesByType(tenantId, "leadform_page_sync"),
+  ]);
+
+  const formsForPage = sortLeadformResources(
+    leadforms.filter((resource) => {
+      const metadata = asResourceMetadata(resource);
+      return metadata.pageId === pageId;
+    }),
+  );
+
+  const syncMarker = syncMarkers.find((resource) => resource.value === pageId);
+  if (!syncMarker) {
+    return {
+      forms: formsForPage,
+      syncMarker: null,
+      fresh: false,
+      expiresAt: null,
+    };
+  }
+
+  const expiresAtMs = parseMetadataDate(asResourceMetadata(syncMarker).expiresAt);
+  const isFresh = typeof expiresAtMs === "number" && expiresAtMs > Date.now();
+
+  return {
+    forms: formsForPage,
+    syncMarker,
+    fresh: isFresh,
+    expiresAt: typeof expiresAtMs === "number" ? new Date(expiresAtMs) : null,
+  };
+}
+
 async function fetchWithTimeoutRetry(
   input: string | URL,
   init: RequestInit | undefined,
@@ -214,6 +320,20 @@ async function fetchWithTimeoutRetry(
 export const metaRouter = Router();
 export const internalMetaRouter = Router();
 export const publicMetaRouter = Router();
+
+const internalMetaTokenRateLimit = createRateLimit({
+  name: "internal-meta-token",
+  windowMs: 60 * 1000,
+  max: 60,
+  message: "Muitas requisicoes para o token interno da Meta. Tente novamente em instantes.",
+  keyGenerator: (req) => {
+    const tenantId =
+      typeof req.query.tenant_id === "string" && req.query.tenant_id.trim().length > 0
+        ? req.query.tenant_id.trim()
+        : "unknown-tenant";
+    return `${req.ip}:${tenantId}`;
+  },
+});
 
 async function resolveDashboardShareContext(token: string): Promise<{
   claims: DashboardShareClaims;
@@ -842,6 +962,8 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
     const user = req.user as User;
     const rawPageId = typeof req.params.pageId === "string" ? req.params.pageId.trim() : "";
     const debugParam = parseQueryParam(req.query.debug).toLowerCase();
+    const refreshParam = parseQueryParam(req.query.refresh).toLowerCase();
+    const forceRefresh = refreshParam === "1" || refreshParam === "true" || refreshParam === "yes";
     const debugRequested = debugParam === "1" || debugParam === "true" || debugParam === "yes";
     const debugEnabled = debugRequested && isSystemAdminRole(user.role);
     const debugContext: Record<string, unknown> | null = debugRequested
@@ -865,6 +987,25 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
 
     const pageResources = await storage.getResourcesByType(user.tenantId, "page");
     const pageResource = pageResources.find((resource) => resource.value === rawPageId);
+
+    if (!forceRefresh) {
+      const memoryForms = getFreshMemoryLeadforms(user.tenantId, rawPageId);
+      if (memoryForms) {
+        setNoCacheHeaders(res);
+        res.setHeader("X-Autoads-Leadforms-Source", "memory");
+        res.removeHeader("ETag");
+        return res.json(memoryForms);
+      }
+
+      const stored = await getStoredLeadformsByPage(user.tenantId, rawPageId);
+      if (stored.fresh && stored.expiresAt) {
+        setMemoryLeadforms(user.tenantId, rawPageId, stored.forms, stored.expiresAt);
+        setNoCacheHeaders(res);
+        res.setHeader("X-Autoads-Leadforms-Source", "db");
+        res.removeHeader("ETag");
+        return res.json(stored.forms);
+      }
+    }
 
     const userAccess = await getMetaAccess(user.tenantId);
     if (!userAccess || typeof userAccess.accessToken !== "string" || userAccess.accessToken.trim().length === 0) {
@@ -1093,13 +1234,17 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
 
               const name = typeof item?.name === "string" && item.name.length > 0 ? item.name : id;
               const status = typeof item?.status === "string" ? item.status : null;
+              const createdTime = typeof item?.created_time === "string" ? item.created_time : null;
 
-              return { id, name, status };
+              return { id, name, status, createdTime };
             })
             .filter(Boolean)
         : [];
 
-    const existingLeadforms = await storage.getResourcesByType(user.tenantId, "leadform");
+    const [existingLeadforms, existingSyncMarkers] = await Promise.all([
+      storage.getResourcesByType(user.tenantId, "leadform"),
+      storage.getResourcesByType(user.tenantId, "leadform_page_sync"),
+    ]);
     const manualLeadforms = existingLeadforms.filter((resource) => {
       const metadata = (resource.metadata ?? {}) as Record<string, unknown>;
       const metaPageId = typeof metadata.pageId === "string" ? metadata.pageId : null;
@@ -1117,6 +1262,14 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
         })
         .map((resource) => [resource.value, resource]),
     );
+    const metaLeadformsForPage = existingLeadforms.filter((resource) => {
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>;
+      const metaPageId = typeof metadata.pageId === "string" ? metadata.pageId : null;
+      const source = typeof metadata.source === "string" ? metadata.source : null;
+      return metaPageId === rawPageId && source !== "manual";
+    });
+    const returnedFormIds = new Set(forms.map((form: any) => form.id));
+    const staleMetaLeadforms = metaLeadformsForPage.filter((resource) => !returnedFormIds.has(resource.value));
 
     const syncedForms = await Promise.all(
       forms.map((form: any) => {
@@ -1129,6 +1282,7 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
           pageId: rawPageId,
           pageName: pageResource?.name ?? null,
           status: form.status ?? null,
+          createdTime: form.createdTime ?? null,
           source: "meta",
         };
 
@@ -1149,18 +1303,59 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
       }),
     );
 
+    await Promise.all(staleMetaLeadforms.map((resource) => storage.deleteResource(resource.id)));
+
     const createdForms = syncedForms.filter(
       (resource): resource is NonNullable<typeof resource> => Boolean(resource),
     );
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + getLeadformCacheTtlMs());
+    const syncMarker = existingSyncMarkers.find((resource) => resource.value === rawPageId);
+    const syncMarkerMetadata = {
+      pageId: rawPageId,
+      pageName: pageResource?.name ?? null,
+      source: "meta_cache",
+      syncedAt: now.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      resultCount: forms.length,
+    };
+
+    if (syncMarker) {
+      await storage.updateResource(syncMarker.id, {
+        name: `Leadforms cache ${pageResource?.name ?? rawPageId}`,
+        metadata: syncMarkerMetadata,
+      });
+    } else {
+      await storage.createResource({
+        tenantId: user.tenantId,
+        type: "leadform_page_sync",
+        name: `Leadforms cache ${pageResource?.name ?? rawPageId}`,
+        value: rawPageId,
+        metadata: syncMarkerMetadata,
+      });
+    }
+
+    const responseForms = sortLeadformResources([...createdForms, ...manualLeadforms]);
+    setMemoryLeadforms(user.tenantId, rawPageId, responseForms, expiresAt);
 
     setNoCacheHeaders(res);
+    res.setHeader("X-Autoads-Leadforms-Source", "meta");
     res.removeHeader("ETag");
-    return res.json([...createdForms, ...manualLeadforms]);
+    return res.json(responseForms);
   } catch (err) {
     console.error("Failed to load Meta lead forms:", err);
-    return res
-      .status(500)
-      .json(attachDebug({ message: "Falha ao carregar formularios da pagina." }));
+    const user = req.user as User;
+    const rawPageId = typeof req.params.pageId === "string" ? req.params.pageId.trim() : "";
+    if (rawPageId.length > 0) {
+      const stored = await getStoredLeadformsByPage(user.tenantId, rawPageId);
+      if (stored.forms.length > 0) {
+        setNoCacheHeaders(res);
+        res.setHeader("X-Autoads-Leadforms-Source", "db_stale");
+        res.removeHeader("ETag");
+        return res.json(stored.forms);
+      }
+    }
+    return res.status(500).json({ message: "Falha ao carregar formularios da pagina." });
   }
 });
 
@@ -1420,12 +1615,14 @@ metaRouter.get("/meta/pages/:pageId/posts", async (req, res) => {
   }
 });
 
-internalMetaRouter.get("/meta/token", async (req, res) => {
+internalMetaRouter.get("/meta/token", internalMetaTokenRateLimit, async (req, res) => {
   try {
     const validation = validateInternalRequest(req);
     if (!validation.valid) {
       return res.status(validation.status ?? 401).json({ message: validation.message ?? "Unauthorized" });
     }
+
+    setNoCacheHeaders(res);
 
     const tenantIdParam = req.query.tenant_id;
     if (typeof tenantIdParam !== "string" || tenantIdParam.trim().length === 0) {

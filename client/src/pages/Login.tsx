@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { captureCsrfTokenFromResponse, setCsrfToken } from "@/lib/queryClient";
 
 export default function Login() {
   const [email, setEmail] = useState("");
@@ -30,7 +31,9 @@ export default function Login() {
         throw new Error(data.message || "Falha no login");
       }
 
+      captureCsrfTokenFromResponse(res);
       const data = await res.json();
+      setCsrfToken(data.csrfToken);
       login(data.user);
       toast({
         title: "Login realizado com sucesso!",

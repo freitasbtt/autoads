@@ -19,6 +19,13 @@ export type GraphCampaign = {
   name?: string;
   status?: string;
   objective?: string;
+  buying_type?: string;
+  configured_status?: string;
+  effective_status?: string;
+  daily_budget?: string;
+  lifetime_budget?: string;
+  updated_time?: string;
+  special_ad_categories?: string[];
 };
 
 export type GraphActionEntry = {
@@ -59,6 +66,25 @@ export type GraphAdset = {
   campaign_id?: string;
   end_time?: string;
   status?: string;
+  configured_status?: string;
+  effective_status?: string;
+  optimization_goal?: string;
+  billing_event?: string;
+  bid_strategy?: string;
+  updated_time?: string;
+  promoted_object?: GraphPromotedObject;
+};
+
+export type GraphPromotedObject = {
+  page_id?: string;
+  instagram_actor_id?: string;
+  instagram_user_id?: string;
+  lead_ads_form_id?: string;
+  leadgen_form_id?: string;
+  lead_gen_form_id?: string;
+  whatsapp_number?: string;
+  phone_number?: string;
+  [key: string]: unknown;
 };
 
 export type GraphAdLevelInsightRow = {
@@ -79,14 +105,25 @@ export type GraphAdCreative = {
   image_url?: string;
   thumbnail_url?: string;
   object_story_spec?: {
+    page_id?: string;
+    instagram_actor_id?: string;
+    instagram_user_id?: string;
     link_data?: {
       picture?: string;
       image_hash?: string;
       link?: string;
+      call_to_action?: {
+        type?: string;
+        value?: Record<string, unknown>;
+      };
     };
     video_data?: {
       image_url?: string;
       video_id?: string;
+      call_to_action?: {
+        type?: string;
+        value?: Record<string, unknown>;
+      };
     };
   };
   asset_feed_spec?: {
@@ -103,10 +140,17 @@ export type GraphAdCreative = {
 
 export type GraphAd = {
   id?: string;
+  adset_id?: string;
   status?: string;
   effective_status?: string;
+  adset?: {
+    id?: string;
+    name?: string;
+    promoted_object?: GraphPromotedObject;
+  };
   creative?: {
     id?: string;
+    object_story_spec?: GraphAdCreative["object_story_spec"];
   };
 };
 

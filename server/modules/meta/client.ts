@@ -137,14 +137,24 @@ export class MetaGraphClient implements MetaGraphApiClient {
 
   async fetchCampaigns(accountId: string): Promise<GraphCampaign[]> {
     return this.fetchEdge<GraphCampaign>(`/${accountId}/campaigns`, {
-      fields: "id,name,status,objective",
+      fields:
+        "id,name,status,objective,buying_type,configured_status,effective_status,daily_budget,lifetime_budget,updated_time,special_ad_categories",
       limit: "200",
     });
   }
 
   async fetchAdsets(accountId: string): Promise<GraphAdset[]> {
     return this.fetchEdge<GraphAdset>(`/${accountId}/adsets`, {
-      fields: "id,name,campaign_id,end_time,status",
+      fields:
+        "id,name,campaign_id,end_time,status,configured_status,effective_status,optimization_goal,billing_event,bid_strategy,updated_time,promoted_object",
+      limit: "200",
+    });
+  }
+
+  async fetchCampaignAdsWithDestination(campaignId: string): Promise<GraphAd[]> {
+    return this.fetchEdge<GraphAd>(`/${campaignId}/ads`, {
+      fields:
+        "id,adset_id,status,effective_status,adset{id,name,promoted_object},creative{id,object_story_spec{page_id,instagram_actor_id,link_data{picture,image_hash,link,call_to_action{type,value}},video_data{image_url,video_id,call_to_action{type,value}}}}",
       limit: "200",
     });
   }

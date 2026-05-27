@@ -1,6 +1,6 @@
 import { createServer, type Server } from "http";
 import { storage } from "./modules/storage";
-import { pingDatabase } from "./db";
+import { ensureGcsStorageSchema, pingDatabase } from "./db";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import session from "express-session";
@@ -15,6 +15,7 @@ import { existsSync } from "node:fs";
 import { verifyPassword } from "./modules/auth/services/password.service";
 import { resourcesRouter } from "./modules/resources/routes";
 import { setNoCacheHeaders } from "./utils/cache";
+import { ensureCsrfToken, getCsrfHeaderName, shouldSkipCsrfProtection, validateCsrfToken } from "./utils/csrf";
 import { audiencesRouter } from "./modules/audiences/routes";
 import { campaignsRouter, campaignWebhookRouter } from "./modules/campaigns/routes";
 import { integrationsRouter } from "./modules/integrations/routes";
@@ -25,6 +26,8 @@ import { oauthRouter } from "./modules/oauth/routes";
 import { realtimeRouter } from "./modules/realtime/routes";
 import { driveRouter } from "./modules/drive/routes";
 import { existingCampaignRouter } from "./modules/existing-campaign/routes";
+import { gcsRouter, publicGcsRouter } from "./modules/gcs/routes";
+import { publicTasksRouter, tasksRouter } from "./modules/tasks/routes";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -36,6 +39,7 @@ declare module "express-session" {
     oauthTenantId?: number;
     oauthState?: string;
     oauthProvider?: "meta" | "google";
+    csrfToken?: string;
   }
 }
 
@@ -79,6 +83,8 @@ passport.deserializeUser(async (id: number, done) => {
 });
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  await ensureGcsStorageSchema();
+
   app.get("/api/health", async (_req, res) => {
     try {
       await pingDatabase();
@@ -101,12 +107,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
       resave: false,
       saveUninitialized: false,
       store: new MemoryStore({ checkPeriod: 86400000 }),
-      cookie: { secure: false, maxAge: 7 * 24 * 60 * 60 * 1000 }, // 7 days
+      cookie: {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: (process.env.NODE_ENV ?? "development") === "production" || process.env.FORCE_HTTPS === "true",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      }, // 7 days
     })
   );
 
   app.use(passport.initialize());
   app.use(passport.session());
+
+  app.use((req, res, next) => {
+    if (!req.path.startsWith("/api") || req.path.startsWith("/api/public/")) {
+      return next();
+    }
+
+    const csrfToken = ensureCsrfToken(req);
+    res.setHeader(getCsrfHeaderName(), csrfToken);
+
+    if (shouldSkipCsrfProtection(req)) {
+      return next();
+    }
+
+    if (!req.isAuthenticated()) {
+      return next();
+    }
+
+    const validation = validateCsrfToken(req);
+    if (!validation.valid) {
+      return res.status(validation.status).json({ message: validation.message });
+    }
+
+    return next();
+  });
 
   const publicDirCandidates = [
     resolve(__dirname, "../client/public"),
@@ -162,6 +197,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
   // ===== Router Composition =====
 
+  app.use("/api/public", publicGcsRouter);
+  app.use("/api/public", publicMetaRouter);
+  app.use("/api/public", publicTasksRouter);
   app.use("/api/auth", authRouter);
   app.use("/api/resources", resourcesRouter);
   app.use("/api/integrations", integrationsRouter);
@@ -172,8 +210,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/events", realtimeRouter);
   app.use("/api", driveRouter);
   app.use("/api", existingCampaignRouter);
+  app.use("/api", gcsRouter);
+  app.use("/api", tasksRouter);
   app.use("/api", metaRouter);
-  app.use("/api/public", publicMetaRouter);
   app.use("/internal", internalMetaRouter);
   app.use("/auth", oauthRouter);
 
@@ -181,5 +220,3 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   return httpServer;
 }
-
-

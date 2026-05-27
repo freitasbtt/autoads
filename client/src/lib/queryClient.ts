@@ -1,5 +1,31 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+const CSRF_HEADER_NAME = "x-csrf-token";
+let csrfToken: string | null = null;
+
+export function setCsrfToken(token: string | null | undefined) {
+  csrfToken = typeof token === "string" && token.trim().length > 0 ? token.trim() : null;
+}
+
+export function getCsrfToken() {
+  return csrfToken;
+}
+
+export function captureCsrfTokenFromResponse(res: Response) {
+  const token = res.headers.get(CSRF_HEADER_NAME);
+  if (token && token.trim().length > 0) {
+    setCsrfToken(token);
+  }
+}
+
+export function buildCsrfHeaders(headers?: HeadersInit): Headers {
+  const nextHeaders = new Headers(headers ?? {});
+  if (csrfToken) {
+    nextHeaders.set(CSRF_HEADER_NAME, csrfToken);
+  }
+  return nextHeaders;
+}
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
@@ -12,13 +38,19 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  const normalizedMethod = method.toUpperCase();
+  const headers =
+    data !== undefined
+      ? buildCsrfHeaders({ "Content-Type": "application/json" })
+      : buildCsrfHeaders();
   const res = await fetch(url, {
-    method,
-    headers: data ? { "Content-Type": "application/json" } : {},
+    method: normalizedMethod,
+    headers,
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
 
+  captureCsrfTokenFromResponse(res);
   await throwIfResNotOk(res);
   return res;
 }
@@ -32,6 +64,7 @@ export const getQueryFn: <T>(options: {
     const res = await fetch(queryKey.join("/") as string, {
       credentials: "include",
     });
+    captureCsrfTokenFromResponse(res);
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
       return null;

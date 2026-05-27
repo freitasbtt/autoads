@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import type { User } from "@shared/schema";
+import { buildCsrfHeaders, captureCsrfTokenFromResponse, setCsrfToken } from "@/lib/queryClient";
 
 interface AuthContextType {
   user: User | null;
@@ -24,12 +25,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
 
         if (res.ok) {
+          captureCsrfTokenFromResponse(res);
           const data = await res.json();
           setUser(data.user);
+          setCsrfToken(data.csrfToken);
         }
       } catch (error) {
         // User is not authenticated
         setUser(null);
+        setCsrfToken(null);
       } finally {
         setIsLoading(false);
       }
@@ -46,12 +50,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await fetch("/api/auth/logout", {
         method: "POST",
+        headers: buildCsrfHeaders(),
         credentials: "include",
       });
     } catch (error) {
       console.error("Logout error:", error);
     } finally {
       setUser(null);
+      setCsrfToken(null);
     }
   };
 

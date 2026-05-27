@@ -12,26 +12,54 @@ import type {
   InsertCampaignMetric,
   InsertExistingCampaignRun,
   InsertIntegration,
+  InsertMetaAccountSnapshot,
+  InsertMetaAdsetSnapshot,
+  InsertMetaCampaignSnapshot,
+  InsertMetaDestinationSnapshot,
   InsertResource,
+  InsertStorageUpload,
+  InsertStorageUploadLink,
+  InsertStorageTask,
+  InsertStorageTaskUpload,
   InsertTenant,
   InsertUser,
   Integration,
+  MetaAccountSnapshot,
+  MetaAdsetSnapshot,
+  MetaCampaignSnapshot,
+  MetaDestinationSnapshot,
   Resource,
+  StorageTask,
+  StorageTaskUpload,
+  StorageUpload,
+  StorageUploadLink,
   Tenant,
   User,
 } from "@shared/schema";
 import type { CampaignMetricsFilter, IStorage } from "./types";
+import {
+  decryptAppSettingsSecrets,
+  encryptAppSettingsSecrets,
+} from "../../utils/app-settings-secrets";
 
 export class MemStorage implements IStorage {
   private tenants = new Map<number, Tenant>();
   private users = new Map<number, User>();
   private resources = new Map<number, Resource>();
+  private metaAccountSnapshots = new Map<number, MetaAccountSnapshot>();
+  private metaCampaignSnapshots = new Map<number, MetaCampaignSnapshot>();
+  private metaAdsetSnapshots = new Map<number, MetaAdsetSnapshot>();
+  private metaDestinationSnapshots = new Map<number, MetaDestinationSnapshot>();
   private audiences = new Map<number, Audience>();
   private campaigns = new Map<number, Campaign>();
   private integrations = new Map<number, Integration>();
   private automations = new Map<number, Automation>();
   private campaignMetrics = new Map<number, CampaignMetric>();
   private existingCampaignRuns = new Map<string, ExistingCampaignRun>();
+  private storageUploadLinks = new Map<number, StorageUploadLink>();
+  private storageUploads = new Map<number, StorageUpload>();
+  private storageTasks = new Map<number, StorageTask>();
+  private storageTaskUploads = new Map<number, StorageTaskUpload>();
   private nextId = 1;
   private appSettings: AppSettings | undefined;
 
@@ -195,6 +223,176 @@ export class MemStorage implements IStorage {
       }
     }
     return deleted;
+  }
+
+  async getMetaDestinationSnapshot(
+    tenantId: number,
+    adAccountId: string,
+    campaignId: string,
+    adsetId: string,
+  ): Promise<MetaDestinationSnapshot | undefined> {
+    return Array.from(this.metaDestinationSnapshots.values()).find(
+      (snapshot) =>
+        snapshot.tenantId === tenantId &&
+        snapshot.adAccountId === adAccountId &&
+        snapshot.campaignId === campaignId &&
+        snapshot.adsetId === adsetId,
+    );
+  }
+
+  async getMetaAccountSnapshot(
+    tenantId: number,
+    adAccountId: string,
+  ): Promise<MetaAccountSnapshot | undefined> {
+    return Array.from(this.metaAccountSnapshots.values()).find(
+      (snapshot) => snapshot.tenantId === tenantId && snapshot.adAccountId === adAccountId,
+    );
+  }
+
+  async upsertMetaAccountSnapshot(
+    snapshot: InsertMetaAccountSnapshot & { tenantId: number },
+  ): Promise<MetaAccountSnapshot> {
+    const existing = await this.getMetaAccountSnapshot(snapshot.tenantId, snapshot.adAccountId);
+    const id = existing?.id ?? this.nextId++;
+    const saved: MetaAccountSnapshot = {
+      id,
+      tenantId: snapshot.tenantId,
+      resourceId: snapshot.resourceId ?? null,
+      adAccountId: snapshot.adAccountId,
+      accountName: snapshot.accountName,
+      connectionStatus: snapshot.connectionStatus ?? "connected",
+      syncedAt: snapshot.syncedAt ?? new Date(),
+      expiresAt: snapshot.expiresAt,
+      createdAt: existing?.createdAt ?? new Date(),
+      updatedAt: new Date(),
+    };
+    this.metaAccountSnapshots.set(id, saved);
+    return saved;
+  }
+
+  async getMetaCampaignSnapshotsByAccount(
+    tenantId: number,
+    adAccountId: string,
+  ): Promise<MetaCampaignSnapshot[]> {
+    return Array.from(this.metaCampaignSnapshots.values()).filter(
+      (snapshot) => snapshot.tenantId === tenantId && snapshot.adAccountId === adAccountId,
+    );
+  }
+
+  async replaceMetaCampaignSnapshotsByAccount(
+    tenantId: number,
+    adAccountId: string,
+    snapshots: Array<InsertMetaCampaignSnapshot & { tenantId: number }>,
+  ): Promise<MetaCampaignSnapshot[]> {
+    for (const [id, snapshot] of this.metaCampaignSnapshots.entries()) {
+      if (snapshot.tenantId === tenantId && snapshot.adAccountId === adAccountId) {
+        this.metaCampaignSnapshots.delete(id);
+      }
+    }
+
+    return snapshots.map((snapshot) => {
+      const id = this.nextId++;
+      const saved: MetaCampaignSnapshot = {
+        id,
+        tenantId: snapshot.tenantId,
+        adAccountId: snapshot.adAccountId,
+        campaignId: snapshot.campaignId,
+        name: snapshot.name ?? null,
+        objective: snapshot.objective ?? null,
+        status: snapshot.status ?? null,
+        buyingType: snapshot.buyingType ?? null,
+        configuredStatus: snapshot.configuredStatus ?? null,
+        effectiveStatus: snapshot.effectiveStatus ?? null,
+        dailyBudget: snapshot.dailyBudget ?? null,
+        lifetimeBudget: snapshot.lifetimeBudget ?? null,
+        updatedTime: snapshot.updatedTime ?? null,
+        specialAdCategories: snapshot.specialAdCategories ?? [],
+        syncedAt: snapshot.syncedAt ?? new Date(),
+        expiresAt: snapshot.expiresAt,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      this.metaCampaignSnapshots.set(id, saved);
+      return saved;
+    });
+  }
+
+  async getMetaAdsetSnapshotsByAccount(
+    tenantId: number,
+    adAccountId: string,
+  ): Promise<MetaAdsetSnapshot[]> {
+    return Array.from(this.metaAdsetSnapshots.values()).filter(
+      (snapshot) => snapshot.tenantId === tenantId && snapshot.adAccountId === adAccountId,
+    );
+  }
+
+  async replaceMetaAdsetSnapshotsByAccount(
+    tenantId: number,
+    adAccountId: string,
+    snapshots: Array<InsertMetaAdsetSnapshot & { tenantId: number }>,
+  ): Promise<MetaAdsetSnapshot[]> {
+    for (const [id, snapshot] of this.metaAdsetSnapshots.entries()) {
+      if (snapshot.tenantId === tenantId && snapshot.adAccountId === adAccountId) {
+        this.metaAdsetSnapshots.delete(id);
+      }
+    }
+
+    return snapshots.map((snapshot) => {
+      const id = this.nextId++;
+      const saved: MetaAdsetSnapshot = {
+        id,
+        tenantId: snapshot.tenantId,
+        adAccountId: snapshot.adAccountId,
+        campaignId: snapshot.campaignId,
+        adsetId: snapshot.adsetId,
+        name: snapshot.name ?? null,
+        status: snapshot.status ?? null,
+        configuredStatus: snapshot.configuredStatus ?? null,
+        effectiveStatus: snapshot.effectiveStatus ?? null,
+        optimizationGoal: snapshot.optimizationGoal ?? null,
+        billingEvent: snapshot.billingEvent ?? null,
+        bidStrategy: snapshot.bidStrategy ?? null,
+        updatedTime: snapshot.updatedTime ?? null,
+        promotedObject: snapshot.promotedObject ?? null,
+        syncedAt: snapshot.syncedAt ?? new Date(),
+        expiresAt: snapshot.expiresAt,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      this.metaAdsetSnapshots.set(id, saved);
+      return saved;
+    });
+  }
+
+  async upsertMetaDestinationSnapshot(
+    snapshot: InsertMetaDestinationSnapshot & { tenantId: number },
+  ): Promise<MetaDestinationSnapshot> {
+    const existing = await this.getMetaDestinationSnapshot(
+      snapshot.tenantId,
+      snapshot.adAccountId,
+      snapshot.campaignId,
+      snapshot.adsetId,
+    );
+    const id = existing?.id ?? this.nextId++;
+    const saved: MetaDestinationSnapshot = {
+      id,
+      tenantId: snapshot.tenantId,
+      adAccountId: snapshot.adAccountId,
+      campaignId: snapshot.campaignId,
+      adsetId: snapshot.adsetId,
+      destinationType: snapshot.destinationType ?? "WEBSITE",
+      pageId: snapshot.pageId ?? null,
+      instagramUserId: snapshot.instagramUserId ?? null,
+      leadgenFormId: snapshot.leadgenFormId ?? null,
+      whatsappNumber: snapshot.whatsappNumber ?? null,
+      source: snapshot.source ?? "meta",
+      syncedAt: snapshot.syncedAt ?? new Date(),
+      expiresAt: snapshot.expiresAt,
+      createdAt: existing?.createdAt ?? new Date(),
+      updatedAt: new Date(),
+    };
+    this.metaDestinationSnapshots.set(id, saved);
+    return saved;
   }
 
   async getAudience(id: number): Promise<Audience | undefined> {
@@ -447,29 +645,198 @@ export class MemStorage implements IStorage {
   ): Promise<ExistingCampaignRun> {
     const created: ExistingCampaignRun = {
       ...run,
+      externalId: run.externalId ?? null,
+      payloadOriginal: run.payloadOriginal ?? {},
+      pairsArray: Array.isArray(run.pairsArray)
+        ? (run.pairsArray as Array<Record<string, unknown>>)
+        : [],
+      previewText: run.previewText ?? "",
+      warnings: Array.isArray(run.warnings)
+        ? (run.warnings as Array<Record<string, unknown>>)
+        : [],
+      errors: Array.isArray(run.errors)
+        ? (run.errors as Array<Record<string, unknown>>)
+        : [],
+      summary: run.summary ?? {},
+      canContinue: run.canContinue ?? false,
       createdAt: new Date(),
     };
     this.existingCampaignRuns.set(run.runId, created);
     return created;
   }
 
+  async getStorageUploadLink(id: number): Promise<StorageUploadLink | undefined> {
+    return this.storageUploadLinks.get(id);
+  }
+
+  async getStorageUploadLinksByTenant(tenantId: number): Promise<StorageUploadLink[]> {
+    return Array.from(this.storageUploadLinks.values()).filter(
+      (link) => link.tenantId === tenantId,
+    );
+  }
+
+  async getStorageUploadLinkByPublicId(
+    publicId: string,
+  ): Promise<StorageUploadLink | undefined> {
+    return Array.from(this.storageUploadLinks.values()).find(
+      (link) => link.publicId === publicId,
+    );
+  }
+
+  async createStorageUploadLink(
+    link: InsertStorageUploadLink,
+  ): Promise<StorageUploadLink> {
+    const id = this.nextId++;
+    const created: StorageUploadLink = {
+      id,
+      tenantId: link.tenantId,
+      createdByUserId: link.createdByUserId ?? null,
+      name: link.name,
+      pathPrefix: link.pathPrefix ?? "",
+      publicId: link.publicId,
+      expiresAt: link.expiresAt,
+      revokedAt: link.revokedAt ?? null,
+      createdAt: new Date(),
+    };
+    this.storageUploadLinks.set(id, created);
+    return created;
+  }
+
+  async revokeStorageUploadLink(
+    id: number,
+    revokedAt: Date,
+  ): Promise<StorageUploadLink | undefined> {
+    const existing = this.storageUploadLinks.get(id);
+    if (!existing) return undefined;
+    const updated: StorageUploadLink = { ...existing, revokedAt };
+    this.storageUploadLinks.set(id, updated);
+    return updated;
+  }
+
+  async getStorageUploadsByTenant(tenantId: number): Promise<StorageUpload[]> {
+    return Array.from(this.storageUploads.values()).filter(
+      (upload) => upload.tenantId === tenantId,
+    );
+  }
+
+  async createStorageUpload(upload: InsertStorageUpload): Promise<StorageUpload> {
+    const id = this.nextId++;
+    const created: StorageUpload = {
+      id,
+      tenantId: upload.tenantId,
+      uploadLinkId: upload.uploadLinkId ?? null,
+      uploadedByUserId: upload.uploadedByUserId ?? null,
+      bucketName: upload.bucketName,
+      objectPath: upload.objectPath,
+      originalFileName: upload.originalFileName,
+      contentType: upload.contentType,
+      sizeBytes: upload.sizeBytes,
+      createdAt: new Date(),
+    };
+    this.storageUploads.set(id, created);
+    return created;
+  }
+
+  async getStorageTasksByTenant(tenantId: number): Promise<StorageTask[]> {
+    return Array.from(this.storageTasks.values()).filter((task) => task.tenantId === tenantId);
+  }
+
+  async getStorageTask(id: number): Promise<StorageTask | undefined> {
+    return this.storageTasks.get(id);
+  }
+
+  async getStorageTaskByBatch(
+    tenantId: number,
+    uploadLinkId: number | null,
+    batchId: string,
+  ): Promise<StorageTask | undefined> {
+    return Array.from(this.storageTasks.values()).find(
+      (task) =>
+        task.tenantId === tenantId &&
+        task.batchId === batchId &&
+        (task.uploadLinkId ?? null) === uploadLinkId,
+    );
+  }
+
+  async createStorageTask(task: InsertStorageTask): Promise<StorageTask> {
+    const id = this.nextId++;
+    const created: StorageTask = {
+      id,
+      tenantId: task.tenantId,
+      storageUploadId: task.storageUploadId,
+      uploadLinkId: task.uploadLinkId ?? null,
+      batchId: task.batchId ?? null,
+      title: task.title,
+      status: task.status ?? "pending",
+      pairsJson: task.pairsJson ?? [],
+      distributionJson: task.distributionJson ?? {
+        destinations: [],
+      },
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.storageTasks.set(id, created);
+    return created;
+  }
+
+  async updateStorageTask(
+    id: number,
+    task: Partial<InsertStorageTask>,
+  ): Promise<StorageTask | undefined> {
+    const existing = this.storageTasks.get(id);
+    if (!existing) return undefined;
+    const updated: StorageTask = {
+      ...existing,
+      ...task,
+      uploadLinkId: task.uploadLinkId === undefined ? existing.uploadLinkId : task.uploadLinkId,
+      batchId: task.batchId === undefined ? existing.batchId : task.batchId,
+      pairsJson: task.pairsJson === undefined ? existing.pairsJson : task.pairsJson,
+      distributionJson:
+        task.distributionJson === undefined ? existing.distributionJson : task.distributionJson,
+      updatedAt: new Date(),
+    };
+    this.storageTasks.set(id, updated);
+    return updated;
+  }
+
+  async getStorageTaskUploads(taskId: number): Promise<StorageTaskUpload[]> {
+    return Array.from(this.storageTaskUploads.values()).filter((entry) => entry.taskId === taskId);
+  }
+
+  async createStorageTaskUpload(
+    taskUpload: InsertStorageTaskUpload,
+  ): Promise<StorageTaskUpload> {
+    const id = this.nextId++;
+    const created: StorageTaskUpload = {
+      id,
+      taskId: taskUpload.taskId,
+      storageUploadId: taskUpload.storageUploadId,
+      createdAt: new Date(),
+    };
+    this.storageTaskUploads.set(id, created);
+    return created;
+  }
+
   async getAppSettings(): Promise<AppSettings | undefined> {
-    return this.appSettings;
+    return decryptAppSettingsSecrets(this.appSettings);
   }
 
   async createAppSettings(insertSettings: InsertAppSettings): Promise<AppSettings> {
+    const encryptedSettings = encryptAppSettingsSecrets(insertSettings);
     const settings: AppSettings = {
-      ...insertSettings,
+      ...encryptedSettings,
       id: 1,
-      metaAppId: insertSettings.metaAppId ?? null,
-      metaAppSecret: insertSettings.metaAppSecret ?? null,
-      googleClientId: insertSettings.googleClientId ?? null,
-      googleClientSecret: insertSettings.googleClientSecret ?? null,
-      n8nWebhookUrl: insertSettings.n8nWebhookUrl ?? null,
+      metaAppId: encryptedSettings.metaAppId ?? null,
+      metaAppSecret: encryptedSettings.metaAppSecret ?? null,
+      googleClientId: encryptedSettings.googleClientId ?? null,
+      googleClientSecret: encryptedSettings.googleClientSecret ?? null,
+      gcsBucketName: encryptedSettings.gcsBucketName ?? null,
+      gcsServiceAccountJson: encryptedSettings.gcsServiceAccountJson ?? null,
+      n8nWebhookUrl: encryptedSettings.n8nWebhookUrl ?? null,
       updatedAt: new Date(),
     };
     this.appSettings = settings;
-    return settings;
+    return decryptAppSettingsSecrets(settings) as AppSettings;
   }
 
   async updateAppSettings(
@@ -478,8 +845,9 @@ export class MemStorage implements IStorage {
     if (!this.appSettings) {
       return this.createAppSettings(updates as InsertAppSettings);
     }
-    const updated = { ...this.appSettings, ...updates, updatedAt: new Date() };
+    const encryptedUpdates = encryptAppSettingsSecrets(updates);
+    const updated = { ...this.appSettings, ...encryptedUpdates, updatedAt: new Date() };
     this.appSettings = updated;
-    return updated;
+    return decryptAppSettingsSecrets(updated);
   }
 }

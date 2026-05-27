@@ -1,4 +1,14 @@
-﻿import { Home, Settings, FileText, LayoutDashboard, Users, Plug, LogOut, Shield } from "lucide-react";
+import {
+  Settings,
+  FileText,
+  LayoutDashboard,
+  Users,
+  Plug,
+  ClipboardList,
+  LogOut,
+  Shield,
+  UploadCloud,
+} from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -15,15 +25,22 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 
-const items = [
+const items: Array<{
+  title: string;
+  url: string;
+  icon: typeof LayoutDashboard;
+  blocked?: boolean;
+}> = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
   { title: "Campanhas", url: "/campaigns", icon: FileText },
   { title: "Publicos", url: "/audiences", icon: Users },
   { title: "Recursos", url: "/resources", icon: Settings },
   { title: "Integracoes", url: "/integrations", icon: Plug },
+  { title: "Tarefas", url: "/tasks", icon: ClipboardList },
 ];
 
 const adminItems = [
+  { title: "Uploads", url: "/storage", icon: UploadCloud },
   { title: "Admin", url: "/admin", icon: Shield },
 ];
 
@@ -46,52 +63,51 @@ export function AppSidebar() {
             />
           </SidebarGroupLabel>
           <SidebarGroupContent className="mt-2">
-              <SidebarMenu>
-                {items.map((item) => (
-                  <SidebarMenuItem key={item.title}>
-                    {item.blocked ? (
-                      <SidebarMenuButton
-                        isActive={false}
-                        onClick={() =>
-                          toast({
-                            title: "Funcao Disponivel em Breve",
-                          })
-                        }
-                        className="cursor-not-allowed opacity-60"
-                        data-testid={`link-${item.title.toLowerCase()}`}
-                      >
-                        <item.icon />
-                        <span>{item.title}</span>
-                      </SidebarMenuButton>
-                    ) : (
-                      <SidebarMenuButton asChild isActive={location === item.url}>
-                        <Link href={item.url} data-testid={`link-${item.title.toLowerCase()}`}>
-                          <item.icon />
-                          <span>{item.title}</span>
-                        </Link>
-                      </SidebarMenuButton>
-                    )}
-                  </SidebarMenuItem>
-                ))}
-              {isAdmin && adminItems.map((item) => (
+            <SidebarMenu>
+              {items.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location === item.url}>
-                    <Link href={item.url} data-testid={`link-${item.title.toLowerCase()}`}>
+                  {item.blocked ? (
+                    <SidebarMenuButton
+                      isActive={false}
+                      onClick={() =>
+                        toast({
+                          title: "Funcao Disponivel em Breve",
+                        })
+                      }
+                      className="cursor-not-allowed opacity-60"
+                      data-testid={`link-${item.title.toLowerCase()}`}
+                    >
                       <item.icon />
                       <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
+                    </SidebarMenuButton>
+                  ) : (
+                    <SidebarMenuButton asChild isActive={location === item.url}>
+                      <Link href={item.url} data-testid={`link-${item.title.toLowerCase()}`}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  )}
                 </SidebarMenuItem>
               ))}
+              {isAdmin &&
+                adminItems.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild isActive={location === item.url}>
+                      <Link href={item.url} data-testid={`link-${item.title.toLowerCase()}`}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="p-4 border-t">
         <div className="flex flex-col gap-2">
-          <div className="text-sm text-muted-foreground truncate">
-            {user?.email}
-          </div>
+          <div className="text-sm text-muted-foreground truncate">{user?.email}</div>
           <Button
             variant="outline"
             size="sm"
@@ -107,5 +123,3 @@ export function AppSidebar() {
     </Sidebar>
   );
 }
-
-

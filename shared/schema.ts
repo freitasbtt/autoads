@@ -289,6 +289,8 @@ export const appSettings = pgTable("app_settings", {
   metaAppSecret: text("meta_app_secret"),
   googleClientId: text("google_client_id"),
   googleClientSecret: text("google_client_secret"),
+  gcsBucketName: text("gcs_bucket_name"),
+  gcsServiceAccountJson: text("gcs_service_account_json"),
   n8nWebhookUrl: text("n8n_webhook_url"),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -299,3 +301,278 @@ export const insertAppSettingsSchema = createInsertSchema(appSettings).omit({
 });
 export type InsertAppSettings = z.infer<typeof insertAppSettingsSchema>;
 export type AppSettings = typeof appSettings.$inferSelect;
+
+export const storageUploadLinks = pgTable("storage_upload_links", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  createdByUserId: integer("created_by_user_id").references(() => users.id),
+  name: text("name").notNull(),
+  pathPrefix: text("path_prefix").notNull().default(""),
+  publicId: text("public_id").notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
+  revokedAt: timestamp("revoked_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertStorageUploadLinkSchema = createInsertSchema(storageUploadLinks).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertStorageUploadLink = typeof storageUploadLinks.$inferInsert;
+export type StorageUploadLink = typeof storageUploadLinks.$inferSelect;
+
+export const storageUploads = pgTable("storage_uploads", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  uploadLinkId: integer("upload_link_id").references(() => storageUploadLinks.id),
+  uploadedByUserId: integer("uploaded_by_user_id").references(() => users.id),
+  bucketName: text("bucket_name").notNull(),
+  objectPath: text("object_path").notNull(),
+  originalFileName: text("original_file_name").notNull(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertStorageUploadSchema = createInsertSchema(storageUploads).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertStorageUpload = typeof storageUploads.$inferInsert;
+export type StorageUpload = typeof storageUploads.$inferSelect;
+
+export type StorageTaskPairRecord = {
+  feedUploadId: number | null;
+  storiesUploadId: number | null;
+  title: string | null;
+  text: string | null;
+};
+
+export type StorageTaskDistributionCampaignRecord = {
+  id: string;
+  name: string | null;
+  objective: string | null;
+  status: string | null;
+  buyingType: string | null;
+  configuredStatus: string | null;
+  effectiveStatus: string | null;
+  budget: string | null;
+  updatedTime: string | null;
+  specialAdCategories: string[];
+};
+
+export type StorageTaskDistributionAdsetRecord = {
+  id: string;
+  name: string | null;
+  status: string | null;
+  configuredStatus: string | null;
+  effectiveStatus: string | null;
+  optimizationGoal: string | null;
+  billingEvent: string | null;
+  bidStrategy: string | null;
+  destination: {
+    type: string;
+    pageId: string | null;
+    instagramUserId: string | null;
+    leadgenFormId: string | null;
+    whatsappNumber: string | null;
+  };
+};
+
+export type StorageTaskDistributionPairAssignmentRecord = {
+  pairId: string;
+  useCampaignDefault: boolean;
+  leadgenFormId: string | null;
+  leadgenFormName: string | null;
+};
+
+export type StorageTaskDistributionDestinationRecord = {
+  resourceId: number;
+  adAccountId: string;
+  adAccountName: string;
+  connectionStatus: string;
+  campaign: StorageTaskDistributionCampaignRecord;
+  adsets: StorageTaskDistributionAdsetRecord[];
+  applyToAllAdsets: boolean;
+  selectedAdsetIds: string[];
+  pairIds: string[];
+  campaignLeadgenFormId: string | null;
+  campaignLeadgenFormName: string | null;
+  pairAssignments: StorageTaskDistributionPairAssignmentRecord[];
+  createAdsStatus: "PAUSED" | "ACTIVE";
+};
+
+export type StorageTaskDistributionRecord = {
+  destinations: StorageTaskDistributionDestinationRecord[];
+};
+
+export const storageTasks = pgTable("storage_tasks", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  storageUploadId: integer("storage_upload_id").notNull().references(() => storageUploads.id),
+  uploadLinkId: integer("upload_link_id").references(() => storageUploadLinks.id),
+  batchId: text("batch_id"),
+  title: text("title").notNull(),
+  status: text("status").notNull().default("pending"),
+  pairsJson: jsonb("pairs_json")
+    .$type<StorageTaskPairRecord[]>()
+    .default(sql`'[]'::jsonb`)
+    .notNull(),
+  distributionJson: jsonb("distribution_json")
+    .$type<StorageTaskDistributionRecord>()
+    .default(sql`'{"destinations":[]}'::jsonb`)
+    .notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertStorageTaskSchema = createInsertSchema(storageTasks).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertStorageTask = typeof storageTasks.$inferInsert;
+export type StorageTask = typeof storageTasks.$inferSelect;
+
+export const metaDestinationSnapshots = pgTable("meta_destination_snapshots", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  adAccountId: text("ad_account_id").notNull(),
+  campaignId: text("campaign_id").notNull(),
+  adsetId: text("adset_id").notNull(),
+  destinationType: text("destination_type").notNull().default("WEBSITE"),
+  pageId: text("page_id"),
+  instagramUserId: text("instagram_user_id"),
+  leadgenFormId: text("leadgen_form_id"),
+  whatsappNumber: text("whatsapp_number"),
+  source: text("source").notNull().default("meta"),
+  syncedAt: timestamp("synced_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertMetaDestinationSnapshotSchema = createInsertSchema(metaDestinationSnapshots).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertMetaDestinationSnapshot = typeof metaDestinationSnapshots.$inferInsert;
+export type MetaDestinationSnapshot = typeof metaDestinationSnapshots.$inferSelect;
+
+export const metaAccountSnapshots = pgTable(
+  "meta_account_snapshots",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+    resourceId: integer("resource_id").references(() => resources.id),
+    adAccountId: text("ad_account_id").notNull(),
+    accountName: text("account_name").notNull(),
+    connectionStatus: text("connection_status").notNull().default("connected"),
+    syncedAt: timestamp("synced_at").defaultNow().notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    uniqueTenantAccount: uniqueIndex("uniq_meta_account_snapshots")
+      .on(table.tenantId, table.adAccountId),
+  }),
+);
+
+export const insertMetaAccountSnapshotSchema = createInsertSchema(metaAccountSnapshots).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertMetaAccountSnapshot = typeof metaAccountSnapshots.$inferInsert;
+export type MetaAccountSnapshot = typeof metaAccountSnapshots.$inferSelect;
+
+export const metaCampaignSnapshots = pgTable(
+  "meta_campaign_snapshots",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+    adAccountId: text("ad_account_id").notNull(),
+    campaignId: text("campaign_id").notNull(),
+    name: text("name"),
+    objective: text("objective"),
+    status: text("status"),
+    buyingType: text("buying_type"),
+    configuredStatus: text("configured_status"),
+    effectiveStatus: text("effective_status"),
+    dailyBudget: text("daily_budget"),
+    lifetimeBudget: text("lifetime_budget"),
+    updatedTime: text("updated_time"),
+    specialAdCategories: jsonb("special_ad_categories")
+      .$type<string[]>()
+      .default(sql`'[]'::jsonb`)
+      .notNull(),
+    syncedAt: timestamp("synced_at").defaultNow().notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    uniqueTenantCampaign: uniqueIndex("uniq_meta_campaign_snapshots")
+      .on(table.tenantId, table.adAccountId, table.campaignId),
+  }),
+);
+
+export const insertMetaCampaignSnapshotSchema = createInsertSchema(metaCampaignSnapshots).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertMetaCampaignSnapshot = typeof metaCampaignSnapshots.$inferInsert;
+export type MetaCampaignSnapshot = typeof metaCampaignSnapshots.$inferSelect;
+
+export const metaAdsetSnapshots = pgTable(
+  "meta_adset_snapshots",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+    adAccountId: text("ad_account_id").notNull(),
+    campaignId: text("campaign_id").notNull(),
+    adsetId: text("adset_id").notNull(),
+    name: text("name"),
+    status: text("status"),
+    configuredStatus: text("configured_status"),
+    effectiveStatus: text("effective_status"),
+    optimizationGoal: text("optimization_goal"),
+    billingEvent: text("billing_event"),
+    bidStrategy: text("bid_strategy"),
+    updatedTime: text("updated_time"),
+    promotedObject: jsonb("promoted_object").$type<Record<string, unknown> | null>(),
+    syncedAt: timestamp("synced_at").defaultNow().notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    uniqueTenantAdset: uniqueIndex("uniq_meta_adset_snapshots")
+      .on(table.tenantId, table.adAccountId, table.campaignId, table.adsetId),
+  }),
+);
+
+export const insertMetaAdsetSnapshotSchema = createInsertSchema(metaAdsetSnapshots).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertMetaAdsetSnapshot = typeof metaAdsetSnapshots.$inferInsert;
+export type MetaAdsetSnapshot = typeof metaAdsetSnapshots.$inferSelect;
+
+export const storageTaskUploads = pgTable("storage_task_uploads", {
+  id: serial("id").primaryKey(),
+  taskId: integer("task_id").notNull().references(() => storageTasks.id),
+  storageUploadId: integer("storage_upload_id").notNull().references(() => storageUploads.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertStorageTaskUploadSchema = createInsertSchema(storageTaskUploads).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertStorageTaskUpload = typeof storageTaskUploads.$inferInsert;
+export type StorageTaskUpload = typeof storageTaskUploads.$inferSelect;

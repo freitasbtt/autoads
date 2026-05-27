@@ -1,7 +1,12 @@
 import { db } from "../../db";
-import { eq, and, gte, lte, inArray } from "drizzle-orm";
+import { eq, and, gte, lte, inArray, isNull } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "@shared/schema";
+import {
+  appSettingsSecretsNeedMigration,
+  decryptAppSettingsSecrets,
+  encryptAppSettingsSecrets,
+} from "../../utils/app-settings-secrets";
 import type {
   AppSettings,
   Audience,
@@ -16,11 +21,27 @@ import type {
   InsertCampaignMetric,
   InsertExistingCampaignRun,
   InsertIntegration,
+  InsertMetaAccountSnapshot,
+  InsertMetaAdsetSnapshot,
+  InsertMetaCampaignSnapshot,
+  InsertMetaDestinationSnapshot,
   InsertResource,
+  InsertStorageUpload,
+  InsertStorageUploadLink,
+  InsertStorageTask,
+  InsertStorageTaskUpload,
   InsertTenant,
   InsertUser,
   Integration,
+  MetaAccountSnapshot,
+  MetaAdsetSnapshot,
+  MetaCampaignSnapshot,
+  MetaDestinationSnapshot,
   Resource,
+  StorageTask,
+  StorageTaskUpload,
+  StorageUpload,
+  StorageUploadLink,
   Tenant,
   User,
 } from "@shared/schema";
@@ -213,6 +234,181 @@ export class DbStorage implements IStorage {
       .delete(schema.resources)
       .where(and(eq(schema.resources.tenantId, tenantId), eq(schema.resources.type, type)));
     return result.rowCount ?? 0;
+  }
+
+  async getMetaDestinationSnapshot(
+    tenantId: number,
+    adAccountId: string,
+    campaignId: string,
+    adsetId: string,
+  ): Promise<MetaDestinationSnapshot | undefined> {
+    return db.query.metaDestinationSnapshots.findFirst({
+      where: and(
+        eq(schema.metaDestinationSnapshots.tenantId, tenantId),
+        eq(schema.metaDestinationSnapshots.adAccountId, adAccountId),
+        eq(schema.metaDestinationSnapshots.campaignId, campaignId),
+        eq(schema.metaDestinationSnapshots.adsetId, adsetId),
+      ),
+    });
+  }
+
+  async getMetaAccountSnapshot(
+    tenantId: number,
+    adAccountId: string,
+  ): Promise<MetaAccountSnapshot | undefined> {
+    return db.query.metaAccountSnapshots.findFirst({
+      where: and(
+        eq(schema.metaAccountSnapshots.tenantId, tenantId),
+        eq(schema.metaAccountSnapshots.adAccountId, adAccountId),
+      ),
+    });
+  }
+
+  async upsertMetaAccountSnapshot(
+    snapshot: InsertMetaAccountSnapshot & { tenantId: number },
+  ): Promise<MetaAccountSnapshot> {
+    const values = {
+      ...snapshot,
+      updatedAt: new Date(),
+    };
+    const [saved] = await db
+      .insert(schema.metaAccountSnapshots)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [
+          schema.metaAccountSnapshots.tenantId,
+          schema.metaAccountSnapshots.adAccountId,
+        ],
+        set: {
+          resourceId: values.resourceId ?? null,
+          accountName: values.accountName,
+          connectionStatus: values.connectionStatus ?? "connected",
+          syncedAt: values.syncedAt,
+          expiresAt: values.expiresAt,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return saved;
+  }
+
+  async getMetaCampaignSnapshotsByAccount(
+    tenantId: number,
+    adAccountId: string,
+  ): Promise<MetaCampaignSnapshot[]> {
+    return db.query.metaCampaignSnapshots.findMany({
+      where: and(
+        eq(schema.metaCampaignSnapshots.tenantId, tenantId),
+        eq(schema.metaCampaignSnapshots.adAccountId, adAccountId),
+      ),
+    });
+  }
+
+  async replaceMetaCampaignSnapshotsByAccount(
+    tenantId: number,
+    adAccountId: string,
+    snapshots: Array<InsertMetaCampaignSnapshot & { tenantId: number }>,
+  ): Promise<MetaCampaignSnapshot[]> {
+    return db.transaction(async (tx) => {
+      await tx
+        .delete(schema.metaCampaignSnapshots)
+        .where(
+          and(
+            eq(schema.metaCampaignSnapshots.tenantId, tenantId),
+            eq(schema.metaCampaignSnapshots.adAccountId, adAccountId),
+          ),
+        );
+
+      if (snapshots.length === 0) {
+        return [];
+      }
+
+      return tx
+        .insert(schema.metaCampaignSnapshots)
+        .values(
+          snapshots.map((snapshot) => ({
+            ...snapshot,
+            updatedAt: new Date(),
+          })),
+        )
+        .returning();
+    });
+  }
+
+  async getMetaAdsetSnapshotsByAccount(
+    tenantId: number,
+    adAccountId: string,
+  ): Promise<MetaAdsetSnapshot[]> {
+    return db.query.metaAdsetSnapshots.findMany({
+      where: and(
+        eq(schema.metaAdsetSnapshots.tenantId, tenantId),
+        eq(schema.metaAdsetSnapshots.adAccountId, adAccountId),
+      ),
+    });
+  }
+
+  async replaceMetaAdsetSnapshotsByAccount(
+    tenantId: number,
+    adAccountId: string,
+    snapshots: Array<InsertMetaAdsetSnapshot & { tenantId: number }>,
+  ): Promise<MetaAdsetSnapshot[]> {
+    return db.transaction(async (tx) => {
+      await tx
+        .delete(schema.metaAdsetSnapshots)
+        .where(
+          and(
+            eq(schema.metaAdsetSnapshots.tenantId, tenantId),
+            eq(schema.metaAdsetSnapshots.adAccountId, adAccountId),
+          ),
+        );
+
+      if (snapshots.length === 0) {
+        return [];
+      }
+
+      return tx
+        .insert(schema.metaAdsetSnapshots)
+        .values(
+          snapshots.map((snapshot) => ({
+            ...snapshot,
+            updatedAt: new Date(),
+          })),
+        )
+        .returning();
+    });
+  }
+
+  async upsertMetaDestinationSnapshot(
+    snapshot: InsertMetaDestinationSnapshot & { tenantId: number },
+  ): Promise<MetaDestinationSnapshot> {
+    const values = {
+      ...snapshot,
+      updatedAt: new Date(),
+    };
+    const [saved] = await db
+      .insert(schema.metaDestinationSnapshots)
+      .values(values)
+      .onConflictDoUpdate({
+        target: [
+          schema.metaDestinationSnapshots.tenantId,
+          schema.metaDestinationSnapshots.adAccountId,
+          schema.metaDestinationSnapshots.campaignId,
+          schema.metaDestinationSnapshots.adsetId,
+        ],
+        set: {
+          destinationType: values.destinationType ?? "WEBSITE",
+          pageId: values.pageId ?? null,
+          instagramUserId: values.instagramUserId ?? null,
+          leadgenFormId: values.leadgenFormId ?? null,
+          whatsappNumber: values.whatsappNumber ?? null,
+          source: values.source ?? "meta",
+          syncedAt: values.syncedAt,
+          expiresAt: values.expiresAt,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return saved;
   }
 
   async getAudience(id: number): Promise<Audience | undefined> {
@@ -429,25 +625,179 @@ export class DbStorage implements IStorage {
   async createExistingCampaignRun(
     run: InsertExistingCampaignRun & { tenantId: number },
   ): Promise<ExistingCampaignRun> {
+    const values = {
+      ...run,
+      externalId: run.externalId ?? null,
+      payloadOriginal: run.payloadOriginal ?? {},
+      pairsArray: Array.isArray(run.pairsArray)
+        ? (run.pairsArray as Array<Record<string, unknown>>)
+        : [],
+      previewText: run.previewText ?? "",
+      warnings: Array.isArray(run.warnings)
+        ? (run.warnings as Array<Record<string, unknown>>)
+        : [],
+      errors: Array.isArray(run.errors)
+        ? (run.errors as Array<Record<string, unknown>>)
+        : [],
+      summary: run.summary ?? {},
+      canContinue: run.canContinue ?? false,
+    };
     const [created] = await db
       .insert(schema.existingCampaignRuns)
-      .values(run)
+      .values(values)
+      .returning();
+    return created;
+  }
+
+  async getStorageUploadLink(id: number): Promise<StorageUploadLink | undefined> {
+    return db.query.storageUploadLinks.findFirst({
+      where: eq(schema.storageUploadLinks.id, id),
+    });
+  }
+
+  async getStorageUploadLinksByTenant(tenantId: number): Promise<StorageUploadLink[]> {
+    return db.query.storageUploadLinks.findMany({
+      where: eq(schema.storageUploadLinks.tenantId, tenantId),
+    });
+  }
+
+  async getStorageUploadLinkByPublicId(
+    publicId: string,
+  ): Promise<StorageUploadLink | undefined> {
+    return db.query.storageUploadLinks.findFirst({
+      where: eq(schema.storageUploadLinks.publicId, publicId),
+    });
+  }
+
+  async createStorageUploadLink(
+    link: InsertStorageUploadLink,
+  ): Promise<StorageUploadLink> {
+    const [created] = await db
+      .insert(schema.storageUploadLinks)
+      .values(link)
+      .returning();
+    return created;
+  }
+
+  async revokeStorageUploadLink(
+    id: number,
+    revokedAt: Date,
+  ): Promise<StorageUploadLink | undefined> {
+    const [updated] = await db
+      .update(schema.storageUploadLinks)
+      .set({ revokedAt })
+      .where(eq(schema.storageUploadLinks.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getStorageUploadsByTenant(tenantId: number): Promise<StorageUpload[]> {
+    return db.query.storageUploads.findMany({
+      where: eq(schema.storageUploads.tenantId, tenantId),
+    });
+  }
+
+  async createStorageUpload(upload: InsertStorageUpload): Promise<StorageUpload> {
+    const [created] = await db
+      .insert(schema.storageUploads)
+      .values(upload)
+      .returning();
+    return created;
+  }
+
+  async getStorageTasksByTenant(tenantId: number): Promise<StorageTask[]> {
+    return db.query.storageTasks.findMany({
+      where: eq(schema.storageTasks.tenantId, tenantId),
+    });
+  }
+
+  async getStorageTask(id: number): Promise<StorageTask | undefined> {
+    return db.query.storageTasks.findFirst({
+      where: eq(schema.storageTasks.id, id),
+    });
+  }
+
+  async getStorageTaskByBatch(
+    tenantId: number,
+    uploadLinkId: number | null,
+    batchId: string,
+  ): Promise<StorageTask | undefined> {
+    return db.query.storageTasks.findFirst({
+      where: and(
+        eq(schema.storageTasks.tenantId, tenantId),
+        eq(schema.storageTasks.batchId, batchId),
+        uploadLinkId === null
+          ? isNull(schema.storageTasks.uploadLinkId)
+          : eq(schema.storageTasks.uploadLinkId, uploadLinkId),
+      ),
+    });
+  }
+
+  async createStorageTask(task: InsertStorageTask): Promise<StorageTask> {
+    const [created] = await db
+      .insert(schema.storageTasks)
+      .values(task)
+      .returning();
+    return created;
+  }
+
+  async updateStorageTask(
+    id: number,
+    task: Partial<InsertStorageTask>,
+  ): Promise<StorageTask | undefined> {
+    const [updated] = await db
+      .update(schema.storageTasks)
+      .set({ ...task, updatedAt: new Date() })
+      .where(eq(schema.storageTasks.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getStorageTaskUploads(taskId: number): Promise<StorageTaskUpload[]> {
+    return db.query.storageTaskUploads.findMany({
+      where: eq(schema.storageTaskUploads.taskId, taskId),
+    });
+  }
+
+  async createStorageTaskUpload(
+    taskUpload: InsertStorageTaskUpload,
+  ): Promise<StorageTaskUpload> {
+    const [created] = await db
+      .insert(schema.storageTaskUploads)
+      .values(taskUpload)
       .returning();
     return created;
   }
 
   async getAppSettings(): Promise<AppSettings | undefined> {
-    return db.query.appSettings.findFirst();
+    const settings = await db.query.appSettings.findFirst();
+    const decrypted = decryptAppSettingsSecrets(settings);
+
+    if (settings && decrypted && appSettingsSecretsNeedMigration(settings)) {
+      const migratedSecretFields = encryptAppSettingsSecrets({
+        metaAppSecret: decrypted.metaAppSecret,
+        googleClientSecret: decrypted.googleClientSecret,
+        gcsServiceAccountJson: decrypted.gcsServiceAccountJson,
+      });
+
+      await db
+        .update(schema.appSettings)
+        .set(migratedSecretFields)
+        .where(eq(schema.appSettings.id, settings.id));
+    }
+
+    return decrypted;
   }
 
   async createAppSettings(
     insertSettings: InsertAppSettings,
   ): Promise<AppSettings> {
+    const encryptedSettings = encryptAppSettingsSecrets(insertSettings);
     const [settings] = await db
       .insert(schema.appSettings)
-      .values(insertSettings)
+      .values(encryptedSettings)
       .returning();
-    return settings;
+    return decryptAppSettingsSecrets(settings) as AppSettings;
   }
 
   async updateAppSettings(
@@ -458,12 +808,12 @@ export class DbStorage implements IStorage {
       return this.createAppSettings(updates as InsertAppSettings);
     }
 
-    const updateData = { ...updates, updatedAt: new Date() };
+    const updateData = encryptAppSettingsSecrets({ ...updates, updatedAt: new Date() });
     const [settings] = await db
       .update(schema.appSettings)
       .set(updateData)
       .where(eq(schema.appSettings.id, existing.id))
       .returning();
-    return settings;
+    return decryptAppSettingsSecrets(settings);
   }
 }

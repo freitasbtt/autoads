@@ -6,6 +6,7 @@ import { isAdmin, isSystemAdmin } from "../../middlewares/auth";
 import { isSystemAdminRole } from "../auth/services/role.service";
 import { hashPassword } from "../auth/services/password.service";
 import { resolveMetaAppSecret } from "../meta/utils/app-config";
+import { getGcsConfigSummary } from "../gcs/service";
 
 export const adminRouter = Router();
 
@@ -25,23 +26,33 @@ const updateUserSchema = z.object({
   tenantName: z.string().min(2).optional(),
 });
 
+async function serializeAdminSettings() {
+  const settings = await storage.getAppSettings();
+  const metaAppSecretConfigured = Boolean(settings && resolveMetaAppSecret(settings));
+  const gcsSummary = await getGcsConfigSummary();
+
+  return {
+    id: settings?.id ?? null,
+    metaAppId: settings?.metaAppId ?? null,
+    metaAppSecret: metaAppSecretConfigured ? "***configured***" : null,
+    googleClientId: settings?.googleClientId ?? null,
+    googleClientSecret: settings?.googleClientSecret ? "***configured***" : null,
+    gcsConfigured: gcsSummary.configured,
+    gcsBucketName: gcsSummary.bucketName,
+    gcsClientEmail: gcsSummary.clientEmail,
+    gcsProjectId: gcsSummary.projectId,
+    gcsSourceLabel: gcsSummary.sourceLabel,
+    gcsFilePath: gcsSummary.filePath,
+    gcsReason: gcsSummary.reason,
+    gcsMessage: gcsSummary.message,
+    n8nWebhookUrl: settings?.n8nWebhookUrl ?? null,
+    updatedAt: settings?.updatedAt ?? null,
+  };
+}
+
 adminRouter.get("/settings", isSystemAdmin, async (_req, res, next) => {
   try {
-    const settings = await storage.getAppSettings();
-    if (!settings) {
-      return res.json(null);
-    }
-    const metaAppSecretConfigured = Boolean(resolveMetaAppSecret(settings));
-
-    res.json({
-      id: settings.id,
-      metaAppId: settings.metaAppId,
-      metaAppSecret: metaAppSecretConfigured ? "***configured***" : null,
-      googleClientId: settings.googleClientId,
-      googleClientSecret: settings.googleClientSecret ? "***configured***" : null,
-      n8nWebhookUrl: settings.n8nWebhookUrl,
-      updatedAt: settings.updatedAt,
-    });
+    res.json(await serializeAdminSettings());
   } catch (err) {
     next(err);
   }
@@ -58,16 +69,7 @@ adminRouter.put("/settings", isSystemAdmin, async (req, res, next) => {
       return res.status(500).json({ message: "Failed to update settings" });
     }
 
-    const metaAppSecretConfigured = Boolean(resolveMetaAppSecret(settings));
-    res.json({
-      id: settings.id,
-      metaAppId: settings.metaAppId,
-      metaAppSecret: metaAppSecretConfigured ? "***configured***" : null,
-      googleClientId: settings.googleClientId,
-      googleClientSecret: settings.googleClientSecret ? "***configured***" : null,
-      n8nWebhookUrl: settings.n8nWebhookUrl,
-      updatedAt: settings.updatedAt,
-    });
+    res.json(await serializeAdminSettings());
   } catch (err) {
     next(err);
   }
