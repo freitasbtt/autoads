@@ -414,6 +414,10 @@ export const storageTasks = pgTable("storage_tasks", {
   batchId: text("batch_id"),
   title: text("title").notNull(),
   status: text("status").notNull().default("pending"),
+  configurationElapsedSeconds: integer("configuration_elapsed_seconds").notNull().default(0),
+  lastActivityAt: timestamp("last_activity_at"),
+  automationStartedAt: timestamp("automation_started_at"),
+  automationFinishedAt: timestamp("automation_finished_at"),
   pairsJson: jsonb("pairs_json")
     .$type<StorageTaskPairRecord[]>()
     .default(sql`'[]'::jsonb`)

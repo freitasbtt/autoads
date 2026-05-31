@@ -138,18 +138,23 @@ export class DbStorage implements IStorage {
   async updateResource(
     id: number,
     resource: Partial<InsertResource>,
+    tenantId?: number,
   ): Promise<Resource | undefined> {
     const [updated] = await db
       .update(schema.resources)
       .set(resource)
-      .where(eq(schema.resources.id, id))
+      .where(
+        tenantId === undefined
+          ? eq(schema.resources.id, id)
+          : and(eq(schema.resources.id, id), eq(schema.resources.tenantId, tenantId)),
+      )
       .returning();
     return updated;
   }
 
-  async deleteResource(id: number): Promise<boolean> {
+  async deleteResource(id: number, tenantId?: number): Promise<boolean> {
     const resource = await this.getResource(id);
-    if (!resource) {
+    if (!resource || (tenantId !== undefined && resource.tenantId !== tenantId)) {
       return false;
     }
 
@@ -157,34 +162,36 @@ export class DbStorage implements IStorage {
       await db
         .update(schema.campaigns)
         .set({ accountId: null })
-        .where(eq(schema.campaigns.accountId, id));
+        .where(and(eq(schema.campaigns.tenantId, resource.tenantId), eq(schema.campaigns.accountId, id)));
     }
     if (resource.type === "page") {
       await db
         .update(schema.campaigns)
         .set({ pageId: null })
-        .where(eq(schema.campaigns.pageId, id));
+        .where(and(eq(schema.campaigns.tenantId, resource.tenantId), eq(schema.campaigns.pageId, id)));
     }
     if (resource.type === "instagram") {
       await db
         .update(schema.campaigns)
         .set({ instagramId: null })
-        .where(eq(schema.campaigns.instagramId, id));
+        .where(and(eq(schema.campaigns.tenantId, resource.tenantId), eq(schema.campaigns.instagramId, id)));
     }
     if (resource.type === "leadform") {
       await db
         .update(schema.campaigns)
         .set({ leadformId: null })
-        .where(eq(schema.campaigns.leadformId, id));
+        .where(and(eq(schema.campaigns.tenantId, resource.tenantId), eq(schema.campaigns.leadformId, id)));
     }
     if (resource.type === "whatsapp") {
       await db
         .update(schema.campaigns)
         .set({ whatsappId: null })
-        .where(eq(schema.campaigns.whatsappId, id));
+        .where(and(eq(schema.campaigns.tenantId, resource.tenantId), eq(schema.campaigns.whatsappId, id)));
     }
 
-    const result = await db.delete(schema.resources).where(eq(schema.resources.id, id));
+    const result = await db
+      .delete(schema.resources)
+      .where(and(eq(schema.resources.id, id), eq(schema.resources.tenantId, resource.tenantId)));
     return (result.rowCount ?? 0) > 0;
   }
 
@@ -203,31 +210,31 @@ export class DbStorage implements IStorage {
       await db
         .update(schema.campaigns)
         .set({ accountId: null })
-        .where(inArray(schema.campaigns.accountId, ids));
+        .where(and(eq(schema.campaigns.tenantId, tenantId), inArray(schema.campaigns.accountId, ids)));
     }
     if (type === "page") {
       await db
         .update(schema.campaigns)
         .set({ pageId: null })
-        .where(inArray(schema.campaigns.pageId, ids));
+        .where(and(eq(schema.campaigns.tenantId, tenantId), inArray(schema.campaigns.pageId, ids)));
     }
     if (type === "instagram") {
       await db
         .update(schema.campaigns)
         .set({ instagramId: null })
-        .where(inArray(schema.campaigns.instagramId, ids));
+        .where(and(eq(schema.campaigns.tenantId, tenantId), inArray(schema.campaigns.instagramId, ids)));
     }
     if (type === "leadform") {
       await db
         .update(schema.campaigns)
         .set({ leadformId: null })
-        .where(inArray(schema.campaigns.leadformId, ids));
+        .where(and(eq(schema.campaigns.tenantId, tenantId), inArray(schema.campaigns.leadformId, ids)));
     }
     if (type === "whatsapp") {
       await db
         .update(schema.campaigns)
         .set({ whatsappId: null })
-        .where(inArray(schema.campaigns.whatsappId, ids));
+        .where(and(eq(schema.campaigns.tenantId, tenantId), inArray(schema.campaigns.whatsappId, ids)));
     }
 
     const result = await db
@@ -436,19 +443,28 @@ export class DbStorage implements IStorage {
   async updateAudience(
     id: number,
     audience: Partial<InsertAudience>,
+    tenantId?: number,
   ): Promise<Audience | undefined> {
     const [updated] = await db
       .update(schema.audiences)
       .set(audience)
-      .where(eq(schema.audiences.id, id))
+      .where(
+        tenantId === undefined
+          ? eq(schema.audiences.id, id)
+          : and(eq(schema.audiences.id, id), eq(schema.audiences.tenantId, tenantId)),
+      )
       .returning();
     return updated;
   }
 
-  async deleteAudience(id: number): Promise<boolean> {
+  async deleteAudience(id: number, tenantId?: number): Promise<boolean> {
     const result = await db
       .delete(schema.audiences)
-      .where(eq(schema.audiences.id, id));
+      .where(
+        tenantId === undefined
+          ? eq(schema.audiences.id, id)
+          : and(eq(schema.audiences.id, id), eq(schema.audiences.tenantId, tenantId)),
+      );
     return (result.rowCount ?? 0) > 0;
   }
 
@@ -477,17 +493,28 @@ export class DbStorage implements IStorage {
   async updateCampaign(
     id: number,
     campaign: Partial<InsertCampaign>,
+    tenantId?: number,
   ): Promise<Campaign | undefined> {
     const [updated] = await db
       .update(schema.campaigns)
       .set(campaign)
-      .where(eq(schema.campaigns.id, id))
+      .where(
+        tenantId === undefined
+          ? eq(schema.campaigns.id, id)
+          : and(eq(schema.campaigns.id, id), eq(schema.campaigns.tenantId, tenantId)),
+      )
       .returning();
     return updated;
   }
 
-  async deleteCampaign(id: number): Promise<boolean> {
-    const result = await db.delete(schema.campaigns).where(eq(schema.campaigns.id, id));
+  async deleteCampaign(id: number, tenantId?: number): Promise<boolean> {
+    const result = await db
+      .delete(schema.campaigns)
+      .where(
+        tenantId === undefined
+          ? eq(schema.campaigns.id, id)
+          : and(eq(schema.campaigns.id, id), eq(schema.campaigns.tenantId, tenantId)),
+      );
     return (result.rowCount ?? 0) > 0;
   }
 
@@ -565,19 +592,28 @@ export class DbStorage implements IStorage {
   async updateIntegration(
     id: number,
     integration: Partial<InsertIntegration>,
+    tenantId?: number,
   ): Promise<Integration | undefined> {
     const [updated] = await db
       .update(schema.integrations)
       .set(integration)
-      .where(eq(schema.integrations.id, id))
+      .where(
+        tenantId === undefined
+          ? eq(schema.integrations.id, id)
+          : and(eq(schema.integrations.id, id), eq(schema.integrations.tenantId, tenantId)),
+      )
       .returning();
     return updated;
   }
 
-  async deleteIntegration(id: number): Promise<boolean> {
+  async deleteIntegration(id: number, tenantId?: number): Promise<boolean> {
     const result = await db
       .delete(schema.integrations)
-      .where(eq(schema.integrations.id, id));
+      .where(
+        tenantId === undefined
+          ? eq(schema.integrations.id, id)
+          : and(eq(schema.integrations.id, id), eq(schema.integrations.tenantId, tenantId)),
+      );
     return (result.rowCount ?? 0) > 0;
   }
 
@@ -682,11 +718,16 @@ export class DbStorage implements IStorage {
   async revokeStorageUploadLink(
     id: number,
     revokedAt: Date,
+    tenantId?: number,
   ): Promise<StorageUploadLink | undefined> {
     const [updated] = await db
       .update(schema.storageUploadLinks)
       .set({ revokedAt })
-      .where(eq(schema.storageUploadLinks.id, id))
+      .where(
+        tenantId === undefined
+          ? eq(schema.storageUploadLinks.id, id)
+          : and(eq(schema.storageUploadLinks.id, id), eq(schema.storageUploadLinks.tenantId, tenantId)),
+      )
       .returning();
     return updated;
   }
@@ -694,6 +735,35 @@ export class DbStorage implements IStorage {
   async getStorageUploadsByTenant(tenantId: number): Promise<StorageUpload[]> {
     return db.query.storageUploads.findMany({
       where: eq(schema.storageUploads.tenantId, tenantId),
+    });
+  }
+
+  async getStorageUploadForTask(
+    taskId: number,
+    tenantId: number,
+    uploadId: number,
+  ): Promise<StorageUpload | undefined> {
+    const task = await db.query.storageTasks.findFirst({
+      where: and(eq(schema.storageTasks.id, taskId), eq(schema.storageTasks.tenantId, tenantId)),
+    });
+    if (!task) {
+      return undefined;
+    }
+
+    if (task.storageUploadId !== uploadId) {
+      const taskUpload = await db.query.storageTaskUploads.findFirst({
+        where: and(
+          eq(schema.storageTaskUploads.taskId, taskId),
+          eq(schema.storageTaskUploads.storageUploadId, uploadId),
+        ),
+      });
+      if (!taskUpload) {
+        return undefined;
+      }
+    }
+
+    return db.query.storageUploads.findFirst({
+      where: and(eq(schema.storageUploads.id, uploadId), eq(schema.storageUploads.tenantId, tenantId)),
     });
   }
 
@@ -744,13 +814,33 @@ export class DbStorage implements IStorage {
   async updateStorageTask(
     id: number,
     task: Partial<InsertStorageTask>,
+    tenantId?: number,
   ): Promise<StorageTask | undefined> {
     const [updated] = await db
       .update(schema.storageTasks)
       .set({ ...task, updatedAt: new Date() })
-      .where(eq(schema.storageTasks.id, id))
+      .where(
+        tenantId === undefined
+          ? eq(schema.storageTasks.id, id)
+          : and(eq(schema.storageTasks.id, id), eq(schema.storageTasks.tenantId, tenantId)),
+      )
       .returning();
     return updated;
+  }
+
+  async deleteStorageTask(id: number, tenantId: number): Promise<boolean> {
+    const task = await db.query.storageTasks.findFirst({
+      where: and(eq(schema.storageTasks.id, id), eq(schema.storageTasks.tenantId, tenantId)),
+    });
+    if (!task) {
+      return false;
+    }
+
+    await db.delete(schema.storageTaskUploads).where(eq(schema.storageTaskUploads.taskId, id));
+    const result = await db
+      .delete(schema.storageTasks)
+      .where(and(eq(schema.storageTasks.id, id), eq(schema.storageTasks.tenantId, tenantId)));
+    return (result.rowCount ?? 0) > 0;
   }
 
   async getStorageTaskUploads(taskId: number): Promise<StorageTaskUpload[]> {

@@ -5,7 +5,7 @@ import { storage } from "../storage";
 import { isAdmin, isSystemAdmin } from "../../middlewares/auth";
 import { isSystemAdminRole } from "../auth/services/role.service";
 import { hashPassword } from "../auth/services/password.service";
-import { resolveMetaAppSecret } from "../meta/utils/app-config";
+import { resolveMetaAppId, resolveMetaAppSecret } from "../meta/utils/app-config";
 import { getGcsConfigSummary } from "../gcs/service";
 
 export const adminRouter = Router();
@@ -28,15 +28,14 @@ const updateUserSchema = z.object({
 
 async function serializeAdminSettings() {
   const settings = await storage.getAppSettings();
+  const metaAppId = resolveMetaAppId(settings);
   const metaAppSecretConfigured = Boolean(settings && resolveMetaAppSecret(settings));
   const gcsSummary = await getGcsConfigSummary();
 
   return {
     id: settings?.id ?? null,
-    metaAppId: settings?.metaAppId ?? null,
+    metaAppId: metaAppId ? "configured" : null,
     metaAppSecret: metaAppSecretConfigured ? "***configured***" : null,
-    googleClientId: settings?.googleClientId ?? null,
-    googleClientSecret: settings?.googleClientSecret ? "***configured***" : null,
     gcsConfigured: gcsSummary.configured,
     gcsBucketName: gcsSummary.bucketName,
     gcsClientEmail: gcsSummary.clientEmail,
@@ -61,9 +60,10 @@ adminRouter.get("/settings", isSystemAdmin, async (_req, res, next) => {
 adminRouter.put("/settings", isSystemAdmin, async (req, res, next) => {
   try {
     const updates = { ...req.body } as Record<string, unknown>;
-    if (process.env.META_APP_SECRET && String(process.env.META_APP_SECRET).trim().length > 0) {
-      delete updates.metaAppSecret;
-    }
+    delete updates.metaAppId;
+    delete updates.metaAppSecret;
+    delete updates.googleClientId;
+    delete updates.googleClientSecret;
     const settings = await storage.updateAppSettings(updates);
     if (!settings) {
       return res.status(500).json({ message: "Failed to update settings" });
@@ -138,14 +138,30 @@ adminRouter.post("/users", isAdmin, async (req, res, next) => {
       return res.status(400).json({ message: "User with this email already exists" });
     }
 
-    const normalizedTenantName =
-      typeof data.tenantName === "string" ? data.tenantName.trim() : "";
-    const tenant = await storage.createTenant({
-      name: normalizedTenantName.length > 0 ? normalizedTenantName : data.email,
-    });
+    let targetTenantId = currentUser.tenantId;
+    let tenantName: string | null = null;
 
-    const targetTenantId = tenant.id;
-    const tenantName = tenant.name;
+    if (isSystemAdminRole(currentUser.role)) {
+      if (data.tenantId) {
+        const tenant = await storage.getTenant(data.tenantId);
+        if (!tenant) {
+          return res.status(404).json({ message: "Tenant not found" });
+        }
+        targetTenantId = tenant.id;
+        tenantName = tenant.name;
+      } else {
+        const normalizedTenantName =
+          typeof data.tenantName === "string" ? data.tenantName.trim() : "";
+        const tenant = await storage.createTenant({
+          name: normalizedTenantName.length > 0 ? normalizedTenantName : data.email,
+        });
+        targetTenantId = tenant.id;
+        tenantName = tenant.name;
+      }
+    } else {
+      const tenant = await storage.getTenant(currentUser.tenantId);
+      tenantName = tenant?.name ?? null;
+    }
 
     const hashedPassword = await hashPassword(data.password);
     const newUser = await storage.createUser({

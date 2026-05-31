@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import type {
   MetaAccountSnapshot,
@@ -7,6 +7,7 @@ import type {
   MetaCampaignSnapshot,
   MetaDestinationSnapshot,
   Resource,
+  StorageTask,
   StorageTaskDistributionAdsetRecord,
   StorageTaskDistributionCampaignRecord,
   StorageTaskDistributionRecord,
@@ -16,7 +17,7 @@ import type {
 import { isAuthenticated } from "../../middlewares/auth";
 import { createRateLimit } from "../../middlewares/rate-limit";
 import { storage } from "../storage";
-import { downloadObjectFromGcs } from "../gcs/service";
+import { createSignedGcsReadUrl, downloadObjectFromGcs } from "../gcs/service";
 import { MetaGraphClient } from "../meta/client";
 import { getMetaAccess } from "../meta/services/access.service";
 import { resolveMetaAppSecret } from "../meta/utils/app-config";
@@ -93,6 +94,35 @@ const distributionSchema = z.object({
 
 export const publicTasksRouter = Router();
 export const tasksRouter = Router();
+
+const TASK_IDLE_TIMEOUT_MS = Math.max(
+  30_000,
+  Number.parseInt(process.env.TASK_CONFIGURATION_IDLE_TIMEOUT_MS ?? "120000", 10),
+);
+const THUMBNAIL_CACHE_MAX_BYTES = Math.max(
+  0,
+  Number.parseInt(process.env.THUMBNAIL_MEMORY_CACHE_MAX_BYTES ?? `${64 * 1024 * 1024}`, 10),
+);
+const THUMBNAIL_BROWSER_CACHE_SECONDS = Math.max(
+  300,
+  Number.parseInt(process.env.THUMBNAIL_BROWSER_CACHE_SECONDS ?? "86400", 10),
+);
+const THUMBNAIL_SIGNED_URL_SECONDS = Math.min(
+  604800,
+  Math.max(60, Number.parseInt(process.env.THUMBNAIL_SIGNED_URL_SECONDS ?? "3600", 10)),
+);
+const THUMBNAIL_DIRECT_GCS_REDIRECT = process.env.THUMBNAIL_DIRECT_GCS_REDIRECT !== "false";
+
+type ThumbnailCacheEntry = {
+  buffer: Buffer;
+  contentType: string;
+  sizeBytes: number;
+  lastUsedAt: number;
+};
+
+const thumbnailMemoryCache = new Map<string, ThumbnailCacheEntry>();
+const pendingThumbnailDownloads = new Map<string, Promise<{ buffer: Buffer; contentType: string }>>();
+let thumbnailMemoryCacheBytes = 0;
 
 const publicTaskAssetRateLimit = createRateLimit({
   name: "public-task-assets",
@@ -197,6 +227,210 @@ function buildTaskAssetDownloadUrl(req: Parameters<typeof getPublicAppUrl>[0], t
     exp: Date.now() + ttlHours * 60 * 60 * 1000,
   });
   return `${getPublicAppUrl(req).replace(/\/$/, "")}/api/public/task-assets/${encodeURIComponent(token)}`;
+}
+
+function getThumbnailCacheKey(upload: UploadRecord) {
+  return `${upload.bucketName}:${upload.objectPath}`;
+}
+
+function buildThumbnailEtag(upload: UploadRecord) {
+  const fingerprint = [
+    upload.bucketName,
+    upload.objectPath,
+    upload.sizeBytes,
+    upload.contentType,
+    upload.createdAt.getTime(),
+  ].join(":");
+  return `"thumb-${crypto.createHash("sha256").update(fingerprint).digest("base64url")}"`;
+}
+
+function requestHasMatchingEtag(req: Request, etag: string) {
+  const header = req.headers["if-none-match"];
+  if (!header) {
+    return false;
+  }
+
+  const values = Array.isArray(header) ? header : header.split(",");
+  return values.some((value) => value.trim() === etag || value.trim() === "*");
+}
+
+function setThumbnailResponseHeaders(res: Response, etag: string) {
+  res.setHeader("ETag", etag);
+  res.setHeader("Cache-Control", `private, max-age=${THUMBNAIL_BROWSER_CACHE_SECONDS}, immutable`);
+  res.setHeader("Vary", "Cookie");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+}
+
+function pruneThumbnailMemoryCache() {
+  if (THUMBNAIL_CACHE_MAX_BYTES <= 0) {
+    thumbnailMemoryCache.clear();
+    thumbnailMemoryCacheBytes = 0;
+    return;
+  }
+
+  if (thumbnailMemoryCacheBytes <= THUMBNAIL_CACHE_MAX_BYTES) {
+    return;
+  }
+
+  const oldestEntries = Array.from(thumbnailMemoryCache.entries()).sort(
+    (a, b) => a[1].lastUsedAt - b[1].lastUsedAt,
+  );
+  for (const [key, entry] of oldestEntries) {
+    thumbnailMemoryCache.delete(key);
+    thumbnailMemoryCacheBytes -= entry.sizeBytes;
+    if (thumbnailMemoryCacheBytes <= THUMBNAIL_CACHE_MAX_BYTES) {
+      return;
+    }
+  }
+}
+
+function rememberThumbnailFile(key: string, file: { buffer: Buffer; contentType: string }) {
+  const sizeBytes = file.buffer.byteLength;
+  if (THUMBNAIL_CACHE_MAX_BYTES <= 0 || sizeBytes > THUMBNAIL_CACHE_MAX_BYTES) {
+    return;
+  }
+
+  const existing = thumbnailMemoryCache.get(key);
+  if (existing) {
+    thumbnailMemoryCacheBytes -= existing.sizeBytes;
+  }
+
+  thumbnailMemoryCache.set(key, {
+    buffer: file.buffer,
+    contentType: file.contentType,
+    sizeBytes,
+    lastUsedAt: Date.now(),
+  });
+  thumbnailMemoryCacheBytes += sizeBytes;
+  pruneThumbnailMemoryCache();
+}
+
+async function loadThumbnailFile(upload: UploadRecord) {
+  const key = getThumbnailCacheKey(upload);
+  const cached = thumbnailMemoryCache.get(key);
+  if (cached) {
+    cached.lastUsedAt = Date.now();
+    return { buffer: cached.buffer, contentType: cached.contentType };
+  }
+
+  const pending = pendingThumbnailDownloads.get(key);
+  if (pending) {
+    return pending;
+  }
+
+  const download = downloadObjectFromGcs({
+    bucketName: upload.bucketName,
+    objectPath: upload.objectPath,
+  }).then((file) => {
+    rememberThumbnailFile(key, file);
+    return file;
+  });
+
+  pendingThumbnailDownloads.set(key, download);
+  try {
+    return await download;
+  } finally {
+    pendingThumbnailDownloads.delete(key);
+  }
+}
+
+function isTerminalTaskStatus(status: string | null | undefined) {
+  const normalized = status?.trim().toLowerCase() ?? "";
+  return normalized === "completed" || normalized === "success" || normalized === "error" || normalized === "failed";
+}
+
+function normalizeCallbackTaskStatus(status: unknown) {
+  const normalized = String(status ?? "").trim().toLowerCase();
+  if (["completed", "success", "ok", "active"].includes(normalized)) {
+    return "completed";
+  }
+  if (["error", "failed", "failure"].includes(normalized)) {
+    return "error";
+  }
+  if (["publishing", "pending", "processing", "running"].includes(normalized)) {
+    return "publishing";
+  }
+  return normalized || "publishing";
+}
+
+function parseTaskIdentifier(value: unknown) {
+  const raw = String(value ?? "").trim();
+  const match = raw.match(/^task[_-]?(\d+)$/i) ?? raw.match(/^(\d+)$/);
+  if (!match) {
+    return null;
+  }
+  const taskId = Number.parseInt(match[1], 10);
+  return Number.isFinite(taskId) && taskId > 0 ? taskId : null;
+}
+
+function getTaskConfigurationDeltaSeconds(task: StorageTask, now: Date) {
+  if (isTerminalTaskStatus(task.status) || task.status === "publishing" || !task.lastActivityAt) {
+    return 0;
+  }
+
+  const elapsedMs = now.getTime() - task.lastActivityAt.getTime();
+  if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) {
+    return 0;
+  }
+
+  return Math.floor(Math.min(elapsedMs, TASK_IDLE_TIMEOUT_MS) / 1000);
+}
+
+function getTaskElapsedSeconds(task: StorageTask, now = new Date()) {
+  const configurationElapsedSeconds =
+    Math.max(0, task.configurationElapsedSeconds ?? 0) + getTaskConfigurationDeltaSeconds(task, now);
+  const automationStartedAt = task.automationStartedAt?.getTime();
+  const automationFinishedAt = task.automationFinishedAt?.getTime();
+  const automationElapsedSeconds =
+    typeof automationStartedAt === "number" && Number.isFinite(automationStartedAt)
+      ? Math.max(0, Math.floor(((automationFinishedAt ?? now.getTime()) - automationStartedAt) / 1000))
+      : 0;
+
+  return {
+    configurationElapsedSeconds,
+    automationElapsedSeconds,
+    totalElapsedSeconds: configurationElapsedSeconds + automationElapsedSeconds,
+  };
+}
+
+async function touchTaskConfigurationActivity(task: StorageTask, tenantId: number) {
+  if (task.status === "publishing" || isTerminalTaskStatus(task.status)) {
+    return task;
+  }
+
+  const now = new Date();
+  const configurationElapsedSeconds =
+    Math.max(0, task.configurationElapsedSeconds ?? 0) + getTaskConfigurationDeltaSeconds(task, now);
+
+  return (
+    (await storage.updateStorageTask(
+      task.id,
+      {
+        status: "configuring",
+        configurationElapsedSeconds,
+        lastActivityAt: now,
+      },
+      tenantId,
+    )) ?? task
+  );
+}
+
+async function startTaskPublishing(task: StorageTask, tenantId: number) {
+  const now = new Date();
+  const configurationElapsedSeconds =
+    Math.max(0, task.configurationElapsedSeconds ?? 0) + getTaskConfigurationDeltaSeconds(task, now);
+
+  return storage.updateStorageTask(
+    task.id,
+    {
+      status: "publishing",
+      configurationElapsedSeconds,
+      lastActivityAt: null,
+      automationStartedAt: now,
+      automationFinishedAt: null,
+    },
+    tenantId,
+  );
 }
 
 async function loadTaskContext(taskId: number, tenantId: number) {
@@ -1338,12 +1572,16 @@ tasksRouter.get("/tasks", async (req, res, next) => {
         const cover = uploadById.get(task.storageUploadId);
         const pairViews = buildTaskPairViews(task.id, Array.isArray(task.pairsJson) ? task.pairsJson : [], uploads);
         const distribution = sanitizeDistribution(task.distributionJson, pairViews);
+        const elapsed = getTaskElapsedSeconds(task);
         return {
           id: task.id,
           title: task.title,
           status: task.status,
           createdAt: task.createdAt,
           updatedAt: task.updatedAt,
+          ...elapsed,
+          automationStartedAt: task.automationStartedAt,
+          automationFinishedAt: task.automationFinishedAt,
           clientName: tenant?.name ?? `Tenant ${user.tenantId}`,
           responsibleName: null,
           pairCount: pairViews.length,
@@ -1368,6 +1606,25 @@ tasksRouter.get("/tasks", async (req, res, next) => {
         uploadCount: uploadCountByTaskId.get(item.id) ?? 0,
       })),
     );
+  } catch (err) {
+    next(err);
+  }
+});
+
+tasksRouter.delete("/tasks/:id", async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const id = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "Tarefa invalida." });
+    }
+
+    const deleted = await storage.deleteStorageTask(id, user.tenantId);
+    if (!deleted) {
+      return res.status(404).json({ message: "Tarefa nao encontrada." });
+    }
+
+    res.json({ message: "Tarefa removida com sucesso." });
   } catch (err) {
     next(err);
   }
@@ -1588,6 +1845,9 @@ tasksRouter.get("/tasks/:id/distribution", async (req, res, next) => {
       status: context.task.status,
       createdAt: context.task.createdAt,
       updatedAt: context.task.updatedAt,
+      ...getTaskElapsedSeconds(context.task),
+      automationStartedAt: context.task.automationStartedAt,
+      automationFinishedAt: context.task.automationFinishedAt,
       pairs: pairViews,
       distribution,
     });
@@ -1627,9 +1887,13 @@ tasksRouter.put("/tasks/:id/distribution", async (req, res, next) => {
       }
     }
 
+    const activityTask = await touchTaskConfigurationActivity(context.task, user.tenantId);
     const updated = await storage.updateStorageTask(id, {
       distributionJson: parsed,
-    });
+      configurationElapsedSeconds: activityTask.configurationElapsedSeconds,
+      lastActivityAt: activityTask.lastActivityAt,
+      status: activityTask.status,
+    }, user.tenantId);
     if (!updated) {
       return res.status(500).json({ message: "Nao foi possivel salvar a distribuicao." });
     }
@@ -1638,6 +1902,7 @@ tasksRouter.put("/tasks/:id/distribution", async (req, res, next) => {
       id: updated.id,
       distribution: sanitizeDistribution(updated.distributionJson, pairViews),
       updatedAt: updated.updatedAt,
+      ...getTaskElapsedSeconds(updated),
     });
   } catch (err) {
     next(err);
@@ -2192,14 +2457,38 @@ tasksRouter.post("/tasks/:id/distribution/send", async (req, res, next) => {
       },
     });
 
-    const updated = await storage.updateStorageTask(id, {
-      status: "pending",
-    });
+    const updated = await startTaskPublishing(context.task, user.tenantId);
 
     res.json({
       message: "Configuracao enviada para o n8n com sucesso",
-      status: updated?.status ?? "pending",
+      status: updated?.status ?? "publishing",
       updatedAt: updated?.updatedAt ?? new Date(),
+      ...(updated ? getTaskElapsedSeconds(updated) : {}),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+tasksRouter.post("/tasks/:id/activity", async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const id = Number.parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "Tarefa invalida." });
+    }
+
+    const context = await loadTaskContext(id, user.tenantId);
+    if (!context) {
+      return res.status(404).json({ message: "Tarefa nao encontrada." });
+    }
+
+    const updated = await touchTaskConfigurationActivity(context.task, user.tenantId);
+    res.json({
+      id: updated.id,
+      status: updated.status,
+      updatedAt: updated.updatedAt,
+      ...getTaskElapsedSeconds(updated),
     });
   } catch (err) {
     next(err);
@@ -2231,6 +2520,9 @@ tasksRouter.get("/tasks/:id", async (req, res, next) => {
       status: context.task.status,
       createdAt: context.task.createdAt,
       updatedAt: context.task.updatedAt,
+      ...getTaskElapsedSeconds(context.task),
+      automationStartedAt: context.task.automationStartedAt,
+      automationFinishedAt: context.task.automationFinishedAt,
       completePairCount: pairViews.length,
       pairs: Array.isArray(context.task.pairsJson) ? context.task.pairsJson : [],
       uploadLink: context.uploadLink
@@ -2270,9 +2562,13 @@ tasksRouter.put("/tasks/:id/pairs", async (req, res, next) => {
       }
     }
 
+    const activityTask = await touchTaskConfigurationActivity(context.task, user.tenantId);
     const updated = await storage.updateStorageTask(id, {
       pairsJson: parsed.pairs,
-    });
+      configurationElapsedSeconds: activityTask.configurationElapsedSeconds,
+      lastActivityAt: activityTask.lastActivityAt,
+      status: activityTask.status,
+    }, user.tenantId);
     if (!updated) {
       return res.status(500).json({ message: "Nao foi possivel salvar os pares." });
     }
@@ -2281,6 +2577,7 @@ tasksRouter.put("/tasks/:id/pairs", async (req, res, next) => {
       id: updated.id,
       pairs: updated.pairsJson,
       updatedAt: updated.updatedAt,
+      ...getTaskElapsedSeconds(updated),
     });
   } catch (err) {
     next(err);
@@ -2296,12 +2593,7 @@ tasksRouter.get("/tasks/:taskId/uploads/:uploadId/thumbnail", async (req, res, n
       return res.status(400).json({ message: "Recurso invalido." });
     }
 
-    const context = await loadTaskContext(taskId, user.tenantId);
-    if (!context) {
-      return res.status(404).json({ message: "Tarefa nao encontrada." });
-    }
-
-    const upload = context.uploads.find((item) => item.id === uploadId);
+    const upload = await storage.getStorageUploadForTask(taskId, user.tenantId, uploadId);
     if (!upload) {
       return res.status(404).json({ message: "Upload nao encontrado." });
     }
@@ -2310,13 +2602,25 @@ tasksRouter.get("/tasks/:taskId/uploads/:uploadId/thumbnail", async (req, res, n
       return res.status(400).json({ message: "Este arquivo nao possui miniatura." });
     }
 
-    const file = await downloadObjectFromGcs({
-      bucketName: upload.bucketName,
-      objectPath: upload.objectPath,
-    });
+    const etag = buildThumbnailEtag(upload);
+    setThumbnailResponseHeaders(res, etag);
+    if (requestHasMatchingEtag(req, etag)) {
+      return res.status(304).end();
+    }
 
+    if (THUMBNAIL_DIRECT_GCS_REDIRECT) {
+      const signedUrl = await createSignedGcsReadUrl({
+        bucketName: upload.bucketName,
+        objectPath: upload.objectPath,
+        expiresSeconds: THUMBNAIL_SIGNED_URL_SECONDS,
+      });
+      res.setHeader("Cache-Control", `private, max-age=${Math.min(THUMBNAIL_BROWSER_CACHE_SECONDS, 300)}`);
+      return res.redirect(302, signedUrl);
+    }
+
+    const file = await loadThumbnailFile(upload);
     res.setHeader("Content-Type", file.contentType);
-    res.setHeader("Cache-Control", "private, max-age=300");
+    res.setHeader("Content-Length", String(file.buffer.byteLength));
     res.send(file.buffer);
   } catch (err) {
     next(err);

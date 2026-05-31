@@ -8,8 +8,6 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import Dashboard from "@/pages/Dashboard";
 import Resources from "@/pages/Resources";
-import CampaignForm from "@/pages/CampaignForm";
-import ExistingCampaignForm from "@/pages/ExistingCampaignForm";
 import { CampaignsPage } from "@/features/campaigns";
 import Audiences from "@/pages/Audiences";
 import Integrations from "@/pages/Integrations";
@@ -41,8 +39,6 @@ function PrivateRouter() {
       <Route path="/" component={Dashboard} />
       <Route path="/shared/dashboard" component={SharedDashboard} />
       <Route path="/campaigns" component={CampaignsPage} />
-      <Route path="/campaigns/new" component={CampaignForm} />
-      <Route path="/campaigns/existing" component={ExistingCampaignForm} />
       <Route path="/audiences" component={Audiences} />
       <Route path="/resources" component={Resources} />
       <Route path="/integrations" component={Integrations} />
@@ -139,7 +135,7 @@ function AppContent() {
             <SidebarTrigger data-testid="button-sidebar-toggle" />
             <h2 className="text-lg font-semibold">Meta Ads Campaign Manager</h2>
           </header>
-          <main className="flex-1 overflow-auto">
+          <main className="flex-1 overflow-y-auto overflow-x-hidden">
             <PrivateRouter />
           </main>
         </div>

@@ -40,6 +40,11 @@ export async function ensureGcsStorageSchema(): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query(`
+      ALTER TABLE resources
+      ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+    `);
+
+    await client.query(`
       ALTER TABLE app_settings
       ADD COLUMN IF NOT EXISTS gcs_bucket_name text
     `);
@@ -87,6 +92,10 @@ export async function ensureGcsStorageSchema(): Promise<void> {
         batch_id text,
         title text NOT NULL,
         status text NOT NULL DEFAULT 'pending',
+        configuration_elapsed_seconds integer NOT NULL DEFAULT 0,
+        last_activity_at timestamp,
+        automation_started_at timestamp,
+        automation_finished_at timestamp,
         pairs_json jsonb NOT NULL DEFAULT '[]'::jsonb,
         distribution_json jsonb NOT NULL DEFAULT '{"destinations":[]}'::jsonb,
         created_at timestamp NOT NULL DEFAULT now(),
@@ -107,6 +116,26 @@ export async function ensureGcsStorageSchema(): Promise<void> {
     await client.query(`
       ALTER TABLE storage_tasks
       ADD COLUMN IF NOT EXISTS distribution_json jsonb NOT NULL DEFAULT '{"destinations":[]}'::jsonb
+    `);
+
+    await client.query(`
+      ALTER TABLE storage_tasks
+      ADD COLUMN IF NOT EXISTS configuration_elapsed_seconds integer NOT NULL DEFAULT 0
+    `);
+
+    await client.query(`
+      ALTER TABLE storage_tasks
+      ADD COLUMN IF NOT EXISTS last_activity_at timestamp
+    `);
+
+    await client.query(`
+      ALTER TABLE storage_tasks
+      ADD COLUMN IF NOT EXISTS automation_started_at timestamp
+    `);
+
+    await client.query(`
+      ALTER TABLE storage_tasks
+      ADD COLUMN IF NOT EXISTS automation_finished_at timestamp
     `);
 
     await client.query(`
@@ -222,6 +251,112 @@ export async function ensureGcsStorageSchema(): Promise<void> {
     await client.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS uniq_meta_adset_snapshots
       ON meta_adset_snapshots (tenant_id, ad_account_id, campaign_id, adset_id)
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_resources_tenant_id
+      ON resources (tenant_id, id)
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_campaigns_tenant_id
+      ON campaigns (tenant_id, id)
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_tenant_id
+      ON users (tenant_id, id)
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_storage_upload_links_tenant_id
+      ON storage_upload_links (tenant_id, id)
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_storage_uploads_tenant_id
+      ON storage_uploads (tenant_id, id)
+    `);
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'campaigns_account_tenant_fk') THEN
+          ALTER TABLE campaigns
+          ADD CONSTRAINT campaigns_account_tenant_fk
+          FOREIGN KEY (tenant_id, account_id) REFERENCES resources (tenant_id, id) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'campaigns_page_tenant_fk') THEN
+          ALTER TABLE campaigns
+          ADD CONSTRAINT campaigns_page_tenant_fk
+          FOREIGN KEY (tenant_id, page_id) REFERENCES resources (tenant_id, id) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'campaigns_instagram_tenant_fk') THEN
+          ALTER TABLE campaigns
+          ADD CONSTRAINT campaigns_instagram_tenant_fk
+          FOREIGN KEY (tenant_id, instagram_id) REFERENCES resources (tenant_id, id) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'campaigns_whatsapp_tenant_fk') THEN
+          ALTER TABLE campaigns
+          ADD CONSTRAINT campaigns_whatsapp_tenant_fk
+          FOREIGN KEY (tenant_id, whatsapp_id) REFERENCES resources (tenant_id, id) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'campaigns_leadform_tenant_fk') THEN
+          ALTER TABLE campaigns
+          ADD CONSTRAINT campaigns_leadform_tenant_fk
+          FOREIGN KEY (tenant_id, leadform_id) REFERENCES resources (tenant_id, id) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'automations_campaign_tenant_fk') THEN
+          ALTER TABLE automations
+          ADD CONSTRAINT automations_campaign_tenant_fk
+          FOREIGN KEY (tenant_id, campaign_id) REFERENCES campaigns (tenant_id, id) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'campaign_metrics_account_tenant_fk') THEN
+          ALTER TABLE campaign_metrics
+          ADD CONSTRAINT campaign_metrics_account_tenant_fk
+          FOREIGN KEY (tenant_id, account_id) REFERENCES resources (tenant_id, id) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'campaign_metrics_campaign_tenant_fk') THEN
+          ALTER TABLE campaign_metrics
+          ADD CONSTRAINT campaign_metrics_campaign_tenant_fk
+          FOREIGN KEY (tenant_id, campaign_id) REFERENCES campaigns (tenant_id, id) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'storage_upload_links_user_tenant_fk') THEN
+          ALTER TABLE storage_upload_links
+          ADD CONSTRAINT storage_upload_links_user_tenant_fk
+          FOREIGN KEY (tenant_id, created_by_user_id) REFERENCES users (tenant_id, id) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'storage_uploads_link_tenant_fk') THEN
+          ALTER TABLE storage_uploads
+          ADD CONSTRAINT storage_uploads_link_tenant_fk
+          FOREIGN KEY (tenant_id, upload_link_id) REFERENCES storage_upload_links (tenant_id, id) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'storage_uploads_user_tenant_fk') THEN
+          ALTER TABLE storage_uploads
+          ADD CONSTRAINT storage_uploads_user_tenant_fk
+          FOREIGN KEY (tenant_id, uploaded_by_user_id) REFERENCES users (tenant_id, id) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'storage_tasks_upload_tenant_fk') THEN
+          ALTER TABLE storage_tasks
+          ADD CONSTRAINT storage_tasks_upload_tenant_fk
+          FOREIGN KEY (tenant_id, storage_upload_id) REFERENCES storage_uploads (tenant_id, id) NOT VALID;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'storage_tasks_link_tenant_fk') THEN
+          ALTER TABLE storage_tasks
+          ADD CONSTRAINT storage_tasks_link_tenant_fk
+          FOREIGN KEY (tenant_id, upload_link_id) REFERENCES storage_upload_links (tenant_id, id) NOT VALID;
+        END IF;
+      END $$;
+    `);
+    await client.query(`
+      ALTER TABLE campaigns VALIDATE CONSTRAINT campaigns_account_tenant_fk;
+      ALTER TABLE campaigns VALIDATE CONSTRAINT campaigns_page_tenant_fk;
+      ALTER TABLE campaigns VALIDATE CONSTRAINT campaigns_instagram_tenant_fk;
+      ALTER TABLE campaigns VALIDATE CONSTRAINT campaigns_whatsapp_tenant_fk;
+      ALTER TABLE campaigns VALIDATE CONSTRAINT campaigns_leadform_tenant_fk;
+      ALTER TABLE automations VALIDATE CONSTRAINT automations_campaign_tenant_fk;
+      ALTER TABLE campaign_metrics VALIDATE CONSTRAINT campaign_metrics_account_tenant_fk;
+      ALTER TABLE campaign_metrics VALIDATE CONSTRAINT campaign_metrics_campaign_tenant_fk;
+      ALTER TABLE storage_upload_links VALIDATE CONSTRAINT storage_upload_links_user_tenant_fk;
+      ALTER TABLE storage_uploads VALIDATE CONSTRAINT storage_uploads_link_tenant_fk;
+      ALTER TABLE storage_uploads VALIDATE CONSTRAINT storage_uploads_user_tenant_fk;
+      ALTER TABLE storage_tasks VALIDATE CONSTRAINT storage_tasks_upload_tenant_fk;
+      ALTER TABLE storage_tasks VALIDATE CONSTRAINT storage_tasks_link_tenant_fk;
     `);
   } finally {
     client.release();

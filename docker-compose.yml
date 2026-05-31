@@ -37,13 +37,15 @@ services:
       SESSION_SECRET: ${SESSION_SECRET}
       INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
       META_TOKEN_ENC_KEY: ${META_TOKEN_ENC_KEY:-}
+      META_APP_ID: ${META_APP_ID:-}
       META_APP_SECRET: ${META_APP_SECRET:-}
       PUBLIC_APP_URL: ${PUBLIC_APP_URL}
       GCS_BUCKET_NAME: ${GCS_BUCKET_NAME:-}
       GCS_SERVICE_ACCOUNT_FILE: /app/.local/secrets/gcs.json
+      PUBLIC_STORAGE_UPLOAD_RATE_LIMIT: ${PUBLIC_STORAGE_UPLOAD_RATE_LIMIT:-100}
       FORCE_HTTPS: ${FORCE_HTTPS:-false}
     volumes:
-      - ./focus-copilot-430220-a8-9affb0c35e8a.json:/app/.local/secrets/gcs.json:ro
+      - ./${GCS_SERVICE_ACCOUNT_FILE}:/app/.local/secrets/gcs.json:ro
     depends_on:
       postgres:
         condition: service_healthy

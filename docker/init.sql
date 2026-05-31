@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS resources (
   type TEXT NOT NULL,
   name TEXT NOT NULL,
   value TEXT NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
@@ -137,7 +138,19 @@ INSERT INTO users (tenant_id, email, password, role)
 SELECT t.id, 'admin@test.com', '$2b$10$qs8tYIFItq94y9N/s90hGO4x9s/1Y7WjtLLcPCJLN/gqHAGJGDptC', 'system_admin'
 FROM tenants t
 WHERE t.name = 'Default Tenant'
-  AND NOT EXISTS (SELECT 1 FROM users WHERE email = 'admin@test.com');
+ON CONFLICT (email) DO UPDATE
+SET password = EXCLUDED.password,
+    role = EXCLUDED.role,
+    tenant_id = EXCLUDED.tenant_id;
+
+INSERT INTO users (tenant_id, email, password, role)
+SELECT t.id, 'tenantadmin@test.com', '$2b$10$qs8tYIFItq94y9N/s90hGO4x9s/1Y7WjtLLcPCJLN/gqHAGJGDptC', 'tenant_admin'
+FROM tenants t
+WHERE t.name = 'Default Tenant'
+ON CONFLICT (email) DO UPDATE
+SET password = EXCLUDED.password,
+    role = EXCLUDED.role,
+    tenant_id = EXCLUDED.tenant_id;
 
 INSERT INTO users (tenant_id, email, password, role)
 SELECT t.id, 'sysadmin2@test.com', '$2b$10$oP2RpkfT0o4SK.iiFzHyG.jBHZPtiVd2kNxNHlng7t7xbSPrJPOHq', 'system_admin'

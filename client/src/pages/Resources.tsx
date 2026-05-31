@@ -38,8 +38,7 @@ type ResourceType =
   | "instagram"
   | "whatsapp"
   | "leadform"
-  | "website"
-  | "drive_folder";
+  | "website";
 
 type ResourceFilter = ResourceType | "all";
 type SortOption = "recent" | "name";
@@ -87,12 +86,6 @@ const resourceTypeLabels: Record<
     description:
       "Domínio ou URL de destino utilizado nas tuas campanhas.",
   },
-  drive_folder: {
-    title: "Pasta do Google Drive",
-    placeholder: "1AbCDefg123456",
-    description:
-      "Pasta com criativos, documentos e materiais de apoio.",
-  },
 };
 
 const orderedResourceTypes: ResourceType[] = [
@@ -102,7 +95,6 @@ const orderedResourceTypes: ResourceType[] = [
   "whatsapp",
   "leadform",
   "website",
-  "drive_folder",
 ];
 
 function extractPageInstagram(resource: Resource): {
@@ -428,8 +420,7 @@ export default function Resources() {
           <div className="space-y-1">
             <h1 className="text-3xl font-semibold">Recursos</h1>
             <p className="text-sm text-muted-foreground max-w-xl">
-              Centraliza aqui todas as contas, páginas, formulários,
-              websites e pastas que o sistema vai usar nas campanhas.
+              Centraliza aqui todas as contas, páginas, formulários e websites que o sistema vai usar nas campanhas.
             </p>
             <p className="text-xs text-muted-foreground">
               {totalFiltered} recurso(s) visível(eis) com os filtros
@@ -482,21 +473,6 @@ export default function Resources() {
                   {countsByType.leadform} formulário(s)
                 </Badge>
               )}
-            </div>
-          </div>
-
-          {/* Cartão Google Drive */}
-          <div className="flex flex-col justify-between rounded-lg border p-4">
-            <div className="space-y-1">
-              <p className="text-sm font-medium">Google Drive</p>
-              <p className="text-xs text-muted-foreground">
-                Pastas disponíveis para guardar criativos e documentos.
-              </p>
-            </div>
-            <div className="mt-3">
-              <Badge variant="secondary">
-                {countsByType.drive_folder} pasta(s)
-              </Badge>
             </div>
           </div>
 

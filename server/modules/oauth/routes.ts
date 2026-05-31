@@ -6,7 +6,7 @@ import { isAuthenticated } from "../../middlewares/auth";
 import { getPublicAppUrl } from "../../utils/url";
 import { encryptMetaAccessToken } from "../meta/utils/token";
 import { generateAppSecretProof } from "../meta/utils/crypto";
-import { resolveMetaAppSecret } from "../meta/utils/app-config";
+import { resolveMetaAppId, resolveMetaAppSecret } from "../meta/utils/app-config";
 
 export const oauthRouter = Router();
 
@@ -132,7 +132,7 @@ async function syncMetaResourcesFromOAuth(options: {
     const key = `${type}|${value}`;
     const existingId = existingByTypeAndValue.get(key);
     if (existingId) {
-      await storage.updateResource(existingId, { name, metadata });
+      await storage.updateResource(existingId, { name, metadata }, tenantId);
       return existingId;
     }
     const created = await storage.createResource({
@@ -221,8 +221,9 @@ async function syncMetaResourcesFromOAuth(options: {
 oauthRouter.get("/meta", isAuthenticated, async (req, res) => {
   try {
     const settings = await storage.getAppSettings();
+    const metaAppId = resolveMetaAppId(settings);
     const metaAppSecret = resolveMetaAppSecret(settings);
-    if (!settings?.metaAppId || !metaAppSecret) {
+    if (!metaAppId || !metaAppSecret) {
       return res.status(500).send("Meta OAuth not configured. Please contact admin.");
     }
 
@@ -259,7 +260,7 @@ oauthRouter.get("/meta", isAuthenticated, async (req, res) => {
 
     const authUrl =
       `https://www.facebook.com/v24.0/dialog/oauth?` +
-      `client_id=${settings.metaAppId}&` +
+      `client_id=${metaAppId}&` +
       `redirect_uri=${encodeURIComponent(redirectUri)}&` +
       `return_scopes=true&` +
       `auth_type=rerequest&` +
@@ -272,7 +273,6 @@ oauthRouter.get("/meta", isAuthenticated, async (req, res) => {
     res.status(500).send("Failed to initiate OAuth");
   }
 });
-
 oauthRouter.get("/meta/callback", async (req, res) => {
   try {
     const { code, state } = req.query;
@@ -303,8 +303,9 @@ oauthRouter.get("/meta/callback", async (req, res) => {
     req.session.oauthTenantId = undefined;
 
     const settings = await storage.getAppSettings();
+    const metaAppId = resolveMetaAppId(settings);
     const metaAppSecret = resolveMetaAppSecret(settings);
-    if (!settings?.metaAppId || !metaAppSecret) {
+    if (!metaAppId || !metaAppSecret) {
       return res.status(500).send("Meta OAuth not configured");
     }
 
@@ -312,7 +313,7 @@ oauthRouter.get("/meta/callback", async (req, res) => {
     const redirectUri = `${baseUrl}/auth/meta/callback`;
 
     const tokenParams = new URLSearchParams({
-      client_id: settings.metaAppId,
+      client_id: metaAppId,
       client_secret: metaAppSecret,
       redirect_uri: redirectUri,
       code: String(code),
@@ -365,7 +366,7 @@ oauthRouter.get("/meta/callback", async (req, res) => {
       await storage.updateIntegration(existingIntegration.id, {
         config: metaIntegration.config,
         status: metaIntegration.status,
-      });
+      }, tenantId);
     } else {
       await storage.createIntegration(metaIntegration);
     }
@@ -379,124 +380,6 @@ oauthRouter.get("/meta/callback", async (req, res) => {
     res.redirect("/resources?oauth=success");
   } catch (err) {
     console.error("Meta OAuth callback error:", err);
-    res.status(500).send("Failed to complete OAuth");
-  }
-});
-
-oauthRouter.get("/google", isAuthenticated, async (req, res) => {
-  try {
-    const settings = await storage.getAppSettings();
-    if (!settings?.googleClientId) {
-      return res.status(500).send("Google OAuth not configured. Please contact admin.");
-    }
-
-    const user = req.user as User;
-
-    const state = createOAuthState();
-    req.session.oauthUserId = user.id;
-    req.session.oauthTenantId = user.tenantId;
-    req.session.oauthState = state;
-    req.session.oauthProvider = "google";
-
-    await new Promise<void>((resolve, reject) => {
-      req.session.save((err) => {
-        if (err) reject(err);
-        else resolve();
-      });
-    });
-
-    const baseUrl = getPublicAppUrl(req);
-    const redirectUri = `${baseUrl}/auth/google/callback`;
-    const scope = "https://www.googleapis.com/auth/drive.readonly";
-
-    const authUrl =
-      `https://accounts.google.com/o/oauth2/v2/auth?` +
-      `client_id=${settings.googleClientId}&` +
-      `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-      `response_type=code&` +
-      `scope=${encodeURIComponent(scope)}&` +
-      `access_type=offline&` +
-      `state=${state}`;
-
-    res.redirect(authUrl);
-  } catch (err) {
-    console.error("Google OAuth error:", err);
-    res.status(500).send("Failed to initiate OAuth");
-  }
-});
-
-oauthRouter.get("/google/callback", async (req, res) => {
-  try {
-    const { code, state } = req.query;
-
-    const userId = req.session.oauthUserId;
-    const sessionState = req.session.oauthState;
-    const sessionProvider = req.session.oauthProvider;
-
-    if (
-      !code ||
-      !userId ||
-      typeof state !== "string" ||
-      state !== sessionState ||
-      sessionProvider !== "google"
-    ) {
-      return res.status(400).send("Invalid OAuth callback");
-    }
-
-    const user = await storage.getUser(userId);
-    if (!user) {
-      return res.status(400).send("Invalid OAuth callback");
-    }
-    const tenantId = user.tenantId;
-
-    req.session.oauthState = undefined;
-    req.session.oauthProvider = undefined;
-    req.session.oauthUserId = undefined;
-    req.session.oauthTenantId = undefined;
-
-    const settings = await storage.getAppSettings();
-    if (!settings?.googleClientId || !settings.googleClientSecret) {
-      return res.status(500).send("Google OAuth not configured");
-    }
-
-    const baseUrl = getPublicAppUrl(req);
-    const redirectUri = `${baseUrl}/auth/google/callback`;
-
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        code,
-        client_id: settings.googleClientId,
-        client_secret: settings.googleClientSecret,
-        redirect_uri: redirectUri,
-        grant_type: "authorization_code",
-      }),
-    });
-
-    const tokenData: any = await tokenResponse.json();
-
-    if (!tokenData.access_token) {
-      console.error("Token exchange failed:", tokenData);
-      return res.status(500).send("Failed to obtain access token");
-    }
-
-    const googleIntegration: InsertIntegration & { tenantId: number } = {
-      tenantId,
-      provider: "Google Drive",
-      config: {
-        accessToken: tokenData.access_token,
-        refreshToken: tokenData.refresh_token,
-        tokenType: tokenData.token_type,
-        expiresIn: tokenData.expires_in,
-      },
-      status: "connected",
-    };
-    await storage.createIntegration(googleIntegration);
-
-    res.redirect("/integrations?oauth=success");
-  } catch (err) {
-    console.error("Google OAuth callback error:", err);
     res.status(500).send("Failed to complete OAuth");
   }
 });

@@ -153,21 +153,25 @@ export class MemStorage implements IStorage {
   async updateResource(
     id: number,
     resource: Partial<InsertResource>,
+    tenantId?: number,
   ): Promise<Resource | undefined> {
     const existing = this.resources.get(id);
-    if (!existing) return undefined;
+    if (!existing || (tenantId !== undefined && existing.tenantId !== tenantId)) return undefined;
     const updated = { ...existing, ...resource };
     this.resources.set(id, updated);
     return updated;
   }
 
-  async deleteResource(id: number): Promise<boolean> {
+  async deleteResource(id: number, tenantId?: number): Promise<boolean> {
     const resource = this.resources.get(id);
-    if (!resource) {
+    if (!resource || (tenantId !== undefined && resource.tenantId !== tenantId)) {
       return false;
     }
 
     for (const [cid, campaign] of this.campaigns.entries()) {
+      if (campaign.tenantId !== resource.tenantId) {
+        continue;
+      }
       if (resource.type === "account" && campaign.accountId === id) {
         this.campaigns.set(cid, { ...campaign, accountId: null, updatedAt: new Date() });
       }
@@ -199,6 +203,9 @@ export class MemStorage implements IStorage {
     if (idsToDelete.length === 0) return 0;
 
     for (const [cid, campaign] of this.campaigns.entries()) {
+      if (campaign.tenantId !== tenantId) {
+        continue;
+      }
       if (type === "account" && campaign.accountId && idsToDelete.includes(campaign.accountId)) {
         this.campaigns.set(cid, { ...campaign, accountId: null });
       }
@@ -425,15 +432,18 @@ export class MemStorage implements IStorage {
   async updateAudience(
     id: number,
     audience: Partial<InsertAudience>,
+    tenantId?: number,
   ): Promise<Audience | undefined> {
     const existing = this.audiences.get(id);
-    if (!existing) return undefined;
+    if (!existing || (tenantId !== undefined && existing.tenantId !== tenantId)) return undefined;
     const updated = { ...existing, ...audience };
     this.audiences.set(id, updated);
     return updated;
   }
 
-  async deleteAudience(id: number): Promise<boolean> {
+  async deleteAudience(id: number, tenantId?: number): Promise<boolean> {
+    const existing = this.audiences.get(id);
+    if (!existing || (tenantId !== undefined && existing.tenantId !== tenantId)) return false;
     return this.audiences.delete(id);
   }
 
@@ -479,15 +489,18 @@ export class MemStorage implements IStorage {
   async updateCampaign(
     id: number,
     campaign: Partial<InsertCampaign>,
+    tenantId?: number,
   ): Promise<Campaign | undefined> {
     const existing = this.campaigns.get(id);
-    if (!existing) return undefined;
+    if (!existing || (tenantId !== undefined && existing.tenantId !== tenantId)) return undefined;
     const updated = { ...existing, ...campaign, updatedAt: new Date() };
     this.campaigns.set(id, updated);
     return updated;
   }
 
-  async deleteCampaign(id: number): Promise<boolean> {
+  async deleteCampaign(id: number, tenantId?: number): Promise<boolean> {
+    const existing = this.campaigns.get(id);
+    if (!existing || (tenantId !== undefined && existing.tenantId !== tenantId)) return false;
     return this.campaigns.delete(id);
   }
 
@@ -587,15 +600,18 @@ export class MemStorage implements IStorage {
   async updateIntegration(
     id: number,
     integration: Partial<InsertIntegration>,
+    tenantId?: number,
   ): Promise<Integration | undefined> {
     const existing = this.integrations.get(id);
-    if (!existing) return undefined;
+    if (!existing || (tenantId !== undefined && existing.tenantId !== tenantId)) return undefined;
     const updated = { ...existing, ...integration, updatedAt: new Date() };
     this.integrations.set(id, updated);
     return updated;
   }
 
-  async deleteIntegration(id: number): Promise<boolean> {
+  async deleteIntegration(id: number, tenantId?: number): Promise<boolean> {
+    const existing = this.integrations.get(id);
+    if (!existing || (tenantId !== undefined && existing.tenantId !== tenantId)) return false;
     return this.integrations.delete(id);
   }
 
@@ -705,9 +721,10 @@ export class MemStorage implements IStorage {
   async revokeStorageUploadLink(
     id: number,
     revokedAt: Date,
+    tenantId?: number,
   ): Promise<StorageUploadLink | undefined> {
     const existing = this.storageUploadLinks.get(id);
-    if (!existing) return undefined;
+    if (!existing || (tenantId !== undefined && existing.tenantId !== tenantId)) return undefined;
     const updated: StorageUploadLink = { ...existing, revokedAt };
     this.storageUploadLinks.set(id, updated);
     return updated;
@@ -717,6 +734,29 @@ export class MemStorage implements IStorage {
     return Array.from(this.storageUploads.values()).filter(
       (upload) => upload.tenantId === tenantId,
     );
+  }
+
+  async getStorageUploadForTask(
+    taskId: number,
+    tenantId: number,
+    uploadId: number,
+  ): Promise<StorageUpload | undefined> {
+    const task = this.storageTasks.get(taskId);
+    if (!task || task.tenantId !== tenantId) {
+      return undefined;
+    }
+
+    const belongsToTask =
+      task.storageUploadId === uploadId ||
+      Array.from(this.storageTaskUploads.values()).some(
+        (entry) => entry.taskId === taskId && entry.storageUploadId === uploadId,
+      );
+    if (!belongsToTask) {
+      return undefined;
+    }
+
+    const upload = this.storageUploads.get(uploadId);
+    return upload?.tenantId === tenantId ? upload : undefined;
   }
 
   async createStorageUpload(upload: InsertStorageUpload): Promise<StorageUpload> {
@@ -768,6 +808,10 @@ export class MemStorage implements IStorage {
       batchId: task.batchId ?? null,
       title: task.title,
       status: task.status ?? "pending",
+      configurationElapsedSeconds: task.configurationElapsedSeconds ?? 0,
+      lastActivityAt: task.lastActivityAt ?? null,
+      automationStartedAt: task.automationStartedAt ?? null,
+      automationFinishedAt: task.automationFinishedAt ?? null,
       pairsJson: task.pairsJson ?? [],
       distributionJson: task.distributionJson ?? {
         destinations: [],
@@ -782,9 +826,10 @@ export class MemStorage implements IStorage {
   async updateStorageTask(
     id: number,
     task: Partial<InsertStorageTask>,
+    tenantId?: number,
   ): Promise<StorageTask | undefined> {
     const existing = this.storageTasks.get(id);
-    if (!existing) return undefined;
+    if (!existing || (tenantId !== undefined && existing.tenantId !== tenantId)) return undefined;
     const updated: StorageTask = {
       ...existing,
       ...task,
@@ -797,6 +842,21 @@ export class MemStorage implements IStorage {
     };
     this.storageTasks.set(id, updated);
     return updated;
+  }
+
+  async deleteStorageTask(id: number, tenantId: number): Promise<boolean> {
+    const existing = this.storageTasks.get(id);
+    if (!existing || existing.tenantId !== tenantId) {
+      return false;
+    }
+
+    for (const [taskUploadId, taskUpload] of this.storageTaskUploads.entries()) {
+      if (taskUpload.taskId === id) {
+        this.storageTaskUploads.delete(taskUploadId);
+      }
+    }
+
+    return this.storageTasks.delete(id);
   }
 
   async getStorageTaskUploads(taskId: number): Promise<StorageTaskUpload[]> {

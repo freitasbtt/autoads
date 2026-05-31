@@ -24,8 +24,6 @@ import { adminRouter } from "./modules/admin/routes";
 import { metaRouter, internalMetaRouter, publicMetaRouter } from "./modules/meta/routes";
 import { oauthRouter } from "./modules/oauth/routes";
 import { realtimeRouter } from "./modules/realtime/routes";
-import { driveRouter } from "./modules/drive/routes";
-import { existingCampaignRouter } from "./modules/existing-campaign/routes";
 import { gcsRouter, publicGcsRouter } from "./modules/gcs/routes";
 import { publicTasksRouter, tasksRouter } from "./modules/tasks/routes";
 
@@ -38,7 +36,7 @@ declare module "express-session" {
     oauthUserId?: number;
     oauthTenantId?: number;
     oauthState?: string;
-    oauthProvider?: "meta" | "google";
+    oauthProvider?: "meta";
     csrfToken?: string;
   }
 }
@@ -208,8 +206,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/webhooks", campaignWebhookRouter);
   app.use("/api/admin", adminRouter);
   app.use("/api/events", realtimeRouter);
-  app.use("/api", driveRouter);
-  app.use("/api", existingCampaignRouter);
   app.use("/api", gcsRouter);
   app.use("/api", tasksRouter);
   app.use("/api", metaRouter);

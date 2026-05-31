@@ -1,16 +1,15 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
-import { useLocation } from "wouter";
+import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CampaignDetailsModal } from "@/components/CampaignDetailsModal";
-import { Edit, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Edit, RotateCcw, Trash2 } from "lucide-react";
 import { CampaignStatusBadge } from "../components/CampaignStatusBadge";
 import { useCampaignListData } from "../hooks/useCampaignListData";
 import { useCampaignMutations } from "../hooks/useCampaignMutations";
 import { useCampaignRealtime } from "../hooks/useCampaignRealtime";
 import { useToast } from "@/hooks/use-toast";
 import type { Campaign } from "@shared/schema";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest } from "@/lib/queryClient";
 import { useMutation } from "@tanstack/react-query";
 
 type CooldownPayload = {
@@ -56,7 +55,6 @@ function parseCooldownError(error: unknown): CooldownErrorPayload | null {
 }
 
 export function CampaignsPage() {
-  const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
@@ -75,15 +73,6 @@ export function CampaignsPage() {
       });
     return map;
   }, [resources]);
-  const driveFolderLookup = useMemo(() => {
-    const map = new Map<string, string>();
-    resources
-      .filter((resource) => resource.type === "drive_folder")
-      .forEach((resource) => {
-        map.set(resource.value, resource.name);
-      });
-    return map;
-  }, [resources]);
   const getCooldownKey = (campaign: Campaign | null | undefined) => {
     if (!campaign || typeof campaign.accountId !== "number") {
       return null;
@@ -96,8 +85,6 @@ export function CampaignsPage() {
   const hasActiveCooldown = Object.values(cooldowns).some(
     (timestamp) => timestamp > cooldownNow,
   );
-
-  const requestedDriveFolders = useRef(new Set<string>());
 
   useEffect(() => {
     const stored = window.localStorage.getItem(COOLDOWN_STORAGE_KEY);
@@ -150,64 +137,6 @@ export function CampaignsPage() {
     const intervalId = window.setInterval(() => setCooldownNow(Date.now()), 1000);
     return () => window.clearInterval(intervalId);
   }, [hasActiveCooldown]);
-
-  useEffect(() => {
-    if (campaigns.length === 0) {
-      return;
-    }
-
-    const missingIds = new Set<string>();
-    campaigns.forEach((campaign) => {
-      const driveFolderId =
-        typeof campaign.driveFolderId === "string" && campaign.driveFolderId.length > 0
-          ? campaign.driveFolderId
-          : Array.isArray(campaign.creatives)
-            ? campaign.creatives
-                .map((creative: any) => creative?.driveFolderId)
-                .find((value: unknown) => typeof value === "string" && value.length > 0)
-            : null;
-      if (driveFolderId && !driveFolderLookup.has(driveFolderId)) {
-        missingIds.add(driveFolderId);
-      }
-    });
-
-    if (missingIds.size === 0) {
-      return;
-    }
-
-    let isActive = true;
-
-    const fetchMissingFolders = async () => {
-      for (const folderId of missingIds) {
-        if (requestedDriveFolders.current.has(folderId)) {
-          continue;
-        }
-        requestedDriveFolders.current.add(folderId);
-        try {
-          const response = await apiRequest("GET", `/api/drive/folders/${folderId}`);
-          const data = (await response.json()) as { id?: string; name?: string };
-          if (!isActive) return;
-          if (data?.id && data?.name) {
-            await apiRequest("POST", "/api/resources", {
-              type: "drive_folder",
-              name: data.name,
-              value: data.id,
-              metadata: { source: "drive_lookup" },
-            });
-            await queryClient.invalidateQueries({ queryKey: ["/api/resources"] });
-          }
-        } catch {
-          // ignore lookup errors
-        }
-      }
-    };
-
-    fetchMissingFolders();
-
-    return () => {
-      isActive = false;
-    };
-  }, [campaigns, driveFolderLookup]);
 
   const reprocessMutation = useMutation({
     mutationFn: async (payload: { campaignId: number }) => {
@@ -284,24 +213,6 @@ export function CampaignsPage() {
             Gerencie todas as suas campanhas Meta Ads
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button
-            className="bg-blue-600 text-white hover:bg-blue-700"
-            onClick={() => setLocation("/campaigns/existing")}
-            data-testid="button-add-to-existing"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Adicionar Criativos
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setLocation("/campaigns/new")}
-            data-testid="button-new-campaign"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Nova Campanha
-          </Button>
-        </div>
       </div>
 
       {isLoading ? (
@@ -334,9 +245,6 @@ export function CampaignsPage() {
                       Conta de anuncios
                     </th>
                     <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
-                      Pasta Google Drive
-                    </th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">
                       Status
                     </th>
                     <th className="text-right py-3 px-4 text-sm font-medium text-muted-foreground">
@@ -366,35 +274,6 @@ export function CampaignsPage() {
                               <div className="text-xs text-muted-foreground">
                                 ID: {account?.value ?? "-"}
                               </div>
-                            </div>
-                          );
-                        })()}
-                      </td>
-                      <td className="py-4 px-4">
-                        {(() => {
-                          const driveFolderId =
-                            typeof campaign.driveFolderId === "string" && campaign.driveFolderId.length > 0
-                              ? campaign.driveFolderId
-                              : Array.isArray(campaign.creatives)
-                                ? campaign.creatives
-                                    .map((creative: any) => creative?.driveFolderId)
-                                    .find((value: unknown) => typeof value === "string" && value.length > 0)
-                                : null;
-                          const driveFolderNameFromCreative = Array.isArray(campaign.creatives)
-                            ? campaign.creatives
-                                .map((creative: any) => creative?.driveFolderName)
-                                .find((value: unknown) => typeof value === "string" && value.length > 0)
-                            : null;
-                          const driveFolderName = driveFolderId
-                            ? driveFolderLookup.get(driveFolderId)
-                            : null;
-                          const driveFolderLabel =
-                            driveFolderNameFromCreative || driveFolderName || "-";
-                          return (
-                            <div className="text-sm">
-                              <span className="font-medium">
-                                {driveFolderLabel}
-                              </span>
                             </div>
                           );
                         })()}

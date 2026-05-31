@@ -11,7 +11,7 @@ import {
 } from ".";
 import type { MetricTotals as MetaMetricTotals } from ".";
 import { getMetaAccess } from "./services/access.service";
-import { resolveMetaAppSecret } from "./utils/app-config";
+import { resolveMetaAppId, resolveMetaAppSecret } from "./utils/app-config";
 import { setNoCacheHeaders } from "../../utils/cache";
 import { isAuthenticated } from "../../middlewares/auth";
 import { createRateLimit } from "../../middlewares/rate-limit";
@@ -377,6 +377,16 @@ metaRouter.post("/dashboard/share", async (req, res, next) => {
   try {
     const user = req.user as User;
     const body = dashboardShareBodySchema.parse(req.body);
+    const accountResources = (await storage.getResourcesByTenant(user.tenantId)).filter(
+      (resource) => resource.type === "account",
+    );
+    const tenantAccountIds = new Set(accountResources.map((resource) => resource.id));
+    const invalidAccountIds = body.accountIds.filter((accountId) => !tenantAccountIds.has(accountId));
+    if (invalidAccountIds.length > 0) {
+      return res.status(400).json({
+        message: "Uma ou mais contas nao pertencem ao tenant atual.",
+      });
+    }
 
     const expiresAt = new Date(
       Date.now() + (body.expiresInHours ?? 72) * 60 * 60 * 1000,
@@ -987,6 +997,13 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
 
     const pageResources = await storage.getResourcesByType(user.tenantId, "page");
     const pageResource = pageResources.find((resource) => resource.value === rawPageId);
+    if (!pageResource) {
+      return res.status(404).json(
+        attachDebug({
+          message: "Pagina nao encontrada ou nao pertence ao tenant atual.",
+        }),
+      );
+    }
 
     if (!forceRefresh) {
       const memoryForms = getFreshMemoryLeadforms(user.tenantId, rawPageId);
@@ -1024,6 +1041,7 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
     const userAccessToken = userAccess.accessToken.trim();
     const userAppSecretProof = userAccess.appSecretProof.trim();
     const settings = await storage.getAppSettings();
+    const metaAppId = resolveMetaAppId(settings);
     const metaAppSecret = resolveMetaAppSecret(settings);
     if (!metaAppSecret) {
       return res.status(500).json(
@@ -1032,13 +1050,13 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
     }
 
     if (debugEnabled && debugContext) {
-      debugContext.metaAppIdConfigured = Boolean(settings?.metaAppId);
+      debugContext.metaAppIdConfigured = Boolean(metaAppId);
       debugContext.metaAppSecretConfigured = Boolean(metaAppSecret);
 
-      if (settings?.metaAppId && metaAppSecret) {
+      if (metaAppId && metaAppSecret) {
         debugContext.userToken = await fetchMetaTokenDebug({
           token: userAccessToken,
-          appId: settings.metaAppId,
+          appId: metaAppId,
           appSecret: metaAppSecret,
         });
       } else {
@@ -1137,10 +1155,10 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
 
     const pageAccessToken = pageAccessTokenRaw.trim();
 
-    if (debugEnabled && debugContext && settings?.metaAppId && metaAppSecret) {
+    if (debugEnabled && debugContext && metaAppId && metaAppSecret) {
       debugContext.pageToken = await fetchMetaTokenDebug({
         token: pageAccessToken,
-        appId: settings.metaAppId,
+        appId: metaAppId,
         appSecret: metaAppSecret,
       });
     }
@@ -1290,7 +1308,7 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
           return storage.updateResource(existing.id, {
             name: form.name,
             metadata,
-          });
+          }, user.tenantId);
         }
 
         return storage.createResource({
@@ -1303,7 +1321,7 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
       }),
     );
 
-    await Promise.all(staleMetaLeadforms.map((resource) => storage.deleteResource(resource.id)));
+    await Promise.all(staleMetaLeadforms.map((resource) => storage.deleteResource(resource.id, user.tenantId)));
 
     const createdForms = syncedForms.filter(
       (resource): resource is NonNullable<typeof resource> => Boolean(resource),
@@ -1324,7 +1342,7 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
       await storage.updateResource(syncMarker.id, {
         name: `Leadforms cache ${pageResource?.name ?? rawPageId}`,
         metadata: syncMarkerMetadata,
-      });
+      }, user.tenantId);
     } else {
       await storage.createResource({
         tenantId: user.tenantId,
@@ -1366,6 +1384,14 @@ metaRouter.get("/meta/pages/:pageId/posts", async (req, res) => {
 
     if (rawPageId.length === 0) {
       return res.status(400).json({ message: "pageId obrigatorio" });
+    }
+
+    const pageResources = await storage.getResourcesByType(user.tenantId, "page");
+    const pageResource = pageResources.find((resource) => resource.value === rawPageId);
+    if (!pageResource) {
+      return res.status(404).json({
+        message: "Pagina nao encontrada ou nao pertence ao tenant atual.",
+      });
     }
 
     const limitParam = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
@@ -1632,6 +1658,15 @@ internalMetaRouter.get("/meta/token", internalMetaTokenRateLimit, async (req, re
     const tenantId = Number(tenantIdParam);
     if (!Number.isInteger(tenantId) || tenantId <= 0) {
       return res.status(400).json({ message: "tenant_id must be a positive integer" });
+    }
+    const tenantHeader = req.get("x-tenant-id")?.trim();
+    if (!tenantHeader || Number(tenantHeader) !== tenantId) {
+      return res.status(400).json({ message: "x-tenant-id must match tenant_id" });
+    }
+
+    const tenant = await storage.getTenant(tenantId);
+    if (!tenant) {
+      return res.status(404).json({ message: "Tenant not found" });
     }
 
     const metaAccess = await getMetaAccess(tenantId);

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Badge } from "@/components/ui/badge";
@@ -101,6 +101,8 @@ function PairThumb({ pair }: { pair: PairView }) {
       src={pair.feedThumbnailUrl}
       alt=""
       className="h-12 w-10 rounded-lg object-cover"
+      loading="lazy"
+      decoding="async"
     />
   );
 }
@@ -112,6 +114,28 @@ export default function TaskDistributionReviewPage({ taskId }: TaskDistributionR
   const detailQuery = useQuery<DistributionDetail>({
     queryKey: [`/api/tasks/${taskId}/distribution`],
   });
+
+  useEffect(() => {
+    let stopped = false;
+
+    async function sendActivity() {
+      if (stopped || document.visibilityState !== "visible") {
+        return;
+      }
+      try {
+        await apiRequest("POST", `/api/tasks/${taskId}/activity`, {});
+      } catch {
+        // Activity tracking is best-effort and must not interrupt review.
+      }
+    }
+
+    void sendActivity();
+    const intervalId = window.setInterval(sendActivity, 30_000);
+    return () => {
+      stopped = true;
+      window.clearInterval(intervalId);
+    };
+  }, [taskId]);
 
   const sendToN8nMutation = useMutation({
     mutationFn: async () => {

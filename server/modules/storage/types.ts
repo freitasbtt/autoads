@@ -61,8 +61,8 @@ export interface IStorage {
   getResourcesByTenant(tenantId: number): Promise<Resource[]>;
   getResourcesByType(tenantId: number, type: string): Promise<Resource[]>;
   createResource(resource: InsertResource & { tenantId: number }): Promise<Resource>;
-  updateResource(id: number, resource: Partial<InsertResource>): Promise<Resource | undefined>;
-  deleteResource(id: number): Promise<boolean>;
+  updateResource(id: number, resource: Partial<InsertResource>, tenantId?: number): Promise<Resource | undefined>;
+  deleteResource(id: number, tenantId?: number): Promise<boolean>;
   deleteResourcesByType(tenantId: number, type: string): Promise<number>;
   getMetaDestinationSnapshot(
     tenantId: number,
@@ -102,14 +102,14 @@ export interface IStorage {
   getAudience(id: number): Promise<Audience | undefined>;
   getAudiencesByTenant(tenantId: number): Promise<Audience[]>;
   createAudience(audience: InsertAudience & { tenantId: number }): Promise<Audience>;
-  updateAudience(id: number, audience: Partial<InsertAudience>): Promise<Audience | undefined>;
-  deleteAudience(id: number): Promise<boolean>;
+  updateAudience(id: number, audience: Partial<InsertAudience>, tenantId?: number): Promise<Audience | undefined>;
+  deleteAudience(id: number, tenantId?: number): Promise<boolean>;
 
   getCampaign(id: number): Promise<Campaign | undefined>;
   getCampaignsByTenant(tenantId: number): Promise<Campaign[]>;
   createCampaign(campaign: InsertCampaign & { tenantId: number }): Promise<Campaign>;
-  updateCampaign(id: number, campaign: Partial<InsertCampaign>): Promise<Campaign | undefined>;
-  deleteCampaign(id: number): Promise<boolean>;
+  updateCampaign(id: number, campaign: Partial<InsertCampaign>, tenantId?: number): Promise<Campaign | undefined>;
+  deleteCampaign(id: number, tenantId?: number): Promise<boolean>;
 
   getCampaignMetrics(
     tenantId: number,
@@ -131,8 +131,9 @@ export interface IStorage {
   updateIntegration(
     id: number,
     integration: Partial<InsertIntegration>,
+    tenantId?: number,
   ): Promise<Integration | undefined>;
-  deleteIntegration(id: number): Promise<boolean>;
+  deleteIntegration(id: number, tenantId?: number): Promise<boolean>;
 
   getAutomation(id: number): Promise<Automation | undefined>;
   getAutomationsByTenant(tenantId: number): Promise<Automation[]>;
@@ -153,9 +154,10 @@ export interface IStorage {
   getStorageUploadLinksByTenant(tenantId: number): Promise<StorageUploadLink[]>;
   getStorageUploadLinkByPublicId(publicId: string): Promise<StorageUploadLink | undefined>;
   createStorageUploadLink(link: InsertStorageUploadLink): Promise<StorageUploadLink>;
-  revokeStorageUploadLink(id: number, revokedAt: Date): Promise<StorageUploadLink | undefined>;
+  revokeStorageUploadLink(id: number, revokedAt: Date, tenantId?: number): Promise<StorageUploadLink | undefined>;
 
   getStorageUploadsByTenant(tenantId: number): Promise<StorageUpload[]>;
+  getStorageUploadForTask(taskId: number, tenantId: number, uploadId: number): Promise<StorageUpload | undefined>;
   createStorageUpload(upload: InsertStorageUpload): Promise<StorageUpload>;
 
   getStorageTasksByTenant(tenantId: number): Promise<StorageTask[]>;
@@ -169,7 +171,9 @@ export interface IStorage {
   updateStorageTask(
     id: number,
     task: Partial<InsertStorageTask>,
+    tenantId?: number,
   ): Promise<StorageTask | undefined>;
+  deleteStorageTask(id: number, tenantId: number): Promise<boolean>;
   getStorageTaskUploads(taskId: number): Promise<StorageTaskUpload[]>;
   createStorageTaskUpload(taskUpload: InsertStorageTaskUpload): Promise<StorageTaskUpload>;
 

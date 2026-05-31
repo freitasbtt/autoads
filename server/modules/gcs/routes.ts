@@ -156,7 +156,7 @@ export const publicGcsRouter = Router();
 const publicUploadRateLimit = createRateLimit({
   name: "public-storage-upload",
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  max: Number.parseInt(process.env.PUBLIC_STORAGE_UPLOAD_RATE_LIMIT ?? "100", 10),
   message: "Muitos uploads enviados por este link. Aguarde antes de tentar novamente.",
   keyGenerator: (req) => {
     const publicId =
@@ -227,7 +227,7 @@ gcsRouter.delete("/storage/upload-links/:id", async (req, res, next) => {
       return res.status(404).json({ message: "Link nao encontrado." });
     }
 
-    const revoked = await storage.revokeStorageUploadLink(id, new Date());
+    const revoked = await storage.revokeStorageUploadLink(id, new Date(), user.tenantId);
     if (!revoked) {
       return res.status(500).json({ message: "Nao foi possivel excluir o link." });
     }

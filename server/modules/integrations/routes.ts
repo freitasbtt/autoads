@@ -89,7 +89,7 @@ integrationsRouter.post("/", async (req, res, next) => {
     );
 
     if (existing) {
-      const updated = await storage.updateIntegration(existing.id, bodyData);
+      const updated = await storage.updateIntegration(existing.id, bodyData, user.tenantId);
       return res.json(updated ? serializeIntegration(updated) : updated);
     }
 
@@ -159,7 +159,7 @@ integrationsRouter.delete("/:id", async (req, res, next) => {
       }
     }
 
-    await storage.deleteIntegration(id);
+    await storage.deleteIntegration(id, user.tenantId);
     res.json({ message: "Integration deleted successfully", revoked });
   } catch (err) {
     next(err);

@@ -1,374 +1,213 @@
 # Meta Ads Campaign Management Platform
 
-A multi-tenant platform for creating, managing, and monitoring advertising campaigns across Meta's platforms (Facebook, Instagram, WhatsApp).
+Aplicacao multi-tenant para receber criativos, montar pares Feed + Stories,
+distribuir esses pares em campanhas Meta Ads existentes e enviar a configuracao
+para uma automacao n8n.
 
-## Features
+## Documentacao
 
-- 🔐 **Role-Based Access Control (RBAC)**: Admin and client roles with granular permissions
-- 🔄 **OAuth Integration**: Automatic resource fetching from Meta and Google Drive
-- 📊 **Campaign Management**: Create and monitor campaigns with real-time status tracking
-- 🤖 **n8n Automation**: Bidirectional webhook integration for workflow automation
-- 👥 **User Management**: Admin panel for managing users and system configuration
-- 🎨 **Modern UI**: Microsoft Fluent Design System with dark mode support
+| Documento | Conteudo |
+| --- | --- |
+| [`docs/architecture-overview.md`](docs/architecture-overview.md) | Arquitetura do frontend, backend, modulos, integracoes e caches |
+| [`docs/database-schema.md`](docs/database-schema.md) | Esquema relacional completo, relacionamentos e JSONs persistidos |
+| [`docs/use-cases.md`](docs/use-cases.md) | Casos de uso, atores, fluxos e regras de negocio |
+| [`docs/api-reference.md`](docs/api-reference.md) | Mapa dos endpoints HTTP principais |
+| [`docs/gcs-storage-setup.md`](docs/gcs-storage-setup.md) | Configuracao do Google Cloud Storage |
+| [`docs/security-meta-oauth.md`](docs/security-meta-oauth.md) | Modelo de seguranca do OAuth Meta |
 
-## Tech Stack
+## Funcionalidades Principais
 
-- **Frontend**: React + TypeScript + Vite + Shadcn UI + Tailwind CSS
-- **Backend**: Node.js + Express + TypeScript
-- **Database**: PostgreSQL + Drizzle ORM
-- **Authentication**: Passport.js + bcrypt + session-based auth
-- **External APIs**: Meta Marketing API, WhatsApp Cloud API, Google Drive API
+- Autenticacao por sessao com RBAC.
+- Isolamento multi-tenant por `tenant_id`.
+- Admin global e admin por tenant.
+- OAuth Meta com token criptografado e `appsecret_proof`.
+- Upload interno e publico de arquivos para Google Cloud Storage.
+- Kanban de tarefas.
+- Montagem de pares Feed + Stories.
+- Distribuicao visual de pares em campanhas/adsets Meta existentes.
+- Selecao de formularios Lead Ads por campanha ou por par.
+- Geracao e envio de payload para n8n.
+- Callback n8n para atualizar status da tarefa.
+- Tempo acumulado de configuracao e automacao.
+- Dashboard Meta com metricas e criativos.
 
-## Quick Start with Docker
+## Stack
 
-### Prerequisites
+| Camada | Tecnologias |
+| --- | --- |
+| Frontend | React, TypeScript, Vite, Wouter, TanStack Query, Tailwind, shadcn/ui |
+| Backend | Node.js, Express, TypeScript, Passport |
+| Banco | PostgreSQL, Drizzle ORM |
+| Storage | Google Cloud Storage com service account |
+| Integracoes | Meta Graph/Marketing API, n8n |
+| Deploy | Docker e Docker Compose |
 
-- Docker and Docker Compose installed
-- Meta App credentials (App ID and Secret)
-- Google OAuth credentials (Client ID and Secret)
-- n8n instance (optional, for automation)
+## Estrutura Rapida
 
-### Running with Docker Compose
-
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd <repository-name>
+```text
+client/      Frontend React
+server/      Backend Express
+shared/      Schema Drizzle e tipos compartilhados
+docs/        Documentacao tecnica e funcional
+migrations/  SQL auxiliar/migracoes
+docker/      Arquivos de suporte ao container
 ```
 
-2. Create a `.env` file (required, used automatically by Docker Compose):
+## Variaveis de Ambiente Principais
+
 ```env
-SESSION_SECRET=generate-a-strong-random-string
 DATABASE_URL=postgresql://metaads:metaads_password@postgres:5432/metaads
-NODE_ENV=production
-PORT=5000
-PUBLIC_APP_URL=https://<your-https-domain>
+SESSION_SECRET=troque-por-um-segredo-forte
+PUBLIC_APP_URL=https://app.seudominio.com
 FORCE_HTTPS=true
+
+META_APP_ID=seu-meta-app-id
+META_APP_SECRET=seu-meta-app-secret
+META_TOKEN_ENC_KEY=chave-32-bytes
+APP_SETTINGS_ENC_KEY=chave-32-bytes
+INTERNAL_API_SECRET=segredo-interno-n8n
+
+GCS_BUCKET_NAME=seu-bucket
+GCS_SERVICE_ACCOUNT_FILE=/app/.local/secrets/gcs.json
 ```
 
-3. Start the application:
+Observacoes:
+
+- Em producao, prefira manter secrets em ENV.
+- O frontend nao deve receber Meta App Secret, tokens Meta ou service account.
+- Google Drive nao faz parte do fluxo principal atual; o storage usado e GCS.
+
+## Rodando com Docker Compose
+
+1. Configure `.env`.
+2. Suba os servicos:
+
 ```bash
 docker-compose up -d
 ```
 
-4. Access the application at `http://localhost:5000`
+3. Acesse:
 
-5. Default admin credentials (seeded automatically on first start):
-   - Email: `admin@test.com`
-   - Password: `password`
+```text
+http://localhost:5000
+```
 
-### Docker Commands
+4. Credencial inicial, quando seedada:
+
+```text
+Email: admin@test.com
+Senha: password
+```
+
+Comandos uteis:
 
 ```bash
-# Start services
-docker-compose up -d
-
-# View logs
 docker-compose logs -f app
-
-# Stop services
 docker-compose down
-
-# Rebuild and restart
 docker-compose up -d --build
-
-# Stop and remove volumes (WARNING: deletes database data)
-docker-compose down -v
 ```
 
-## Local Development (Replit)
+## Desenvolvimento Local
 
-### Prerequisites
+Requisitos:
 
 - Node.js 20+
-- PostgreSQL database
+- PostgreSQL
 
-### Setup
+Comandos:
 
-1. Install dependencies:
 ```bash
 npm install
-```
-
-2. Set up environment variables (automatically configured on Replit):
-```env
-DATABASE_URL=<your-postgres-connection-string>
-SESSION_SECRET=<random-secret-key>
-```
-
-3. Push database schema:
-```bash
 npm run db:push
-```
-
-4. Start development server:
-```bash
 npm run dev
 ```
 
-5. Access at `https://<your-repl-url>.replit.dev`
+## Fluxo Operacional Principal
 
-## Initial Configuration
+1. Admin configura app Meta, GCS e webhook n8n.
+2. Usuario conecta OAuth Meta em Integracoes.
+3. Usuario cria link publico ou faz upload interno.
+4. Upload gera registros em `storage_uploads` e tarefas em `storage_tasks`.
+5. Usuario abre a tarefa e monta pares Feed + Stories.
+6. Usuario abre Distribuicao e adiciona contas/campanhas Meta.
+7. Usuario arrasta pares para campanhas e escolhe adsets/formularios.
+8. Usuario revisa a distribuicao.
+9. Backend envia payload para n8n.
+10. n8n chama callback e atualiza status para sucesso ou erro.
 
-### 1. Login as Admin
-- Email: `admin@test.com`
-- Password: `password`
+## Status de Tarefa
 
-### 2. Configure OAuth (Admin Panel)
+| Status | Cor/uso |
+| --- | --- |
+| `pending` | Tarefa recebida |
+| `configuring` | Usuario configurando |
+| `publishing` | Azul, automacao rodando |
+| `completed` / `success` | Verde, callback n8n OK |
+| `error` / `failed` | Erro reportado |
 
-Navigate to **Admin > Configurações** and enter:
+## Seguranca
 
-#### Meta App Configuration
-1. Go to [Meta for Developers](https://developers.facebook.com)
-2. Create/select your app
-3. Add OAuth redirect URI: `https://<your-url>/auth/meta/callback`
-4. Copy App ID and Secret to Admin panel
+Pontos principais:
 
-#### Google OAuth Configuration
-1. Go to [Google Cloud Console](https://console.cloud.google.com)
-2. Enable Google Drive API
-3. Create OAuth 2.0 Client ID
-4. Add redirect URI: `https://<your-url>/auth/google/callback`
-5. Copy Client ID and Secret to Admin panel
+- Toda operacao de negocio deve validar `tenant_id`.
+- Tokens Meta sao criptografados em repouso.
+- Chamadas Meta usam `appsecret_proof`.
+- Endpoints internos exigem `x-internal-api-secret`.
+- Callbacks n8n devem enviar `tenant_id`.
+- Links publicos de upload tem expiracao/revogacao e rate limit.
 
-#### n8n Webhook (Optional)
-1. In your n8n instance, create a webhook trigger
-2. Copy the webhook URL
-3. Paste it in Admin panel
+Detalhes completos em [`docs/security-meta-oauth.md`](docs/security-meta-oauth.md).
 
-### 3. Connect OAuth
+## Banco de Dados
 
-Navigate to **Integrações** and:
-1. Click "Conectar OAuth" for Meta Ads API
-2. Authorize the required permissions
-3. Click "Conectar OAuth" for Google Drive
-4. Authorize Drive access
+O schema completo esta documentado em
+[`docs/database-schema.md`](docs/database-schema.md).
 
-### 4. Verify Resources
+Tabela central do fluxo atual:
 
-Go to **Recursos** page to see imported:
-- Ad Accounts
-- Pages
-- Instagram Business Accounts
-- WhatsApp Numbers
-- Lead Forms
-- Google Drive Folders
+- `storage_upload_links`
+- `storage_uploads`
+- `storage_tasks`
+- `storage_task_uploads`
+- `resources`
+- `integrations`
+- `meta_*_snapshots`
 
-## User Management
+## Payload n8n
 
-### Creating New Users (Admin Only)
+O payload atual e montado no backend de tarefas e enviado como:
 
-1. Navigate to **Admin > Usuários**
-2. Click "Criar Novo Usuário"
-3. Fill in user details:
-   - Name
-   - Email
-   - Password
-   - Role (admin or client)
-4. Click "Criar Usuário"
-
-**Note**: Public registration is disabled. Only admins can create users.
-
-### User Roles
-
-- **Admin**: Full access to all features including user management, settings, and OAuth configuration
-- **Client**: Access to campaigns, audiences, resources, and integrations
-
-## Campaign Workflow
-
-### Creating a Campaign
-
-1. Navigate to **Campanhas > Nova Campanha**
-2. Fill in campaign details:
-   - Title
-   - Objective
-   - Message content
-   - Select resources (Page, Instagram, WhatsApp, Drive folder, etc.)
-3. Click "Criar Campanha"
-4. Campaign is automatically sent to n8n (if configured)
-
-### Campaign Status
-
-- **Draft** (gray): Created but not sent to n8n
-- **Pending** (yellow): Sent to n8n, awaiting processing
-- **Active** (green): Confirmed active by n8n
-- **Error** (red): n8n reported an error
-- **Paused/Completed**: Final states
-
-### Resending to n8n
-
-Click the send icon (paper plane) on any campaign to resend to n8n.
-
-## n8n Integration
-
-### Receiving Campaign Data
-
-n8n receives webhook at the configured URL with payload:
 ```json
 {
-  "campaign_id": "1",
-  "title": "Campaign Title",
-  "page_id": "123456",
-  "instagram_user_id": "789012",
-  "whatsapp_number_id": "345678",
-  "drive_folder_id": "folder-id",
-  "leadgen_form_id": "901234",
-  "message": "Campaign message content",
-  ...
+  "body": {
+    "action": "add_creatives_to_existing_campaigns",
+    "task": {
+      "task_id": "task_4",
+      "task_name": "Nome da tarefa"
+    },
+    "tenant": {
+      "tenant_id": "1",
+      "client_id": "cliente"
+    },
+    "pair_assets": [],
+    "creative_jobs": [],
+    "creative_defaults": {
+      "ad_status": "PAUSED",
+      "creative_status": "ACTIVE"
+    },
+    "meta": {
+      "request_id": "req_20260531_ab12cd",
+      "callback_url": "https://app.seudominio.com/api/webhooks/n8n/status"
+    }
+  }
 }
 ```
 
-### Sending Status Updates
+Nao altere esse contrato sem revisar a automacao n8n correspondente.
 
-Add HTTP Request node at end of n8n workflow:
+## Observacoes de Manutencao
 
-**Method**: POST  
-**URL**: `https://<your-app-url>/api/webhooks/n8n/status`  
-**Body** (JSON):
-```json
-{
-  "campaign_id": "1",
-  "status": "active",
-  "status_detail": "Campaign successfully created in Meta Ads"
-}
-```
-
-**Valid Status Values**: `active`, `error`, `paused`, `completed`
-
-## Database Schema
-
-### Main Tables
-
-- **users**: User accounts with RBAC (admin/client roles)
-- **tenants**: Multi-tenant isolation
-- **campaigns**: Campaign metadata and configuration
-- **resources**: Meta resources (accounts, pages, etc.)
-- **audiences**: Custom audience definitions
-- **integrations**: Encrypted OAuth credentials
-- **app_settings**: System-wide configuration
-
-## Security
-
-- **Password Hashing**: bcrypt with salt rounds
-- **Session Management**: Secure cookie-based sessions
-- **Multi-tenant Isolation**: Row-level security via tenant_id
-- **Encrypted Secrets**: OAuth tokens encrypted at rest
-- **RBAC**: Endpoint-level authorization
-- **CSRF Protection**: Session state validation for OAuth
-- **appsecret_proof**: Meta API request signing
-
-## Project Structure
-
-```
-.
-├── client/               # Frontend React application
-│   ├── src/
-│   │   ├── components/   # Reusable UI components
-│   │   ├── contexts/     # React contexts (Auth, etc.)
-│   │   ├── pages/        # Page components
-│   │   └── lib/          # Utilities and hooks
-├── server/               # Backend Express application
-│   ├── index.ts          # Entry point
-│   ├── routes.ts         # API routes
-│   ├── storage.ts        # Data layer (IStorage)
-│   └── auth.ts           # Authentication logic
-├── shared/               # Shared types and schemas
-│   └── schema.ts         # Drizzle schema definitions
-├── Dockerfile            # Multi-stage Docker build
-├── docker-compose.yml    # Docker Compose configuration
-└── drizzle.config.ts     # Drizzle ORM configuration
-```
-
-## API Endpoints
-
-### Public Endpoints
-- `POST /api/login` - User login
-- `POST /api/register` - (Disabled) Use Admin panel instead
-
-### Protected Endpoints
-- `GET /api/user` - Get current user
-- `POST /api/logout` - Logout
-- `GET /api/campaigns` - List campaigns
-- `POST /api/campaigns` - Create campaign
-- `POST /api/campaigns/:id/send-webhook` - Resend to n8n
-- `GET /api/resources` - List resources
-- `GET /api/audiences` - List audiences
-- `POST /api/audiences` - Create audience
-
-### Admin-Only Endpoints
-- `GET /api/admin/settings` - Get system settings
-- `PUT /api/admin/settings` - Update system settings
-- `GET /api/admin/users` - List all users
-- `POST /api/admin/users` - Create new user
-- `PUT /api/admin/users/:id` - Update user
-- `DELETE /api/admin/users/:id` - Delete user
-
-### OAuth Endpoints
-- `GET /auth/meta` - Initiate Meta OAuth
-- `GET /auth/meta/callback` - Meta OAuth callback
-- `GET /auth/google` - Initiate Google OAuth
-- `GET /auth/google/callback` - Google OAuth callback
-
-### Webhook Endpoints
-- `POST /api/webhooks/n8n` - Send data to n8n
-- `POST /api/webhooks/n8n/status` - Receive status from n8n
-
-## Troubleshooting
-
-### Docker Issues
-
-**Container won't start**:
-```bash
-docker-compose logs app
-docker-compose logs postgres
-```
-
-**Database connection error**:
-- Ensure postgres service is healthy: `docker-compose ps`
-- Check DATABASE_URL in docker-compose.yml
-
-**Port already in use**:
-```bash
-# Change port in docker-compose.yml
-ports:
-  - "3000:5000"  # Use port 3000 instead
-```
-
-### OAuth Issues
-
-**"Callback URL mismatch"**:
-- Verify callback URLs in Meta/Google match exactly
-- Include protocol: `https://`
-- No trailing slashes
-
-**"Missing permissions"**:
-- Check Meta App has all required permissions
-- Permissions: `ads_management`, `pages_show_list`, `instagram_basic`, `whatsapp_business_management`, `leads_retrieval`
-
-**"Resources not appearing"**:
-- Go to Recursos page to verify imports
-- Check that OAuth completed successfully
-- Verify integration credentials in database
-
-### n8n Webhook Issues
-
-**"Webhook not active"**:
-- In n8n, click "Execute workflow" button
-- Test webhooks require manual activation
-
-**Status updates not received**:
-- Verify callback URL is correct
-- Check n8n HTTP Request node configuration
-- Ensure payload matches expected format
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
-
-## License
-
-Proprietary - All rights reserved
+- Atualize `docs/database-schema.md` sempre que `shared/schema.ts` mudar.
+- Atualize `docs/use-cases.md` quando um fluxo de produto mudar.
+- Atualize `docs/architecture-overview.md` quando criar/remover modulo ou rota.
+- Evite colocar credenciais reais em exemplos, logs ou screenshots.

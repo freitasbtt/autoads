@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Circle, Plus } from "lucide-react";
@@ -14,7 +15,7 @@ import {
   useSensor,
   useSensors,
 } from "@dnd-kit/core";
-import { CSS } from "@dnd-kit/utilities";
+import type { Modifier } from "@dnd-kit/core";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -305,6 +306,21 @@ function upsertDestination(destinations: DestinationRecord[], nextDestination: D
   return next;
 }
 
+const restrictDragOverlayToViewport: Modifier = ({ transform, draggingNodeRect }) => {
+  if (!draggingNodeRect) {
+    return transform;
+  }
+
+  const viewportPadding = 8;
+  const minX = viewportPadding - draggingNodeRect.left;
+  const maxX = window.innerWidth - viewportPadding - draggingNodeRect.right;
+
+  return {
+    ...transform,
+    x: Math.min(Math.max(transform.x, minX), maxX),
+  };
+};
+
 function PairPreview({
   pair,
   compact = false,
@@ -322,6 +338,8 @@ function PairPreview({
             "rounded-md object-contain",
             compact ? "h-14 w-auto max-w-[5.5rem]" : "h-20 w-auto max-w-[7rem]",
           )}
+          loading="lazy"
+          decoding="async"
         />
       ) : (
         <div
@@ -344,7 +362,7 @@ function SourcePairCard({
   pair: PairView;
   usageCount: number;
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `source:${pair.pairId}`,
     data: {
       type: "pair",
@@ -355,13 +373,10 @@ function SourcePairCard({
   return (
     <div
       ref={setNodeRef}
-      style={{
-        transform: CSS.Translate.toString(transform),
-      }}
       {...attributes}
       {...listeners}
       className={cn(
-        "flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 transition hover:border-blue-200 hover:shadow-sm cursor-grab active:cursor-grabbing",
+        "flex w-full min-w-0 max-w-full touch-none select-none items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 transition hover:border-blue-200 hover:shadow-sm cursor-grab active:cursor-grabbing",
         isDragging && "opacity-50",
       )}
     >
@@ -386,7 +401,7 @@ function AssignedPairChip({
   usageCount: number;
   onRemove: () => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `assigned:${pair.pairId}`,
     data: {
       type: "pair",
@@ -397,13 +412,10 @@ function AssignedPairChip({
   return (
     <div
       ref={setNodeRef}
-      style={{
-        transform: CSS.Translate.toString(transform),
-      }}
       {...attributes}
       {...listeners}
       className={cn(
-        "group inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2 transition hover:border-blue-200 hover:shadow-sm cursor-grab active:cursor-grabbing",
+        "group inline-flex max-w-full touch-none select-none items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2 transition hover:border-blue-200 hover:shadow-sm cursor-grab active:cursor-grabbing",
         isDragging && "opacity-50",
       )}
     >
@@ -489,6 +501,7 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
   const [pairLeadformSearchByKey, setPairLeadformSearchByKey] = useState<Record<string, string>>({});
   const [leadformPickerTarget, setLeadformPickerTarget] = useState<LeadformPickerTarget | null>(null);
   const [leadformPickerSearch, setLeadformPickerSearch] = useState("");
+  const availablePairsScrollRef = useRef<HTMLDivElement | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
@@ -500,6 +513,28 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
   const detailQuery = useQuery<DistributionDetail>({
     queryKey: [`/api/tasks/${taskId}/distribution`],
   });
+
+  useEffect(() => {
+    let stopped = false;
+
+    async function sendActivity() {
+      if (stopped || document.visibilityState !== "visible") {
+        return;
+      }
+      try {
+        await apiRequest("POST", `/api/tasks/${taskId}/activity`, {});
+      } catch {
+        // Activity tracking is best-effort and must not interrupt distribution.
+      }
+    }
+
+    void sendActivity();
+    const intervalId = window.setInterval(sendActivity, 30_000);
+    return () => {
+      stopped = true;
+      window.clearInterval(intervalId);
+    };
+  }, [taskId]);
 
   const accountsQuery = useQuery<{ accounts: AccountSearchItem[] }>({
     queryKey: ["task-distribution-account-search", taskId, searchTerm],
@@ -580,6 +615,42 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
   const detail = detailQuery.data;
   const pairs = detail?.pairs ?? [];
   const pairById = useMemo(() => new Map(pairs.map((pair) => [pair.pairId, pair])), [pairs]);
+
+  useLayoutEffect(() => {
+    if (!activeDragPairId) {
+      return;
+    }
+
+    const main = document.querySelector("main");
+    const availablePairsScroll = availablePairsScrollRef.current;
+    const previousBodyOverflowX = document.body.style.overflowX;
+    const previousRootOverflowX = document.documentElement.style.overflowX;
+    const previousMainOverflowX = main instanceof HTMLElement ? main.style.overflowX : "";
+    let animationFrame = 0;
+
+    document.body.style.overflowX = "hidden";
+    document.documentElement.style.overflowX = "hidden";
+    if (main instanceof HTMLElement) {
+      main.style.overflowX = "hidden";
+    }
+
+    const lockHorizontalScroll = () => {
+      if (availablePairsScroll && availablePairsScroll.scrollLeft !== 0) {
+        availablePairsScroll.scrollLeft = 0;
+      }
+      animationFrame = window.requestAnimationFrame(lockHorizontalScroll);
+    };
+    lockHorizontalScroll();
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      document.body.style.overflowX = previousBodyOverflowX;
+      document.documentElement.style.overflowX = previousRootOverflowX;
+      if (main instanceof HTMLElement) {
+        main.style.overflowX = previousMainOverflowX;
+      }
+    };
+  }, [activeDragPairId]);
 
   useEffect(() => {
     distributionDraftRef.current = distributionDraft;
@@ -930,6 +1001,10 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
   }
 
   function handleDragStart(event: DragStartEvent) {
+    if (availablePairsScrollRef.current) {
+      availablePairsScrollRef.current.scrollLeft = 0;
+    }
+
     const pairId = event.active.data.current?.pairId;
     setActiveDragPairId(typeof pairId === "string" ? pairId : null);
   }
@@ -957,6 +1032,16 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
     void assignPairToCampaign(reference.account, reference.campaign, pairId);
   }
 
+  function handleDragCancel() {
+    setActiveDragPairId(null);
+  }
+
+  function keepAvailablePairsScrollVertical(event: UIEvent<HTMLDivElement>) {
+    if (event.currentTarget.scrollLeft !== 0) {
+      event.currentTarget.scrollLeft = 0;
+    }
+  }
+
   if (!detail) {
     return (
       <div className="p-6">
@@ -969,10 +1054,12 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
+      autoScroll={false}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
     >
-      <div className="min-h-full bg-slate-50 p-6">
+      <div className="min-h-full overflow-x-clip bg-slate-50 p-6">
         <div className="mx-auto space-y-6 max-w-[1600px]">
           <Card className="border-slate-200 bg-white shadow-sm">
             <CardHeader>
@@ -1007,16 +1094,21 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
             </CardHeader>
           </Card>
 
-          <div className="grid items-start gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
-          <aside className="self-start lg:sticky lg:top-6">
-            <Card className="border-slate-200 bg-white shadow-sm lg:flex lg:max-h-[calc(100vh-3rem)] lg:flex-col">
+          <div className="grid min-w-0 items-start gap-6 overflow-x-clip lg:grid-cols-[280px_minmax(0,1fr)]">
+          <aside className="self-start lg:sticky lg:top-24 lg:max-h-[calc(100vh-7rem)]">
+            <Card className="border-slate-200 bg-white shadow-sm lg:flex lg:h-[calc(100vh-7rem)] lg:max-h-[calc(100vh-7rem)] lg:flex-col">
               <CardHeader>
                 <CardTitle className="text-slate-900">Pares disponíveis</CardTitle>
                 <CardDescription className="text-slate-600">
                   Arraste um par para a campanha desejada.
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-3 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:pr-2">
+              <CardContent
+                ref={availablePairsScrollRef}
+                className="max-h-[70vh] space-y-3 overflow-y-auto overflow-x-clip overscroll-y-contain pr-2 lg:min-h-0 lg:max-h-none lg:flex-1"
+                style={{ contain: "layout paint", overflowX: "clip", scrollbarGutter: "stable" }}
+                onScroll={keepAvailablePairsScrollVertical}
+              >
                 {pairs.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">
                     Nenhum par pronto para distribuir.
@@ -1313,7 +1405,7 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                                               {canDrop ? "Arraste pares aqui" : "Campanha indisponivel para receber pares"}
                                             </div>
                                           ) : (
-                                            <div className="space-y-3">
+                                            <div className="min-w-0 space-y-3 overflow-x-hidden">
                                               {assignedPairs.map((pair) => {
                                                 const pairAssignmentKey = makePairAssignmentKey(campaignKey, pair.pairId);
                                                 const pairAssignment =
@@ -1330,7 +1422,7 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                                                     key={`${campaignKey}:${pair.pairId}`}
                                                     className="rounded-2xl border border-slate-200 bg-white p-3"
                                                   >
-                                                    <div className="flex items-start justify-between gap-3">
+                                                    <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
                                                       <AssignedPairChip
                                                         pair={pair}
                                                         usageCount={pairUsageCount.get(pair.pairId) ?? 0}
@@ -1342,7 +1434,7 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                                                           )
                                                         }
                                                       />
-                                                      <div className="min-w-[260px] space-y-2">
+                                                      <div className="min-w-0 flex-1 basis-[260px] space-y-2">
                                                         <label className="flex items-center gap-2 text-xs text-slate-600">
                                                           <Checkbox
                                                             checked={pairAssignment?.useCampaignDefault !== false}
@@ -1876,16 +1968,19 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
         </CommandList>
       </CommandDialog>
 
-      <DragOverlay>
-        {activeDragPairId && pairById.get(activeDragPairId) ? (
-          <div className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl">
-            <div className="text-xs font-medium text-slate-900">
-              Par {(pairById.get(activeDragPairId)?.position ?? 0) + 1}
+      {createPortal(
+        <DragOverlay modifiers={[restrictDragOverlayToViewport]}>
+          {activeDragPairId && pairById.get(activeDragPairId) ? (
+            <div className="inline-flex pointer-events-none items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl">
+              <div className="text-xs font-medium text-slate-900">
+                Par {(pairById.get(activeDragPairId)?.position ?? 0) + 1}
+              </div>
+              <PairPreview pair={pairById.get(activeDragPairId)!} compact />
             </div>
-            <PairPreview pair={pairById.get(activeDragPairId)!} compact />
-          </div>
-        ) : null}
-      </DragOverlay>
+          ) : null}
+        </DragOverlay>,
+        document.body,
+      )}
     </DndContext>
   );
 }

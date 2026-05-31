@@ -107,6 +107,27 @@ function validateInternalWebhookRequest(req: Request): {
   return { valid: true, status: 200, message: "ok" };
 }
 
+function parseTaskIdentifier(value: unknown) {
+  const raw = String(value ?? "").trim();
+  const match = raw.match(/^task[_-]?(\d+)$/i) ?? raw.match(/^(\d+)$/);
+  if (!match) {
+    return null;
+  }
+  const taskId = Number.parseInt(match[1], 10);
+  return Number.isFinite(taskId) && taskId > 0 ? taskId : null;
+}
+
+function normalizeTaskCallbackStatus(value: unknown) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (["completed", "success", "ok", "active"].includes(normalized)) {
+    return "completed";
+  }
+  if (["error", "failed", "failure"].includes(normalized)) {
+    return "error";
+  }
+  return "publishing";
+}
+
 function mapObjectiveToOutcome(value: unknown): string {
   const normalized = typeof value === "string" ? value.trim().toUpperCase() : "";
   if (!normalized) {
@@ -417,7 +438,7 @@ campaignsRouter.patch("/:id", async (req, res, next) => {
       }
       updateValues.leadformId = resolvedLeadformId;
     }
-    const campaign = await storage.updateCampaign(id, updateValues);
+    const campaign = await storage.updateCampaign(id, updateValues, user.tenantId);
     res.json(campaign);
   } catch (err) {
     next(err);
@@ -437,7 +458,7 @@ campaignsRouter.delete("/:id", async (req, res, next) => {
       return res.status(404).json({ message: "Campaign not found" });
     }
 
-    await storage.deleteCampaign(id);
+    await storage.deleteCampaign(id, user.tenantId);
     res.json({ message: "Campaign deleted successfully" });
   } catch (err) {
     next(err);
@@ -760,7 +781,7 @@ campaignsRouter.post("/:id/send-webhook", async (req, res, next) => {
     await storage.updateCampaign(id, {
       status: "pending",
       statusDetail: "Aguardando processamento do n8n (reenviado)",
-    });
+    }, user.tenantId);
 
     let cooldownUntil: string | null = null;
     let cooldownSeconds: number | null = null;
@@ -972,7 +993,34 @@ campaignWebhookRouter.post("/n8n/status", n8nStatusWebhookRateLimit, async (req,
       return res.status(validation.status).json({ message: validation.message });
     }
 
-    const { campaign_id, external_id, status, status_detail } = req.body;
+    const bodyData = req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
+    const nestedData =
+      bodyData.data && typeof bodyData.data === "object"
+        ? (bodyData.data as Record<string, unknown>)
+        : bodyData.body && typeof bodyData.body === "object"
+          ? (((bodyData.body as Record<string, unknown>).data ?? {}) as Record<string, unknown>)
+          : {};
+    const campaign_id = bodyData.campaign_id ?? nestedData.campaign_id;
+    const external_id = bodyData.external_id ?? nestedData.external_id;
+    const status = bodyData.status ?? nestedData.status;
+    const status_detail = bodyData.status_detail ?? nestedData.status_detail;
+    const tenant_id = bodyData.tenant_id ?? nestedData.tenant_id;
+    const taskRecord =
+      bodyData.task && typeof bodyData.task === "object"
+        ? (bodyData.task as Record<string, unknown>)
+        : nestedData.task && typeof nestedData.task === "object"
+          ? (nestedData.task as Record<string, unknown>)
+          : {};
+    const taskIdentifier =
+      bodyData.task_id ??
+      nestedData.task_id ??
+      taskRecord.task_id ??
+      taskRecord.id ??
+      (typeof external_id === "string" && external_id.startsWith("task_") ? external_id : undefined);
+    const tenantId = Number.parseInt(String(tenant_id ?? ""), 10);
+    if (!Number.isInteger(tenantId) || tenantId <= 0) {
+      return res.status(400).json({ message: "tenant_id is required" });
+    }
 
     if (campaign_id && external_id && String(campaign_id) !== String(external_id)) {
       return res
@@ -991,41 +1039,72 @@ campaignWebhookRouter.post("/n8n/status", n8nStatusWebhookRateLimit, async (req,
         .json({ message: `Invalid status. Must be one of: ${validStatuses.join(", ")}` });
     }
 
-    const campaignIdentifier = external_id ?? campaign_id;
-    if (!campaignIdentifier) {
+    const campaignIdentifier =
+      typeof external_id === "string" && external_id.startsWith("task_") ? campaign_id : external_id ?? campaign_id;
+    const taskId = parseTaskIdentifier(taskIdentifier);
+    if (!campaignIdentifier && !taskId) {
       return res
         .status(400)
-        .json({ message: "Envie campaign_id ou external_id para identificar a campanha" });
+        .json({ message: "Envie campaign_id, external_id ou task_id para identificar o registro" });
     }
 
-    const campaignId = Number.parseInt(String(campaignIdentifier), 10);
-    if (!Number.isFinite(campaignId)) {
-      return res.status(400).json({ message: "campaign_id/external_id devem ser numeros" });
+    let campaignForBroadcast = null;
+    if (campaignIdentifier) {
+      const campaignId = Number.parseInt(String(campaignIdentifier), 10);
+      if (!Number.isFinite(campaignId)) {
+        return res.status(400).json({ message: "campaign_id/external_id devem ser numeros" });
+      }
+
+      const existing = await storage.getCampaign(campaignId);
+      if (!existing || existing.tenantId !== tenantId) {
+        return res.status(404).json({ message: "Campaign not found" });
+      }
+
+      const normalizedStatus = String(status).toLowerCase();
+      const statusDetailValue = typeof status_detail === "string" ? status_detail : null;
+      const updated = await storage.updateCampaign(campaignId, {
+        status: normalizedStatus,
+        statusDetail: statusDetailValue,
+      }, tenantId);
+      campaignForBroadcast =
+        updated ?? { ...existing, status: normalizedStatus, statusDetail: statusDetailValue };
+
+      if (!updated) {
+        return res
+          .status(500)
+          .json({ message: "Nao foi possivel atualizar a campanha" });
+      }
+
+      broadcastCampaignUpdate(existing.tenantId, campaignForBroadcast);
     }
 
-    const existing = await storage.getCampaign(campaignId);
-    if (!existing) {
-      return res.status(404).json({ message: "Campaign not found" });
+    let taskForResponse = null;
+    if (taskId) {
+      const task = await storage.getStorageTask(taskId);
+      if (!task || task.tenantId !== tenantId) {
+        return res.status(404).json({ message: "Task not found" });
+      }
+
+      const taskStatus = normalizeTaskCallbackStatus(status);
+      const updatedTask = await storage.updateStorageTask(
+        task.id,
+        {
+          status: taskStatus,
+          automationFinishedAt: new Date(),
+        },
+        tenantId,
+      );
+      if (!updatedTask) {
+        return res.status(500).json({ message: "Nao foi possivel atualizar a tarefa" });
+      }
+      taskForResponse = updatedTask;
     }
 
-    const normalizedStatus = String(status).toLowerCase();
-    const statusDetailValue = typeof status_detail === "string" ? status_detail : null;
-    const updated = await storage.updateCampaign(campaignId, {
-      status: normalizedStatus,
-      statusDetail: statusDetailValue,
+    res.json({
+      message: "Status atualizado",
+      campaign: campaignForBroadcast,
+      task: taskForResponse,
     });
-    const campaignForBroadcast =
-      updated ?? { ...existing, status: normalizedStatus, statusDetail: statusDetailValue };
-
-    if (!updated) {
-      return res
-        .status(500)
-        .json({ message: "Nao foi possivel atualizar a campanha" });
-    }
-
-    broadcastCampaignUpdate(existing.tenantId, campaignForBroadcast);
-
-    res.json({ message: "Status da campanha atualizado", campaign: campaignForBroadcast });
   } catch (err) {
     next(err as Error);
   }

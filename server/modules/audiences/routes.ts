@@ -66,7 +66,7 @@ audiencesRouter.patch("/:id", async (req, res, next) => {
     }
 
     const data = updateAudienceSchema.parse(req.body);
-    const audience = await storage.updateAudience(id, data);
+    const audience = await storage.updateAudience(id, data, user.tenantId);
     res.json(audience);
   } catch (err) {
     next(err);
@@ -86,7 +86,7 @@ audiencesRouter.delete("/:id", async (req, res, next) => {
       return res.status(404).json({ message: "Audience not found" });
     }
 
-    await storage.deleteAudience(id);
+    await storage.deleteAudience(id, user.tenantId);
     res.json({ message: "Audience deleted successfully" });
   } catch (err) {
     next(err);

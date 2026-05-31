@@ -7,16 +7,12 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import { Shield, Key, Webhook, Settings, Users } from "lucide-react";
+import { Key, Webhook, Settings, Users } from "lucide-react";
 import UserManagement from "@/pages/UserManagement";
 import { useAuth } from "@/contexts/AuthContext";
 
 interface AppSettings {
   id: number | null;
-  metaAppId: string | null;
-  metaAppSecret: string | null;
-  googleClientId: string | null;
-  googleClientSecret: string | null;
   gcsConfigured?: boolean;
   gcsBucketName: string | null;
   gcsClientEmail?: string | null;
@@ -40,10 +36,6 @@ export default function Admin() {
   });
 
   const [formData, setFormData] = useState({
-    metaAppId: "",
-    metaAppSecret: "",
-    googleClientId: "",
-    googleClientSecret: "",
     n8nWebhookUrl: "",
   });
 
@@ -56,10 +48,6 @@ export default function Admin() {
         description: "As configurações foram atualizadas com sucesso.",
       });
       setFormData({
-        metaAppId: "",
-        metaAppSecret: "",
-        googleClientId: "",
-        googleClientSecret: "",
         n8nWebhookUrl: "",
       });
     },
@@ -78,10 +66,6 @@ export default function Admin() {
     }
 
     const updates: Partial<typeof formData> = {};
-    if (formData.metaAppId) updates.metaAppId = formData.metaAppId;
-    if (formData.metaAppSecret) updates.metaAppSecret = formData.metaAppSecret;
-    if (formData.googleClientId) updates.googleClientId = formData.googleClientId;
-    if (formData.googleClientSecret) updates.googleClientSecret = formData.googleClientSecret;
     if (formData.n8nWebhookUrl) updates.n8nWebhookUrl = formData.n8nWebhookUrl;
 
     if (Object.keys(updates).length === 0) {
@@ -131,92 +115,6 @@ export default function Admin() {
               <Card>
                 <CardHeader>
                   <div className="flex items-center gap-2">
-                    <Shield className="h-5 w-5 text-blue-600" />
-                    <CardTitle>Meta OAuth App</CardTitle>
-                  </div>
-                  <CardDescription>
-                    Informe as credenciais utilizadas para conectar com o ecossistema Meta.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="meta-app-id">App ID</Label>
-                    <Input
-                      id="meta-app-id"
-                      data-testid="input-meta-app-id"
-                      placeholder="Digite o Meta App ID"
-                      value={formData.metaAppId}
-                      onChange={(e) => setFormData({ ...formData, metaAppId: e.target.value })}
-                    />
-                    {settings?.metaAppId && (
-                      <p className="text-xs text-muted-foreground">Atual: {settings.metaAppId}</p>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="meta-app-secret">App Secret</Label>
-                    <Input
-                      id="meta-app-secret"
-                      data-testid="input-meta-app-secret"
-                      type="password"
-                      placeholder="Digite o Meta App Secret"
-                      value={formData.metaAppSecret}
-                      onChange={(e) => setFormData({ ...formData, metaAppSecret: e.target.value })}
-                    />
-                    {settings?.metaAppSecret && (
-                      <p className="text-xs text-muted-foreground">{settings.metaAppSecret}</p>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center gap-2">
-                    <Key className="h-5 w-5 text-green-600" />
-                    <CardTitle>Google OAuth App</CardTitle>
-                  </div>
-                  <CardDescription>
-                    Configure as credenciais usadas para acessar o Google Drive.
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="google-client-id">Client ID</Label>
-                    <Input
-                      id="google-client-id"
-                      data-testid="input-google-client-id"
-                      placeholder="Digite o Google Client ID"
-                      value={formData.googleClientId}
-                      onChange={(e) => setFormData({ ...formData, googleClientId: e.target.value })}
-                    />
-                    {settings?.googleClientId && (
-                      <p className="text-xs text-muted-foreground">Atual: {settings.googleClientId}</p>
-                    )}
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="google-client-secret">Client Secret</Label>
-                    <Input
-                      id="google-client-secret"
-                      data-testid="input-google-client-secret"
-                      type="password"
-                      placeholder="Digite o Google Client Secret"
-                      value={formData.googleClientSecret}
-                      onChange={(e) =>
-                        setFormData({ ...formData, googleClientSecret: e.target.value })
-                      }
-                    />
-                    {settings?.googleClientSecret && (
-                      <p className="text-xs text-muted-foreground">{settings.googleClientSecret}</p>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center gap-2">
                     <Key className="h-5 w-5 text-amber-600" />
                     <CardTitle>Google Cloud Storage</CardTitle>
                   </div>
@@ -260,7 +158,7 @@ export default function Admin() {
                 </CardContent>
               </Card>
 
-              <Card className="lg:col-span-2">
+              <Card>
                 <CardHeader>
                   <div className="flex items-center gap-2">
                     <Webhook className="h-5 w-5 text-purple-600" />
@@ -291,10 +189,6 @@ export default function Admin() {
                 variant="outline"
                 onClick={() => {
                   setFormData({
-                    metaAppId: "",
-                    metaAppSecret: "",
-                    googleClientId: "",
-                    googleClientSecret: "",
                     n8nWebhookUrl: "",
                   });
                 }}

@@ -1,8 +1,5 @@
 import {
-  Settings,
-  FileText,
   LayoutDashboard,
-  Users,
   Plug,
   ClipboardList,
   LogOut,
@@ -28,13 +25,10 @@ import { useToast } from "@/hooks/use-toast";
 const items: Array<{
   title: string;
   url: string;
-  icon: typeof LayoutDashboard;
+  icon: typeof ClipboardList;
   blocked?: boolean;
 }> = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Campanhas", url: "/campaigns", icon: FileText },
-  { title: "Publicos", url: "/audiences", icon: Users },
-  { title: "Recursos", url: "/resources", icon: Settings },
   { title: "Integracoes", url: "/integrations", icon: Plug },
   { title: "Tarefas", url: "/tasks", icon: ClipboardList },
 ];

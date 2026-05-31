@@ -17,7 +17,6 @@ const allowedTypes = [
   "whatsapp",
   "leadform",
   "website",
-  "drive_folder",
 ] as const;
 
 type ResourceType = (typeof allowedTypes)[number];
@@ -122,7 +121,7 @@ resourcesRouter.patch(
       }
 
       const data = insertResourceSchema.partial().parse(req.body);
-      const resource = await storage.updateResource(id, data);
+      const resource = await storage.updateResource(id, data, user.tenantId);
       res.json(resource);
     } catch (err) {
       next(err);
@@ -147,7 +146,7 @@ resourcesRouter.delete(
         return res.status(404).json({ message: "Resource not found" });
       }
 
-      await storage.deleteResource(id);
+      await storage.deleteResource(id, user.tenantId);
       res.json({ message: "Resource deleted successfully" });
     } catch (err) {
       next(err);

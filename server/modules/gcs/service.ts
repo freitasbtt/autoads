@@ -476,6 +476,79 @@ export async function downloadObjectFromGcs(options: {
   };
 }
 
+function formatGcsSignedUrlDate(date: Date) {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  const hours = String(date.getUTCHours()).padStart(2, "0");
+  const minutes = String(date.getUTCMinutes()).padStart(2, "0");
+  const seconds = String(date.getUTCSeconds()).padStart(2, "0");
+  return {
+    dateStamp: `${year}${month}${day}`,
+    timestamp: `${year}${month}${day}T${hours}${minutes}${seconds}Z`,
+  };
+}
+
+function encodeGcsPathSegment(value: string) {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (char) =>
+    `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+function encodeGcsCanonicalQueryValue(value: string) {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (char) =>
+    `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+}
+
+export async function createSignedGcsReadUrl(options: {
+  bucketName: string;
+  objectPath: string;
+  expiresSeconds?: number;
+}) {
+  const config = await resolveGcsConfig();
+  if (!config) {
+    throw new Error("Google Cloud Storage nao configurado.");
+  }
+
+  const now = new Date();
+  const { dateStamp, timestamp } = formatGcsSignedUrlDate(now);
+  const expiresSeconds = Math.min(Math.max(options.expiresSeconds ?? 900, 60), 604800);
+  const credentialScope = `${dateStamp}/auto/storage/goog4_request`;
+  const credential = `${config.clientEmail}/${credentialScope}`;
+  const canonicalUri = `/${encodeGcsPathSegment(options.bucketName)}/${options.objectPath
+    .split("/")
+    .map(encodeGcsPathSegment)
+    .join("/")}`;
+  const queryParams = [
+    ["X-Goog-Algorithm", "GOOG4-RSA-SHA256"],
+    ["X-Goog-Credential", credential],
+    ["X-Goog-Date", timestamp],
+    ["X-Goog-Expires", String(expiresSeconds)],
+    ["X-Goog-SignedHeaders", "host"],
+  ] as const;
+  const canonicalQueryString = queryParams
+    .map(([key, value]) => `${key}=${encodeGcsCanonicalQueryValue(value)}`)
+    .join("&");
+  const canonicalRequest = [
+    "GET",
+    canonicalUri,
+    canonicalQueryString,
+    "host:storage.googleapis.com\n",
+    "host",
+    "UNSIGNED-PAYLOAD",
+  ].join("\n");
+  const stringToSign = [
+    "GOOG4-RSA-SHA256",
+    timestamp,
+    credentialScope,
+    crypto.createHash("sha256").update(canonicalRequest).digest("hex"),
+  ].join("\n");
+  const signature = crypto.createSign("RSA-SHA256").update(stringToSign).sign(config.privateKey, "hex");
+
+  return `https://storage.googleapis.com${canonicalUri}?${canonicalQueryString}&X-Goog-Signature=${signature}`;
+}
+
 export function getGcsObjectHttpUrl(bucketName: string, objectPath: string): string {
   return `https://storage.googleapis.com/${bucketName}/${objectPath
     .split("/")
