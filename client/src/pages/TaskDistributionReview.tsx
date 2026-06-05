@@ -14,6 +14,7 @@ type TaskDistributionReviewProps = {
 type PairView = {
   pairId: string;
   position: number;
+  name: string | null;
   title: string | null;
   text: string | null;
   feedThumbnailUrl: string | null;
@@ -85,6 +86,11 @@ function getSelectedAdsets(destination: DestinationRecord) {
   return destination.applyToAllAdsets
     ? destination.adsets
     : destination.adsets.filter((adset) => destination.selectedAdsetIds.includes(adset.id));
+}
+
+function getPairDisplayName(pair: PairView) {
+  const customName = pair.name?.trim() ?? "";
+  return customName.length > 0 ? customName : `Par ${pair.position + 1}`;
 }
 
 function PairThumb({ pair }: { pair: PairView }) {
@@ -417,6 +423,9 @@ export default function TaskDistributionReviewPage({ taskId }: TaskDistributionR
                                             <PairThumb pair={pair} />
                                             <div className="min-w-0">
                                               <div className="text-sm font-medium text-slate-900">
+                                                {getPairDisplayName(pair)}
+                                              </div>
+                                              <div className="text-[11px] text-slate-500">
                                                 Par {String(pair.position + 1).padStart(2, "0")}
                                               </div>
                                               <div className="max-w-[220px] truncate text-[11px] text-slate-500">

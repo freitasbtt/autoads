@@ -344,6 +344,7 @@ export type StorageUpload = typeof storageUploads.$inferSelect;
 export type StorageTaskPairRecord = {
   feedUploadId: number | null;
   storiesUploadId: number | null;
+  name: string | null;
   title: string | null;
   text: string | null;
 };

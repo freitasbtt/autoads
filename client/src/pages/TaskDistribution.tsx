@@ -42,6 +42,7 @@ type TaskDistributionProps = {
 type PairView = {
   pairId: string;
   position: number;
+  name: string | null;
   title: string | null;
   text: string | null;
   feedUploadId: number;
@@ -262,6 +263,11 @@ function getDestinationActiveAdsets(destination: DestinationRecord) {
     : destination.adsets.filter((adset) => destination.selectedAdsetIds.includes(adset.id));
 }
 
+function getPairDisplayName(pair: PairView) {
+  const customName = pair.name?.trim() ?? "";
+  return customName.length > 0 ? customName : `Par ${pair.position + 1}`;
+}
+
 function getDestinationPageIds(destination: DestinationRecord) {
   return Array.from(
     new Set(
@@ -305,6 +311,8 @@ function upsertDestination(destinations: DestinationRecord[], nextDestination: D
 
   return next;
 }
+
+const LEADFORM_RETRY_DELAY_MS = 60_000;
 
 const restrictDragOverlayToViewport: Modifier = ({ transform, draggingNodeRect }) => {
   if (!draggingNodeRect) {
@@ -383,9 +391,9 @@ function SourcePairCard({
       <PairPreview pair={pair} compact />
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-semibold text-slate-900">
-          {`Par ${pair.position + 1}`}
+          {getPairDisplayName(pair)}
         </div>
-        <div className="text-[11px] text-slate-500">Feed + Stories</div>
+        <div className="text-[11px] text-slate-500">{`Par ${pair.position + 1} | Feed + Stories`}</div>
         <div className="mt-1 text-[11px] text-slate-500">Usado {usageCount}x</div>
       </div>
     </div>
@@ -422,9 +430,9 @@ function AssignedPairChip({
       <PairPreview pair={pair} compact />
       <div className="min-w-0">
         <div className="max-w-[120px] truncate text-xs font-medium text-slate-900">
-          {`Par ${pair.position + 1}`}
+          {getPairDisplayName(pair)}
         </div>
-        <div className="text-[10px] text-slate-500">{usageCount} uso(s)</div>
+        <div className="text-[10px] text-slate-500">{`Par ${pair.position + 1} | ${usageCount} uso(s)`}</div>
       </div>
       <button
         type="button"
@@ -497,6 +505,7 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
   const [leadformsByPageId, setLeadformsByPageId] = useState<Record<string, LeadformOption[]>>({});
   const [leadformsLoadingByPageId, setLeadformsLoadingByPageId] = useState<Record<string, boolean>>({});
   const [leadformsErrorByPageId, setLeadformsErrorByPageId] = useState<Record<string, string | null>>({});
+  const leadformRetryTimersRef = useRef<Record<string, number>>({});
   const [campaignLeadformSearchByKey, setCampaignLeadformSearchByKey] = useState<Record<string, string>>({});
   const [pairLeadformSearchByKey, setPairLeadformSearchByKey] = useState<Record<string, string>>({});
   const [leadformPickerTarget, setLeadformPickerTarget] = useState<LeadformPickerTarget | null>(null);
@@ -535,6 +544,15 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
       window.clearInterval(intervalId);
     };
   }, [taskId]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(leadformRetryTimersRef.current).forEach((timerId) => {
+        window.clearTimeout(timerId);
+      });
+      leadformRetryTimersRef.current = {};
+    };
+  }, []);
 
   const accountsQuery = useQuery<{ accounts: AccountSearchItem[] }>({
     queryKey: ["task-distribution-account-search", taskId, searchTerm],
@@ -582,6 +600,27 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
   function closeLeadformPicker() {
     setLeadformPickerTarget(null);
     setLeadformPickerSearch("");
+  }
+
+  function scheduleLeadformRetry(pageId: string, message: string) {
+    setLeadformsErrorByPageId((current) => ({
+      ...current,
+      [pageId]: message,
+    }));
+
+    const activeTimer = leadformRetryTimersRef.current[pageId];
+    if (activeTimer) {
+      window.clearTimeout(activeTimer);
+    }
+
+    leadformRetryTimersRef.current[pageId] = window.setTimeout(() => {
+      setLeadformsErrorByPageId((current) => {
+        const next = { ...current };
+        delete next[pageId];
+        return next;
+      });
+      delete leadformRetryTimersRef.current[pageId];
+    }, LEADFORM_RETRY_DELAY_MS);
   }
 
   function applyLeadformSelection(value: string) {
@@ -696,7 +735,7 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
     );
 
     pageIds.forEach((pageId) => {
-      if (leadformsByPageId[pageId] || leadformsLoadingByPageId[pageId]) {
+      if (leadformsByPageId[pageId] || leadformsLoadingByPageId[pageId] || leadformsErrorByPageId[pageId]) {
         return;
       }
 
@@ -731,16 +770,20 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
           }));
         })
         .catch((error: Error) => {
-          setLeadformsErrorByPageId((current) => ({
-            ...current,
-            [pageId]: error.message || "Falha ao carregar formularios da pagina.",
-          }));
+          scheduleLeadformRetry(pageId, error.message || "Falha ao carregar formularios da pagina.");
         })
         .finally(() => {
           setLeadformsLoadingByPageId((current) => ({ ...current, [pageId]: false }));
         });
     });
-  }, [accountBlocks, distributionDraft.destinations, leadformsByPageId, leadformsLoadingByPageId, taskId]);
+  }, [
+    accountBlocks,
+    distributionDraft.destinations,
+    leadformsByPageId,
+    leadformsLoadingByPageId,
+    leadformsErrorByPageId,
+    taskId,
+  ]);
 
   async function loadAccountCampaigns(account: AccountSearchItem, force = false) {
     if (!force && accountBlocks[account.resourceId]) {
@@ -762,9 +805,10 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
     }));
 
     try {
+      const refreshSuffix = force ? "?refresh=1" : "";
       const response = await apiRequest(
         "GET",
-        `/api/tasks/${taskId}/meta/accounts/${account.resourceId}/campaigns`,
+        `/api/tasks/${taskId}/meta/accounts/${account.resourceId}/campaigns${refreshSuffix}`,
       );
       const payload = (await response.json()) as AccountCampaignResponse;
       setAccountBlocks((current) => ({
@@ -1167,7 +1211,8 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                           {pairs.map((pair) => (
                             <tr key={pair.pairId}>
                               <td className="rounded-xl border bg-background px-3 py-2">
-                                <div className="font-medium">Par {pair.position + 1}</div>
+                                <div className="font-medium">{getPairDisplayName(pair)}</div>
+                                <div className="text-xs text-muted-foreground">Par {pair.position + 1}</div>
                                 <div className="text-xs text-muted-foreground">
                                   {pairUsageCount.get(pair.pairId) ?? 0} uso(s)
                                 </div>
@@ -1780,7 +1825,7 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                               if (!pair) return null;
                               return (
                                 <Badge key={pairId} variant="outline">
-                                  Par {pair.position + 1}
+                                  {getPairDisplayName(pair)}
                                 </Badge>
                               );
                             })
@@ -1860,7 +1905,10 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                                             <div key={pairId} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2">
                                               <div className="flex items-center gap-2">
                                                 <PairPreview pair={pair} compact />
-                                                <span className="text-sm font-medium text-slate-900">Par {pair.position + 1}</span>
+                                                <div>
+                                                  <div className="text-sm font-medium text-slate-900">{getPairDisplayName(pair)}</div>
+                                                  <div className="text-[11px] text-slate-500">Par {pair.position + 1}</div>
+                                                </div>
                                               </div>
                                               <span className="text-xs text-slate-500">
                                                 {pairAssignment?.leadgenFormName ??
@@ -1973,7 +2021,7 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
           {activeDragPairId && pairById.get(activeDragPairId) ? (
             <div className="inline-flex pointer-events-none items-center gap-2 rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl">
               <div className="text-xs font-medium text-slate-900">
-                Par {(pairById.get(activeDragPairId)?.position ?? 0) + 1}
+                {getPairDisplayName(pairById.get(activeDragPairId)!)}
               </div>
               <PairPreview pair={pairById.get(activeDragPairId)!} compact />
             </div>

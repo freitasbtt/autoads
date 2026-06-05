@@ -377,7 +377,7 @@ oauthRouter.get("/meta/callback", async (req, res) => {
       appSecret: metaAppSecret,
     });
 
-    res.redirect("/resources?oauth=success");
+    res.redirect("/tasks");
   } catch (err) {
     console.error("Meta OAuth callback error:", err);
     res.status(500).send("Failed to complete OAuth");

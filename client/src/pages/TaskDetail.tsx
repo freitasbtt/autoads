@@ -26,6 +26,7 @@ type UploadItem = {
 type TaskPair = {
   feedUploadId: number | null;
   storiesUploadId: number | null;
+  name: string | null;
   title: string | null;
   text: string | null;
 };
@@ -33,6 +34,7 @@ type TaskPair = {
 type DraftPair = {
   feedUploadId: number | null;
   storiesUploadId: number | null;
+  name: string;
   title: string;
   text: string;
 };
@@ -86,6 +88,7 @@ function buildEmptyPair(inheritedTitle = "", inheritedText = ""): DraftPair {
   return {
     feedUploadId: null,
     storiesUploadId: null,
+    name: "",
     title: inheritedTitle,
     text: inheritedText,
   };
@@ -353,6 +356,7 @@ export default function TaskDetailPage({ taskId }: TaskDetailProps) {
       detail.pairs.map((pair) => ({
         feedUploadId: pair.feedUploadId,
         storiesUploadId: pair.storiesUploadId,
+        name: pair.name ?? "",
         title: pair.title ?? "",
         text: pair.text ?? "",
       })),
@@ -426,12 +430,14 @@ export default function TaskDetailPage({ taskId }: TaskDetailProps) {
         (pair) =>
           pair.feedUploadId !== null ||
           pair.storiesUploadId !== null ||
+          pair.name.trim().length > 0 ||
           pair.title.trim().length > 0 ||
           pair.text.trim().length > 0,
       )
       .map((pair) => ({
         feedUploadId: pair.feedUploadId,
         storiesUploadId: pair.storiesUploadId,
+        name: pair.name.trim() || null,
         title: pair.title.trim() || null,
         text: pair.text.trim() || null,
       }));
@@ -541,7 +547,7 @@ export default function TaskDetailPage({ taskId }: TaskDetailProps) {
     await persistPairs(normalized);
   }
 
-  function handlePairFieldChange(pairIndex: number, field: "title" | "text", value: string) {
+  function handlePairFieldChange(pairIndex: number, field: "name" | "title" | "text", value: string) {
     setDraftPairs((current) =>
       current.map((pair, index) => {
         if (index !== pairIndex) {
@@ -615,6 +621,9 @@ export default function TaskDetailPage({ taskId }: TaskDetailProps) {
                 <div className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-500">
                   Preview atual
                 </div>
+                <div className="mb-3 line-clamp-2 break-all text-sm font-medium text-slate-900">
+                  {previewUpload?.originalFileName ?? "Nenhuma imagem selecionada"}
+                </div>
                 <div className="flex min-h-[220px] items-center justify-center rounded-xl border border-slate-200 bg-white p-3">
                   {previewUpload?.thumbnailUrl ? (
                     <img
@@ -665,8 +674,19 @@ export default function TaskDetailPage({ taskId }: TaskDetailProps) {
                 <div className="grid max-w-full grid-cols-[272px_minmax(0,1fr)] items-start gap-4">
                   {fixedPair && (
                     <div className="w-[272px] shrink-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                      <div className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-500">
-                        Par {fixedPair.pairIndex + 1}
+                      <div className="mb-3 space-y-1">
+                        <Input
+                          value={fixedPair.pair.name}
+                          onChange={(event) =>
+                            handlePairFieldChange(fixedPair.pairIndex, "name", event.target.value)
+                          }
+                          onBlur={handlePairFieldBlur}
+                          placeholder={`Nome do par ${fixedPair.pairIndex + 1}`}
+                          className="h-9 text-sm font-semibold"
+                        />
+                        <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                          Par {fixedPair.pairIndex + 1}
+                        </div>
                       </div>
                       <PairSlot
                         feedUpload={
@@ -704,7 +724,7 @@ export default function TaskDetailPage({ taskId }: TaskDetailProps) {
                             handlePairFieldChange(fixedPair.pairIndex, "title", event.target.value)
                           }
                           onBlur={handlePairFieldBlur}
-                          placeholder="Titulo do par"
+                          placeholder="Titulo do anuncio"
                         />
                         <div className="space-y-2">
                           {isTextCollapsed(fixedPair.pairIndex) ? (
@@ -759,8 +779,19 @@ export default function TaskDetailPage({ taskId }: TaskDetailProps) {
                             key={`pair-slot-${pairIndex}`}
                             className="w-[272px] shrink-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
                           >
-                            <div className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-500">
-                              Par {pairIndex + 1}
+                            <div className="mb-3 space-y-1">
+                              <Input
+                                value={pair.name}
+                                onChange={(event) =>
+                                  handlePairFieldChange(pairIndex, "name", event.target.value)
+                                }
+                                onBlur={handlePairFieldBlur}
+                                placeholder={`Nome do par ${pairIndex + 1}`}
+                                className="h-9 text-sm font-semibold"
+                              />
+                              <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                                Par {pairIndex + 1}
+                              </div>
                             </div>
                             <PairSlot
                               feedUpload={feedUpload}
@@ -790,7 +821,7 @@ export default function TaskDetailPage({ taskId }: TaskDetailProps) {
                                   handlePairFieldChange(pairIndex, "title", event.target.value)
                                 }
                                 onBlur={handlePairFieldBlur}
-                                placeholder="Titulo do par"
+                                placeholder="Titulo do anuncio"
                               />
                               <div className="space-y-2">
                                 {isTextCollapsed(pairIndex) ? (

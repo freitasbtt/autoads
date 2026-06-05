@@ -28,7 +28,7 @@ const items: Array<{
   icon: typeof ClipboardList;
   blocked?: boolean;
 }> = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Integracoes", url: "/integrations", icon: Plug },
   { title: "Tarefas", url: "/tasks", icon: ClipboardList },
 ];

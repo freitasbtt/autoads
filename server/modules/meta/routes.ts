@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { Router, type Request } from "express";
+import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { differenceInCalendarDays, format, isValid, parseISO, subDays } from "date-fns";
 import type { Resource, User } from "@shared/schema";
@@ -284,6 +284,28 @@ async function getStoredLeadformsByPage(tenantId: number, pageId: string) {
     fresh: isFresh,
     expiresAt: typeof expiresAtMs === "number" ? new Date(expiresAtMs) : null,
   };
+}
+
+async function respondWithStoredLeadformsIfAny(
+  res: Response,
+  tenantId: number,
+  pageId: string,
+  source: "db" | "db_stale" = "db_stale",
+) {
+  const stored = await getStoredLeadformsByPage(tenantId, pageId);
+  if (stored.forms.length === 0) {
+    return false;
+  }
+
+  if (stored.fresh && stored.expiresAt) {
+    setMemoryLeadforms(tenantId, pageId, stored.forms, stored.expiresAt);
+  }
+
+  setNoCacheHeaders(res);
+  res.setHeader("X-Autoads-Leadforms-Source", source);
+  res.removeHeader("ETag");
+  res.json(stored.forms);
+  return true;
 }
 
 async function fetchWithTimeoutRetry(
@@ -1030,6 +1052,9 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
         hasAccess: !!userAccess,
         hasToken: !!userAccess?.accessToken,
       });
+      if (await respondWithStoredLeadformsIfAny(res, user.tenantId, rawPageId, "db_stale")) {
+        return;
+      }
       return res.status(400).json(
         attachDebug({
           message:
@@ -1132,6 +1157,10 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
         clientMessage = "Token de acesso da Meta expirado ou invalido. Reconfigure a integracao.";
       }
 
+      if (await respondWithStoredLeadformsIfAny(res, user.tenantId, rawPageId, "db_stale")) {
+        return;
+      }
+
       const statusCode =
         pageDetailsResponse.status && pageDetailsResponse.status >= 400 ? pageDetailsResponse.status : 502;
 
@@ -1145,6 +1174,9 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
         pageId: rawPageId,
         body: pageDetailsBody,
       });
+      if (await respondWithStoredLeadformsIfAny(res, user.tenantId, rawPageId, "db_stale")) {
+        return;
+      }
       return res.status(400).json(
         attachDebug({
           message:
@@ -1235,6 +1267,10 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
       if (graphCode === 200) {
         clientMessage =
           "Permissoes insuficientes para ler os formularios desta pagina na Meta. Verifique as permissoes da app e do token da pagina.";
+      }
+
+      if (await respondWithStoredLeadformsIfAny(res, user.tenantId, rawPageId, "db_stale")) {
+        return;
       }
 
       const statusCode =
@@ -1364,14 +1400,8 @@ metaRouter.get("/meta/pages/:pageId/leadforms", async (req, res) => {
     console.error("Failed to load Meta lead forms:", err);
     const user = req.user as User;
     const rawPageId = typeof req.params.pageId === "string" ? req.params.pageId.trim() : "";
-    if (rawPageId.length > 0) {
-      const stored = await getStoredLeadformsByPage(user.tenantId, rawPageId);
-      if (stored.forms.length > 0) {
-        setNoCacheHeaders(res);
-        res.setHeader("X-Autoads-Leadforms-Source", "db_stale");
-        res.removeHeader("ETag");
-        return res.json(stored.forms);
-      }
+    if (rawPageId.length > 0 && (await respondWithStoredLeadformsIfAny(res, user.tenantId, rawPageId, "db_stale"))) {
+      return;
     }
     return res.status(500).json({ message: "Falha ao carregar formularios da pagina." });
   }

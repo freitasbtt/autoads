@@ -28,6 +28,7 @@ const updatePairsSchema = z.object({
     z.object({
       feedUploadId: z.number().int().positive().nullable(),
       storiesUploadId: z.number().int().positive().nullable(),
+      name: z.string().max(160).nullable().optional(),
       title: z.string().max(160).nullable(),
       text: z.string().max(4000).nullable(),
     }),
@@ -151,6 +152,7 @@ type UploadRecord = {
 type TaskPairView = {
   pairId: string;
   position: number;
+  name: string | null;
   title: string | null;
   text: string | null;
   feedUploadId: number;
@@ -533,6 +535,7 @@ function buildTaskPairViews(taskId: number, rawPairs: StorageTaskPairRecord[], u
       return {
         pairId: normalizePairId(position),
         position,
+        name: pair.name ?? null,
         title: pair.title ?? null,
         text: pair.text ?? null,
         feedUploadId: feedUpload.id,
@@ -832,15 +835,25 @@ function isActiveCampaign(campaign: {
   configured_status?: string;
   effective_status?: string;
 }) {
-  const statuses = [campaign.status, campaign.configured_status, campaign.effective_status]
-    .filter((item): item is string => typeof item === "string" && item.length > 0)
-    .map((status) => status.toUpperCase());
+  const configuredStatus =
+    typeof campaign.configured_status === "string" && campaign.configured_status.length > 0
+      ? campaign.configured_status.toUpperCase()
+      : null;
+  const effectiveStatus =
+    typeof campaign.effective_status === "string" && campaign.effective_status.length > 0
+      ? campaign.effective_status.toUpperCase()
+      : null;
+  const status =
+    typeof campaign.status === "string" && campaign.status.length > 0
+      ? campaign.status.toUpperCase()
+      : null;
 
-  if (statuses.length === 0) {
+  const primaryStatus = configuredStatus ?? effectiveStatus ?? status;
+  if (!primaryStatus) {
     return true;
   }
 
-  return statuses.includes("ACTIVE");
+  return primaryStatus === "ACTIVE";
 }
 
 async function buildMetaClient(tenantId: number) {
@@ -984,19 +997,25 @@ async function getMetaAccountStructure(input: {
   tenantId: number;
   account: Resource;
   client?: MetaGraphClient | null;
+  forceRefresh?: boolean;
 }) {
-  const memory = getFreshMemoryMetaStructure(input.tenantId, input.account.value);
-  if (memory) {
-    return {
-      account: memory.account,
-      campaigns: memory.campaigns,
-      adsets: memory.adsets,
-      source: "memory" as const,
-    };
+  const stored = await getStoredMetaStructure(input.tenantId, input.account.value);
+  const shouldForceRefresh = input.forceRefresh === true;
+
+  if (!shouldForceRefresh) {
+    const memory = getFreshMemoryMetaStructure(input.tenantId, input.account.value);
+    if (memory) {
+      return {
+        account: memory.account,
+        campaigns: memory.campaigns,
+        adsets: memory.adsets,
+        source: "memory" as const,
+      };
+    }
   }
 
-  const stored = await getStoredMetaStructure(input.tenantId, input.account.value);
   if (
+    !shouldForceRefresh &&
     stored &&
     isSnapshotFresh(stored.account) &&
     areSnapshotsFresh(stored.campaigns) &&
@@ -1684,11 +1703,16 @@ tasksRouter.get("/tasks/:id/meta/accounts/:resourceId/campaigns", async (req, re
       return res.status(404).json({ message: "Conta Meta nao encontrada." });
     }
 
+    const refreshParam =
+      typeof req.query.refresh === "string" ? req.query.refresh.trim().toLowerCase() : "";
+    const forceRefresh = refreshParam === "1" || refreshParam === "true" || refreshParam === "yes";
+
     const client = await buildMetaClient(user.tenantId);
     const structure = await getMetaAccountStructure({
       tenantId: user.tenantId,
       account,
       client,
+      forceRefresh,
     });
     if (!structure) {
       return res.status(400).json({ message: "Integracao com Meta nao esta conectada." });
@@ -2562,9 +2586,17 @@ tasksRouter.put("/tasks/:id/pairs", async (req, res, next) => {
       }
     }
 
+    const normalizedPairs: StorageTaskPairRecord[] = parsed.pairs.map((pair) => ({
+      feedUploadId: pair.feedUploadId,
+      storiesUploadId: pair.storiesUploadId,
+      name: pair.name ?? null,
+      title: pair.title,
+      text: pair.text,
+    }));
+
     const activityTask = await touchTaskConfigurationActivity(context.task, user.tenantId);
     const updated = await storage.updateStorageTask(id, {
-      pairsJson: parsed.pairs,
+      pairsJson: normalizedPairs,
       configurationElapsedSeconds: activityTask.configurationElapsedSeconds,
       lastActivityAt: activityTask.lastActivityAt,
       status: activityTask.status,

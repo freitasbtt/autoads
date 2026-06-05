@@ -33,10 +33,25 @@ function LandingRedirect() {
   return null;
 }
 
+function RouteRedirect({ to }: { to: string }) {
+  const [, navigate] = useLocation();
+
+  useEffect(() => {
+    navigate(to);
+  }, [navigate, to]);
+
+  return null;
+}
+
 function PrivateRouter() {
   return (
     <Switch>
-      <Route path="/" component={Dashboard} />
+      <Route path="/">
+        <RouteRedirect to="/tasks" />
+      </Route>
+      <Route path="/dashboard">
+        <Dashboard />
+      </Route>
       <Route path="/shared/dashboard" component={SharedDashboard} />
       <Route path="/campaigns" component={CampaignsPage} />
       <Route path="/audiences" component={Audiences} />
@@ -99,8 +114,14 @@ function PublicRouter() {
 }
 
 function AppContent() {
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const { isAuthenticated, isLoading } = useAuth();
+
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && (location === "/login" || location === "/landing")) {
+      navigate("/tasks");
+    }
+  }, [isAuthenticated, isLoading, location, navigate]);
 
   if (location.startsWith("/upload/")) {
     return <PublicRouter />;
