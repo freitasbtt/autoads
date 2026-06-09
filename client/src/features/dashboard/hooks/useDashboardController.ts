@@ -592,7 +592,12 @@ export function useDashboardController({
         leads: account.metrics.leads,
         previousLeads: account.previousMetrics?.leads ?? 0,
         spend: account.metrics.spend,
+        previousSpend: account.previousMetrics?.spend ?? 0,
         costPerLead: getCostPerLead(account.metrics.spend, account.metrics.leads),
+        previousCostPerLead: getCostPerLead(
+          account.previousMetrics?.spend ?? 0,
+          account.previousMetrics?.leads ?? 0,
+        ),
         percentage: totalLeads > 0 ? (account.metrics.leads / totalLeads) * 100 : 0,
       }));
     },

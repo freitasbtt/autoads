@@ -12,6 +12,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ChartContainer, ChartTooltip } from "@/components/ui/chart";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
 import type {
@@ -51,32 +59,26 @@ function formatVariationPercent(current: number, previous: number) {
   return `${sign}${Math.abs(delta).toFixed(0)}%`;
 }
 
-function BarScale() {
-  return (
-    <div className="grid grid-cols-5 text-[10px] font-medium text-slate-400">
-      <span>0%</span>
-      <span className="text-center">25%</span>
-      <span className="text-center">50%</span>
-      <span className="text-center">75%</span>
-      <span className="text-right">100%</span>
-    </div>
-  );
-}
-
-function NumericBarScale({ max }: { max: number }) {
-  const safeMax = Math.max(max, 1);
-  const values = [0, 0.25, 0.5, 0.75, 1].map((ratio) =>
-    Math.round(safeMax * ratio),
-  );
+function renderVariationChip(current: number, previous: number, invertGood = false) {
+  const trend = calcTrend(current, previous, invertGood);
+  const isPositive = trend?.positive ?? current >= previous;
 
   return (
-    <div className="grid grid-cols-5 text-[10px] font-medium text-slate-400">
-      <span>{formatInteger(values[0])}</span>
-      <span className="text-center">{formatInteger(values[1])}</span>
-      <span className="text-center">{formatInteger(values[2])}</span>
-      <span className="text-center">{formatInteger(values[3])}</span>
-      <span className="text-right">{formatInteger(values[4])}</span>
-    </div>
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold",
+        isPositive
+          ? "bg-emerald-50 text-emerald-700"
+          : "bg-red-50 text-red-700",
+      )}
+    >
+      {isPositive ? (
+        <TrendingUp className="h-3.5 w-3.5" />
+      ) : (
+        <TrendingDown className="h-3.5 w-3.5" />
+      )}
+      {formatVariationPercent(current, previous)}
+    </span>
   );
 }
 
@@ -141,23 +143,41 @@ export function DashboardMacroView({
   }, [funnelSteps, metricsData?.previousTotals]);
 
   const leadsByAccountRanking = useMemo(
-    () => [...leadsByAccountData].sort((a, b) => b.leads - a.leads),
-    [leadsByAccountData],
-  );
-
-  const maxLeadCompareValue = useMemo(
     () =>
-      Math.max(
-        1,
-        ...leadsByAccountData.flatMap((entry) => [entry.leads, entry.previousLeads]),
-      ),
+      [...leadsByAccountData].sort((a, b) => {
+        const leadDiff = b.leads - a.leads;
+        if (leadDiff !== 0) return leadDiff;
+        return b.spend - a.spend;
+      }),
     [leadsByAccountData],
   );
+  const currentPeriodLabel = useMemo(() => {
+    const start = metricsData?.dateRange.start;
+    const end = metricsData?.dateRange.end;
+    if (!start || !end) return "Periodo atual";
 
-  const investmentRanking = useMemo(
-    () => [...spendByAccountData].sort((a, b) => b.percentage - a.percentage),
-    [spendByAccountData],
-  );
+    return `${new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+    }).format(new Date(`${start}T00:00:00`))} - ${new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+    }).format(new Date(`${end}T00:00:00`))}`;
+  }, [metricsData?.dateRange.end, metricsData?.dateRange.start]);
+
+  const previousPeriodLabel = useMemo(() => {
+    const start = metricsData?.dateRange.previousStart;
+    const end = metricsData?.dateRange.previousEnd;
+    if (!start || !end) return "Periodo anterior";
+
+    return `${new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+    }).format(new Date(`${start}T00:00:00`))} - ${new Intl.DateTimeFormat("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+    }).format(new Date(`${end}T00:00:00`))}`;
+  }, [metricsData?.dateRange.previousEnd, metricsData?.dateRange.previousStart]);
 
   if (!hasSelectedAccounts) {
     return <AwaitingFilterCard isSharedMode={isSharedMode} />;
@@ -401,109 +421,87 @@ export function DashboardMacroView({
         </Card>
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-2 print:grid-cols-1">
+      <div className="grid gap-5 print:grid-cols-1">
         <Card className={panelClass}>
           <CardHeader className="space-y-1 pb-2">
             <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
-              Ranking
+              Comparativo
             </div>
-            <CardTitle className="text-lg font-semibold text-slate-950">Leads por conta</CardTitle>
+            <CardTitle className="text-lg font-semibold text-slate-950">
+              Leads e investimento por conta
+            </CardTitle>
           </CardHeader>
 
           <CardContent>
             {leadsByAccountData.length === 0 ? (
               <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
-                Nenhuma conta com leads no periodo.
+                Nenhuma conta encontrada para o periodo.
               </div>
             ) : (
               <div className="space-y-3 rounded-[20px] border border-slate-200 bg-[linear-gradient(180deg,rgba(248,250,252,0.92),rgba(255,255,255,0.98))] p-4">
-                <div className="space-y-3">
-                  {leadsByAccountRanking.map((entry) => {
-                    const currentWidth = Math.max((entry.leads / maxLeadCompareValue) * 100, entry.leads > 0 ? 3 : 0);
-                    const variation = formatVariationPercent(entry.leads, entry.previousLeads);
-                    const isPositive = entry.leads >= entry.previousLeads;
-
-                    return (
-                      <div key={`${entry.name}-leads-row`} className="grid gap-2 text-[11px]">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="min-w-0 truncate font-semibold text-slate-900">{entry.name}</div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-sm font-semibold text-slate-950">
-                              {formatInteger(entry.leads)}
-                            </span>
-                            <span
-                              className={cn(
-                                "inline-flex items-center gap-1 text-xs font-semibold",
-                                isPositive ? "text-emerald-600" : "text-red-600",
-                              )}
-                            >
-                              {isPositive ? (
-                                <TrendingUp className="h-3.5 w-3.5" />
-                              ) : (
-                                <TrendingDown className="h-3.5 w-3.5" />
-                              )}
-                              {variation}
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="space-y-1.5 pl-0">
-                          <div className="h-4 overflow-hidden rounded bg-slate-100">
-                            <div className="h-full rounded bg-blue-600" style={{ width: `${currentWidth}%` }} />
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
+                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1">
+                    Atual: <span className="font-semibold text-slate-950">{currentPeriodLabel}</span>
+                  </span>
+                  <span className="rounded-full border border-slate-200 bg-white px-3 py-1">
+                    Comparativo:{" "}
+                    <span className="font-semibold text-slate-950">{previousPeriodLabel}</span>
+                  </span>
                 </div>
-                <NumericBarScale max={maxLeadCompareValue} />
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className={panelClass}>
-          <CardHeader className="space-y-1 pb-2">
-            <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
-              Distribuicao
-            </div>
-            <CardTitle className="text-lg font-semibold text-slate-950">
-              Investimento por conta
-            </CardTitle>
-          </CardHeader>
-
-          <CardContent>
-            {spendByAccountData.length === 0 ? (
-              <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
-                Nenhuma conta com investimento no periodo.
-              </div>
-            ) : (
-              <div className="space-y-3 rounded-[20px] border border-slate-200 bg-[linear-gradient(180deg,rgba(248,250,252,0.92),rgba(255,255,255,0.98))] p-4">
-                {investmentRanking.map((entry) => (
-                  <div key={`${entry.name}-investment-row`} className="grid gap-2 text-[11px]">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="min-w-0 truncate font-semibold text-slate-900">{entry.name}</div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs font-medium text-slate-500">
-                          {formatCurrency(entry.value)}
-                        </span>
-                        <span className="text-sm font-semibold text-blue-700">
-                          {entry.percentage.toFixed(1)}%
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="h-4 overflow-hidden rounded bg-slate-100">
-                      <div
-                        className="h-full rounded bg-blue-600"
-                        style={{
-                          width: `${Math.max(entry.percentage, entry.percentage > 0 ? 3 : 0)}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                ))}
-                <BarScale />
+                <div className="overflow-hidden rounded-[18px] border border-slate-200 bg-white/90">
+                  <Table className="min-w-[920px]">
+                    <TableHeader className="bg-slate-50/90">
+                      <TableRow className="hover:bg-slate-50/90">
+                        <TableHead className="min-w-[220px]">Conta</TableHead>
+                        <TableHead className="text-right">Leads atual</TableHead>
+                        <TableHead className="text-right">Leads anterior</TableHead>
+                        <TableHead className="text-right">Var. leads</TableHead>
+                        <TableHead className="text-right">Invest. atual</TableHead>
+                        <TableHead className="text-right">Invest. anterior</TableHead>
+                        <TableHead className="text-right">Var. invest.</TableHead>
+                        <TableHead className="text-right">CPL atual</TableHead>
+                        <TableHead className="text-right">CPL anterior</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {leadsByAccountRanking.map((entry) => (
+                        <TableRow key={`${entry.name}-comparison-row`} className="bg-transparent">
+                          <TableCell className="font-semibold text-slate-900">{entry.name}</TableCell>
+                          <TableCell className="text-right font-semibold text-slate-950">
+                            {formatInteger(entry.leads)}
+                          </TableCell>
+                          <TableCell className="text-right text-slate-600">
+                            {formatInteger(entry.previousLeads)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {renderVariationChip(entry.leads, entry.previousLeads)}
+                          </TableCell>
+                          <TableCell className="text-right font-semibold text-slate-950">
+                            {formatCurrency(entry.spend)}
+                          </TableCell>
+                          <TableCell className="text-right text-slate-600">
+                            {formatCurrency(entry.previousSpend)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {renderVariationChip(entry.spend, entry.previousSpend)}
+                          </TableCell>
+                          <TableCell className="text-right font-semibold text-slate-950">
+                            {entry.costPerLead !== null ? formatCurrency(entry.costPerLead) : "—"}
+                          </TableCell>
+                          <TableCell className="text-right text-slate-600">
+                            {entry.previousCostPerLead !== null
+                              ? formatCurrency(entry.previousCostPerLead)
+                              : "—"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                <p className="text-[11px] leading-5 text-slate-500">
+                  Ordenado por volume atual de leads. O comparativo usa exatamente o mesmo recorte
+                  de dias no mes anterior.
+                </p>
               </div>
             )}
           </CardContent>

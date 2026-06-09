@@ -183,7 +183,9 @@ export type DashboardLeadsByAccountDatum = {
   leads: number;
   previousLeads: number;
   spend: number;
+  previousSpend: number;
   costPerLead: number | null;
+  previousCostPerLead: number | null;
   percentage: number;
 };
 

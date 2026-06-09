@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { differenceInCalendarDays, format, isValid, parseISO, subDays } from "date-fns";
+import { format, isValid, parseISO, subMonths } from "date-fns";
 import type { Resource, User } from "@shared/schema";
 import { storage } from "../storage";
 import {
@@ -118,6 +118,13 @@ function parseQueryParam(value: unknown): string {
     return value;
   }
   return "";
+}
+
+function buildPreviousMonthRange(startDate: Date, endDate: Date) {
+  return {
+    previousStart: format(subMonths(startDate, 1), "yyyy-MM-dd"),
+    previousEnd: format(subMonths(endDate, 1), "yyyy-MM-dd"),
+  };
 }
 
 function validateInternalRequest(req: Request): {
@@ -484,11 +491,7 @@ publicMetaRouter.get("/dashboard/metrics", async (req, res, next) => {
 
     const startDate = parseISO(claims.startDate);
     const endDate = parseISO(claims.endDate);
-    const rangeDays = differenceInCalendarDays(endDate, startDate) + 1;
-    const previousEndDate = subDays(startDate, 1);
-    const previousStartDate = subDays(previousEndDate, Math.max(rangeDays - 1, 0));
-    const previousStart = format(previousStartDate, "yyyy-MM-dd");
-    const previousEnd = format(previousEndDate, "yyyy-MM-dd");
+    const { previousStart, previousEnd } = buildPreviousMonthRange(startDate, endDate);
 
     const client = new MetaGraphClient(metaAccess.accessToken, metaAppSecret);
     const payload = await getOrCreateDashboardCache(
@@ -651,11 +654,9 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
         return res.status(400).json({ message: "O startDate deve ser menor ou igual ao endDate" });
       }
 
-      const rangeDays = differenceInCalendarDays(endDate, startDate) + 1;
-      const previousEndDate = subDays(startDate, 1);
-      const previousStartDate = subDays(previousEndDate, Math.max(rangeDays - 1, 0));
-      previousStart = format(previousStartDate, "yyyy-MM-dd");
-      previousEnd = format(previousEndDate, "yyyy-MM-dd");
+      const previousRange = buildPreviousMonthRange(startDate, endDate);
+      previousStart = previousRange.previousStart;
+      previousEnd = previousRange.previousEnd;
     }
 
     const client = new MetaGraphClient(metaAccess.accessToken, metaAppSecret);
