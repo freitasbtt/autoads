@@ -43,6 +43,9 @@ type DashboardFiltersCardProps = {
   isApplyingFilters: boolean;
   isDataError: boolean;
   isDataReady: boolean;
+  goalsButtonLabel: string;
+  isGoalsLoading: boolean;
+  isGoalsButtonDisabled: boolean;
   onRangeChange: (range: DateRange | null) => void;
   onApplyQuickRange: (range: DateRange) => void;
   onAccountsChange: (values: string[]) => void;
@@ -51,6 +54,7 @@ type DashboardFiltersCardProps = {
   onObjectiveChange: (value: string | null) => void;
   onStatusChange: (value: string | null) => void;
   onApplyFilters: () => void;
+  onOpenGoals: () => void;
   onClearAllFilters: () => void;
   sameRange: (a: DateRange, b: DateRange) => boolean;
 };
@@ -78,6 +82,9 @@ export function DashboardFiltersCard({
   isApplyingFilters,
   isDataError,
   isDataReady,
+  goalsButtonLabel,
+  isGoalsLoading,
+  isGoalsButtonDisabled,
   onRangeChange,
   onApplyQuickRange,
   onAccountsChange,
@@ -86,6 +93,7 @@ export function DashboardFiltersCard({
   onObjectiveChange,
   onStatusChange,
   onApplyFilters,
+  onOpenGoals,
   onClearAllFilters,
   sameRange,
 }: DashboardFiltersCardProps) {
@@ -185,6 +193,15 @@ export function DashboardFiltersCard({
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onOpenGoals}
+                  disabled={isGoalsButtonDisabled}
+                  className="rounded-full px-5 shadow-sm"
+                >
+                  {isGoalsLoading ? "Carregando metas..." : goalsButtonLabel}
+                </Button>
                 <div
                   className={cn(
                     "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[11px] font-medium shadow-sm",

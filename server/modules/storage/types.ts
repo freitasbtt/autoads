@@ -4,12 +4,14 @@ import type {
   Automation,
   Campaign,
   CampaignMetric,
+  DashboardGoal,
   ExistingCampaignRun,
   InsertAppSettings,
   InsertAudience,
   InsertAutomation,
   InsertCampaign,
   InsertCampaignMetric,
+  InsertDashboardGoal,
   InsertExistingCampaignRun,
   InsertIntegration,
   InsertMetaAccountSnapshot,
@@ -118,6 +120,16 @@ export interface IStorage {
   createCampaignMetric(
     metric: InsertCampaignMetric & { tenantId: number },
   ): Promise<CampaignMetric>;
+  getDashboardGoalsByPeriod(
+    tenantId: number,
+    startDate: string,
+    endDate: string,
+    accountIds: number[],
+  ): Promise<DashboardGoal[]>;
+  upsertDashboardGoals(
+    tenantId: number,
+    goals: Array<InsertDashboardGoal & { tenantId: number }>,
+  ): Promise<DashboardGoal[]>;
 
   getIntegration(id: number): Promise<Integration | undefined>;
   getIntegrationsByTenant(tenantId: number): Promise<Integration[]>;
@@ -184,12 +196,14 @@ export type {
   Automation,
   Campaign,
   CampaignMetric,
+  DashboardGoal,
   ExistingCampaignRun,
   InsertAppSettings,
   InsertAudience,
   InsertAutomation,
   InsertCampaign,
   InsertCampaignMetric,
+  InsertDashboardGoal,
   InsertExistingCampaignRun,
   InsertIntegration,
   InsertMetaAccountSnapshot,

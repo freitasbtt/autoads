@@ -30,6 +30,27 @@ export function buildDashboardCacheKey(namespace: string, payload: unknown): str
   return `${namespace}:${JSON.stringify(payload)}`;
 }
 
+export function clearDashboardCache(namespacePrefix?: string): void {
+  if (!namespacePrefix) {
+    dashboardCache.clear();
+    inflightDashboardCache.clear();
+    return;
+  }
+
+  const prefix = `${namespacePrefix}:`;
+  for (const key of Array.from(dashboardCache.keys())) {
+    if (key.startsWith(prefix)) {
+      dashboardCache.delete(key);
+    }
+  }
+
+  for (const key of Array.from(inflightDashboardCache.keys())) {
+    if (key.startsWith(prefix)) {
+      inflightDashboardCache.delete(key);
+    }
+  }
+}
+
 export async function getOrCreateDashboardCache<T>(
   key: string,
   ttlMs: number,

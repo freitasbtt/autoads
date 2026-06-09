@@ -63,12 +63,38 @@ export type DashboardRawTimelinePoint = {
   costPerLead: number | null;
 };
 
+export type DashboardGoalMetrics = {
+  targetSpend: number;
+  targetLeads: number;
+  targetCostPerLead: number | null;
+  spendProgress: number | null;
+  leadsProgress: number | null;
+  remainingSpend: number | null;
+  remainingLeads: number | null;
+  costPerLeadDelta: number | null;
+  dailyLeadTarget: number | null;
+};
+
+export type DashboardGoalRecord = {
+  id: number;
+  tenantId: number;
+  accountId: number;
+  accountName: string;
+  startDate: string;
+  endDate: string;
+  targetSpend: number;
+  targetLeads: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type DashboardAccountMetrics = {
   id: number;
   name: string;
   value: string;
   metrics: MetricTotals;
   previousMetrics?: MetricTotals;
+  goal?: DashboardGoalMetrics | null;
   campaigns: DashboardCampaignMetrics[];
   timeline?: DashboardRawTimelinePoint[];
 };
@@ -82,8 +108,26 @@ export type DashboardMetricsResponse = {
   };
   totals: MetricTotals;
   previousTotals: MetricTotals;
+  goalTotals: DashboardGoalMetrics | null;
   accounts: DashboardAccountMetrics[];
   timeline: DashboardRawTimelinePoint[];
+};
+
+export type DashboardGoalsResponse = {
+  startDate: string;
+  endDate: string;
+  accounts: Array<{
+    accountId: number;
+    accountName: string;
+    accountValue: string;
+    goal: DashboardGoalRecord | null;
+  }>;
+  summary: {
+    totalAccounts: number;
+    goalsCount: number;
+    missingCount: number;
+    status: "empty" | "partial" | "complete";
+  };
 };
 
 export type DashboardTopCreative = {
@@ -183,7 +227,9 @@ export type DashboardLeadsByAccountDatum = {
   leads: number;
   previousLeads: number;
   spend: number;
+  previousSpend: number;
   costPerLead: number | null;
+  previousCostPerLead: number | null;
   percentage: number;
 };
 

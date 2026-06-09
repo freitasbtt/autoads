@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type { DateRange } from "react-day-picker";
 import {
   endOfMonth,
@@ -18,12 +18,18 @@ import {
 } from "lucide-react";
 
 import type { Campaign, Resource } from "@shared/schema";
+import {
+  apiRequest,
+  queryClient,
+} from "@/lib/queryClient";
+import { toast } from "@/hooks/use-toast";
 import type {
   ActiveFilterChip,
   CurrentUser,
   DashboardAccountMetrics,
   DashboardCampaignIndexEntry,
   DashboardCampaignMetrics,
+  DashboardGoalsResponse,
   DashboardKpi,
   DashboardLeadsByAccountDatum,
   DashboardMetricsResponse,
@@ -95,6 +101,7 @@ export function useDashboardController({
   } | null>(null);
   const [showDebug, setShowDebug] = useState(false);
   const [printAssetsReady, setPrintAssetsReady] = useState(false);
+  const [isGoalsDialogOpen, setIsGoalsDialogOpen] = useState(false);
 
   const shareMetadataEndpoint = shareToken
     ? `/api/public/dashboard/share/metadata?token=${encodeURIComponent(shareToken)}`
@@ -215,6 +222,10 @@ export function useDashboardController({
     isSharedMode && shareToken
       ? `/api/public/dashboard/metrics?token=${encodeURIComponent(shareToken)}`
       : `/api/dashboard/metrics?${params.toString()}`;
+  const goalsEndpoint =
+    !isSharedMode && hasSelectedAccounts
+      ? `/api/dashboard/goals?${params.toString()}`
+      : null;
 
   const metricsQuery = useQuery<DashboardMetricsResponse, Error>({
     queryKey: [metricsEndpoint],
@@ -243,6 +254,23 @@ export function useDashboardController({
       return res.json();
     },
     enabled: hasSelectedAccounts,
+    placeholderData: (previousData) => previousData,
+    refetchOnWindowFocus: false,
+  });
+
+  const goalsQuery = useQuery<DashboardGoalsResponse, Error>({
+    queryKey: goalsEndpoint ? [goalsEndpoint] : ["dashboard-goals-disabled"],
+    queryFn: async () => {
+      if (!goalsEndpoint) {
+        throw new Error("Metas indisponiveis para os filtros atuais.");
+      }
+      const res = await fetch(goalsEndpoint, { credentials: "include" });
+      if (!res.ok) {
+        throw new Error("Erro ao carregar metas do periodo.");
+      }
+      return res.json();
+    },
+    enabled: !isSharedMode && hasSelectedAccounts && !!goalsEndpoint,
     placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: false,
   });
@@ -526,12 +554,13 @@ export function useDashboardController({
   const kpis = useMemo<DashboardKpi[]>(() => {
     const totals = metricsQuery.data?.totals ?? EMPTY_TOTALS;
     const previous = metricsQuery.data?.previousTotals ?? EMPTY_TOTALS;
+    const goalTotals = metricsQuery.data?.goalTotals ?? null;
     const cpmNow = getCPM(totals.spend, totals.impressions);
     const cpmPrev = getCPM(previous.spend, previous.impressions);
     const cplNow = getCostPerLead(totals.spend, totals.leads);
     const cplPrev = getCostPerLead(previous.spend, previous.leads);
 
-    return [
+    const baseKpis: DashboardKpi[] = [
       {
         title: "Total Gasto",
         value: formatCurrency(totals.spend),
@@ -572,6 +601,37 @@ export function useDashboardController({
         ),
       },
     ];
+
+    if (goalTotals) {
+      baseKpis.push(
+        {
+          title: "Meta de Leads",
+          value: formatInteger(goalTotals.targetLeads),
+          icon: Target,
+          trend:
+            goalTotals.leadsProgress !== null
+              ? {
+                  value: `${goalTotals.leadsProgress.toFixed(1)}%`,
+                  positive: goalTotals.leadsProgress >= 100,
+                }
+              : undefined,
+        },
+        {
+          title: "Meta de Investimento",
+          value: formatCurrency(goalTotals.targetSpend),
+          icon: DollarSign,
+          trend:
+            goalTotals.spendProgress !== null
+              ? {
+                  value: `${goalTotals.spendProgress.toFixed(1)}%`,
+                  positive: goalTotals.spendProgress <= 100,
+                }
+              : undefined,
+        },
+      );
+    }
+
+    return baseKpis;
   }, [metricsQuery.data]);
 
   const timelineData = useMemo<DashboardTimelinePoint[]>(
@@ -592,7 +652,12 @@ export function useDashboardController({
         leads: account.metrics.leads,
         previousLeads: account.previousMetrics?.leads ?? 0,
         spend: account.metrics.spend,
+        previousSpend: account.previousMetrics?.spend ?? 0,
         costPerLead: getCostPerLead(account.metrics.spend, account.metrics.leads),
+        previousCostPerLead: getCostPerLead(
+          account.previousMetrics?.spend ?? 0,
+          account.previousMetrics?.leads ?? 0,
+        ),
         percentage: totalLeads > 0 ? (account.metrics.leads / totalLeads) * 100 : 0,
       }));
     },
@@ -743,6 +808,53 @@ export function useDashboardController({
     });
   };
 
+  const goalsButtonLabel = useMemo(() => {
+    const status = goalsQuery.data?.summary.status;
+    if (status === "complete") return "Editar metas";
+    if (status === "partial") return "Completar metas";
+    return "Cadastrar metas";
+  }, [goalsQuery.data?.summary.status]);
+
+  const saveGoalsMutation = useMutation({
+    mutationFn: async (
+      goals: Array<{
+        accountId: number;
+        accountName: string;
+        targetSpend: number;
+        targetLeads: number;
+      }>,
+    ) => {
+      const response = await apiRequest("POST", "/api/dashboard/goals", {
+        startDate: effectiveStartDateStr,
+        endDate: effectiveEndDateStr,
+        goals,
+      });
+      return response.json();
+    },
+    onSuccess: async () => {
+      setIsGoalsDialogOpen(false);
+      await Promise.all([
+        metricsQuery.refetch(),
+        goalsQuery.refetch(),
+      ]);
+      await queryClient.invalidateQueries({ queryKey: [metricsEndpoint] });
+      if (goalsEndpoint) {
+        await queryClient.invalidateQueries({ queryKey: [goalsEndpoint] });
+      }
+      toast({
+        title: "Metas salvas",
+        description: "As metas do periodo foram atualizadas com sucesso.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Falha ao salvar metas",
+        description: error instanceof Error ? error.message : "Nao foi possivel salvar as metas.",
+      });
+    },
+  });
+
   return {
     isSharedMode,
     startDateStr,
@@ -770,6 +882,8 @@ export function useDashboardController({
     setCreativeDialogInfo,
     showDebug,
     setShowDebug,
+    isGoalsDialogOpen,
+    setIsGoalsDialogOpen,
     accountOptions,
     campaignOptions,
     objectiveOptions,
@@ -799,6 +913,11 @@ export function useDashboardController({
     spendByAccountData,
     funnelSteps,
     quickRanges,
+    goalsData: goalsQuery.data,
+    isGoalsLoading: goalsQuery.isLoading || goalsQuery.isFetching,
+    goalsButtonLabel,
+    isSavingGoals: saveGoalsMutation.isPending,
+    saveGoals: saveGoalsMutation.mutateAsync,
     applyQuickRange,
     applyFilters,
     sameRange,

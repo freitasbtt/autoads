@@ -4,6 +4,7 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  Line,
   ReferenceDot,
   XAxis,
   YAxis,
@@ -119,6 +120,15 @@ export function DashboardMacroView({
       averageLeads: totalLeads / timelineData.length,
     };
   }, [timelineData]);
+
+  const chartTimelineData = useMemo(
+    () =>
+      timelineData.map((point) => ({
+        ...point,
+        goalLeadsPerDay: metricsData?.goalTotals?.dailyLeadTarget ?? null,
+      })),
+    [metricsData?.goalTotals?.dailyLeadTarget, timelineData],
+  );
 
   const funnelInsights = useMemo(() => {
     const previousTotals = metricsData?.previousTotals;
@@ -241,10 +251,13 @@ export function DashboardMacroView({
               </div>
             ) : (
               <ChartContainer
-                config={{ leads: { label: "Leads", color: "#2563eb" } }}
+                config={{
+                  leads: { label: "Leads", color: "#2563eb" },
+                  goalLeadsPerDay: { label: "Meta diaria", color: "#f59e0b" },
+                }}
                 className="h-[300px] w-full rounded-[20px] bg-[linear-gradient(180deg,rgba(248,250,252,0.9),rgba(255,255,255,0.98))] p-2"
               >
-                <AreaChart data={timelineData} margin={{ left: 2, right: 18, top: 16, bottom: 4 }}>
+                <AreaChart data={chartTimelineData} margin={{ left: 2, right: 18, top: 16, bottom: 4 }}>
                   <defs>
                     <linearGradient id="leadsAreaFill" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#2563eb" stopOpacity={0.34} />
@@ -273,7 +286,9 @@ export function DashboardMacroView({
                     cursor={{ stroke: "rgba(37,99,235,0.25)", strokeWidth: 1.5, strokeDasharray: "4 6" }}
                     content={({ active, payload }) => {
                       if (!active || !payload?.length) return null;
-                      const point = payload[0]?.payload as DashboardTimelinePoint | undefined;
+                      const point = payload[0]?.payload as (DashboardTimelinePoint & {
+                        goalLeadsPerDay?: number | null;
+                      }) | undefined;
                       if (!point) return null;
 
                       return (
@@ -294,6 +309,14 @@ export function DashboardMacroView({
                               <span className="text-slate-500">Gasto</span>
                               <span className="font-semibold text-slate-950">{formatCurrency(point.spend)}</span>
                             </div>
+                            {point.goalLeadsPerDay !== null && point.goalLeadsPerDay !== undefined ? (
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-slate-500">Meta diaria</span>
+                                <span className="font-semibold text-amber-600">
+                                  {point.goalLeadsPerDay.toFixed(1)}
+                                </span>
+                              </div>
+                            ) : null}
                           </div>
                         </div>
                       );
@@ -322,6 +345,19 @@ export function DashboardMacroView({
                       fill: "#2563eb",
                     }}
                   />
+                  {metricsData.goalTotals?.dailyLeadTarget !== null &&
+                  metricsData.goalTotals?.dailyLeadTarget !== undefined ? (
+                    <Line
+                      type="monotone"
+                      dataKey="goalLeadsPerDay"
+                      stroke="#f59e0b"
+                      strokeWidth={2}
+                      strokeDasharray="6 6"
+                      dot={false}
+                      activeDot={false}
+                      isAnimationActive={!reportMode}
+                    />
+                  ) : null}
                   {lineSummary.maxPoint && (
                     <ReferenceDot
                       x={lineSummary.maxPoint.label}

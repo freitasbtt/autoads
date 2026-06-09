@@ -1,6 +1,7 @@
 import { format as formatDate, parseISO } from "date-fns";
 import {
   BarChart3,
+  CircleDashed,
   Loader2,
   MessageSquareText,
   Target,
@@ -9,7 +10,7 @@ import {
   Users,
   Wallet,
 } from "lucide-react";
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { Area, AreaChart, CartesianGrid, Line, XAxis, YAxis } from "recharts";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -228,9 +229,97 @@ export function DashboardCampaignsView({
                   </div>
                 </div>
 
+                {account.goal ? (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    <GoalKpiCard
+                      label="Investimento"
+                      value={`${formatCurrency(account.metrics.spend)} / ${formatCurrency(account.goal.targetSpend)}`}
+                      helper={
+                        account.goal.remainingSpend !== null
+                          ? `${formatCurrency(account.goal.remainingSpend)} restantes`
+                          : undefined
+                      }
+                      trendLabel={
+                        account.goal.spendProgress !== null
+                          ? `${account.goal.spendProgress.toFixed(1)}% da verba`
+                          : undefined
+                      }
+                      positive={account.goal.spendProgress !== null ? account.goal.spendProgress <= 100 : true}
+                      icon={Wallet}
+                    />
+                    <GoalKpiCard
+                      label="Leads"
+                      value={`${formatInteger(account.metrics.leads)} / ${formatInteger(account.goal.targetLeads)}`}
+                      helper={
+                        account.goal.remainingLeads !== null
+                          ? `${formatInteger(account.goal.remainingLeads)} restantes`
+                          : undefined
+                      }
+                      trendLabel={
+                        account.goal.leadsProgress !== null
+                          ? `${account.goal.leadsProgress.toFixed(1)}% da meta`
+                          : undefined
+                      }
+                      positive={account.goal.leadsProgress !== null ? account.goal.leadsProgress >= 100 : false}
+                      icon={Target}
+                    />
+                    <GoalKpiCard
+                      label="CPL Atual"
+                      value={costPerLead !== null ? formatCurrency(costPerLead) : "N/D"}
+                      helper={
+                        account.goal.targetCostPerLead !== null
+                          ? `Meta ${formatCurrency(account.goal.targetCostPerLead)}`
+                          : undefined
+                      }
+                      trendLabel={
+                        account.goal.costPerLeadDelta !== null
+                          ? `${account.goal.costPerLeadDelta >= 0 ? "+" : "-"}${formatCurrency(
+                              Math.abs(account.goal.costPerLeadDelta),
+                            )}`
+                          : undefined
+                      }
+                      positive={
+                        account.goal.costPerLeadDelta !== null ? account.goal.costPerLeadDelta <= 0 : true
+                      }
+                      icon={TrendingUp}
+                    />
+                    <GoalKpiCard
+                      label="Verba Utilizada"
+                      value={
+                        account.goal.spendProgress !== null
+                          ? `${account.goal.spendProgress.toFixed(1)}%`
+                          : "N/D"
+                      }
+                      helper={
+                        account.goal.leadsProgress !== null
+                          ? `${account.goal.leadsProgress.toFixed(1)}% da meta de leads`
+                          : undefined
+                      }
+                      trendLabel={
+                        account.goal.dailyLeadTarget !== null
+                          ? `${account.goal.dailyLeadTarget.toFixed(1)} leads/dia`
+                          : undefined
+                      }
+                      positive={account.goal.spendProgress !== null ? account.goal.spendProgress <= 100 : true}
+                      icon={BarChart3}
+                    />
+                  </div>
+                ) : (
+                  <div className="rounded-[22px] border border-dashed border-slate-200 bg-slate-50/65 p-5 text-sm text-slate-600">
+                    <div className="flex items-center gap-2 font-medium text-slate-700">
+                      <CircleDashed className="h-4 w-4" />
+                      Sem meta cadastrada para esta conta no periodo selecionado.
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">
+                      Cadastre metas no topo do dashboard para acompanhar investimento, leads, CPL e atingimento.
+                    </p>
+                  </div>
+                )}
+
                 <AccountTimelineChart
                   data={accountTimelineData}
                   accountKey={String(account.id)}
+                  dailyGoalLeads={account.goal?.dailyLeadTarget ?? null}
                   reportMode={reportMode}
                 />
 
@@ -578,17 +667,66 @@ function AccountKpiCard({
   );
 }
 
+function GoalKpiCard({
+  label,
+  value,
+  helper,
+  trendLabel,
+  positive,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  helper?: string;
+  trendLabel?: string;
+  positive?: boolean;
+  icon: typeof Target;
+}) {
+  return (
+    <div className="relative flex min-h-[118px] flex-col rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.94))] p-4 shadow-[0_18px_40px_-34px_rgba(15,23,42,0.28)]">
+      <div className="absolute right-4 top-4 text-slate-400">
+        <Icon className="h-4 w-4" />
+      </div>
+      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+        {label}
+      </div>
+      <div className="mt-3 pr-7 text-xl font-semibold tracking-tight text-slate-950">
+        {value}
+      </div>
+      {helper ? <div className="mt-2 text-xs text-slate-500">{helper}</div> : null}
+      {trendLabel ? (
+        <div
+          className={cn(
+            "mt-auto flex items-center gap-1 text-xs font-medium",
+            positive ? "text-emerald-600" : "text-amber-700",
+          )}
+        >
+          {positive ? (
+            <TrendingUp className="h-3.5 w-3.5" />
+          ) : (
+            <TrendingDown className="h-3.5 w-3.5" />
+          )}
+          <span>{trendLabel}</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function AccountTimelineChart({
   data,
   accountKey,
+  dailyGoalLeads,
   reportMode,
 }: {
   data: Array<{
     date: string;
     label: string;
     leads: number;
+    goalLeadsPerDay?: number | null;
   }>;
   accountKey: string;
+  dailyGoalLeads: number | null;
   reportMode: boolean;
 }) {
   if (data.length === 0) {
@@ -596,6 +734,10 @@ function AccountTimelineChart({
   }
 
   const chartId = `accountLeadsFill-${accountKey.replace(/[^a-z0-9]/gi, "-")}`;
+  const chartData = data.map((point) => ({
+    ...point,
+    goalLeadsPerDay: dailyGoalLeads,
+  }));
 
   return (
     <div className="rounded-[22px] border border-slate-200/80 bg-white/94 p-4 shadow-[0_18px_42px_-38px_rgba(15,23,42,0.24)]">
@@ -614,10 +756,14 @@ function AccountTimelineChart({
             label: "Leads",
             color: "#2563eb",
           },
+          goalLeadsPerDay: {
+            label: "Meta diaria",
+            color: "#f59e0b",
+          },
         }}
         className="h-[190px] w-full"
       >
-        <AreaChart data={data} margin={{ left: 0, right: 8, top: 10, bottom: 0 }}>
+        <AreaChart data={chartData} margin={{ left: 0, right: 8, top: 10, bottom: 0 }}>
           <defs>
             <linearGradient id={chartId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#2563eb" stopOpacity={0.18} />
@@ -644,7 +790,9 @@ function AccountTimelineChart({
             cursor={{ stroke: "rgba(37,99,235,0.24)", strokeDasharray: "4 6" }}
             content={({ active, payload }) => {
               if (!active || !payload?.length) return null;
-              const point = payload[0]?.payload as { label: string; leads: number } | undefined;
+              const point = payload[0]?.payload as
+                | { label: string; leads: number; goalLeadsPerDay?: number | null }
+                | undefined;
               if (!point) return null;
 
               return (
@@ -656,6 +804,14 @@ function AccountTimelineChart({
                       {formatInteger(point.leads)}
                     </span>
                   </div>
+                  {point.goalLeadsPerDay !== null && point.goalLeadsPerDay !== undefined ? (
+                    <div className="mt-2 flex items-center justify-between gap-6">
+                      <span className="text-slate-500">Meta diaria</span>
+                      <span className="font-semibold text-amber-600">
+                        {point.goalLeadsPerDay.toFixed(1)}
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
               );
             }}
@@ -684,6 +840,18 @@ function AccountTimelineChart({
             }}
             isAnimationActive={!reportMode}
           />
+          {dailyGoalLeads !== null ? (
+            <Line
+              type="monotone"
+              dataKey="goalLeadsPerDay"
+              stroke="#f59e0b"
+              strokeWidth={2}
+              strokeDasharray="6 6"
+              dot={false}
+              activeDot={false}
+              isAnimationActive={!reportMode}
+            />
+          ) : null}
         </AreaChart>
       </ChartContainer>
     </div>

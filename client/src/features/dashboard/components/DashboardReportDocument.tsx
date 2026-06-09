@@ -5,6 +5,7 @@ import type {
   DashboardAccountMetrics,
   DashboardCampaignIndexEntry,
   DashboardKpi,
+  DashboardLeadsByAccountDatum,
   DashboardMetricsResponse,
   DashboardSpendByAccountDatum,
   DashboardTimelinePoint,
@@ -31,12 +32,7 @@ type DashboardReportDocumentProps = {
     fill: string;
     width: string;
   }[];
-  leadsByAccountData: Array<{
-    name: string;
-    shortName: string;
-    leads: number;
-    spend: number;
-  }>;
+  leadsByAccountData: DashboardLeadsByAccountDatum[];
   spendByAccountData: DashboardSpendByAccountDatum[];
   topCreativesByAccount: DashboardTopCreativesAccountGroup[];
   isLoading: boolean;

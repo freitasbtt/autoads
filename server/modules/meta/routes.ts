@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { Router, type Request } from "express";
 import { z } from "zod";
-import { differenceInCalendarDays, format, isValid, parseISO, subDays } from "date-fns";
+import { differenceInCalendarDays, format, isValid, parseISO, subDays, subMonths } from "date-fns";
 import type { Resource, User } from "@shared/schema";
 import { storage } from "../storage";
 import {
@@ -24,6 +24,7 @@ import {
 } from "./utils/dashboard-share";
 import {
   buildDashboardCacheKey,
+  clearDashboardCache,
   getOrCreateDashboardCache,
 } from "./utils/dashboard-cache";
 
@@ -40,6 +41,18 @@ const dashboardShareBodySchema = z.object({
   objective: z.string().min(1).nullable().optional(),
   status: z.string().min(1).nullable().optional(),
   expiresInHours: z.number().int().min(1).max(168).optional(),
+});
+const dashboardGoalUpsertBodySchema = z.object({
+  startDate: z.string().regex(DATE_PARAM_REGEX),
+  endDate: z.string().regex(DATE_PARAM_REGEX),
+  goals: z.array(
+    z.object({
+      accountId: z.number().int().positive(),
+      accountName: z.string().min(1),
+      targetSpend: z.number().positive(),
+      targetLeads: z.number().int().positive(),
+    }),
+  ),
 });
 
 const DASHBOARD_METRICS_CACHE_TTL_MS = 60_000;
@@ -118,6 +131,40 @@ function parseQueryParam(value: unknown): string {
     return value;
   }
   return "";
+}
+
+function buildPreviousMonthRange(startDate: Date, endDate: Date) {
+  return {
+    previousStart: format(subMonths(startDate, 1), "yyyy-MM-dd"),
+    previousEnd: format(subMonths(endDate, 1), "yyyy-MM-dd"),
+  };
+}
+
+function buildGoalMetrics(options: {
+  targetSpend: number;
+  targetLeads: number;
+  actualSpend: number;
+  actualLeads: number;
+  periodDays: number;
+}) {
+  const { targetSpend, targetLeads, actualSpend, actualLeads, periodDays } = options;
+  const targetCostPerLead = targetLeads > 0 ? targetSpend / targetLeads : null;
+  const actualCostPerLead = actualLeads > 0 ? actualSpend / actualLeads : null;
+
+  return {
+    targetSpend,
+    targetLeads,
+    targetCostPerLead,
+    spendProgress: targetSpend > 0 ? (actualSpend / targetSpend) * 100 : null,
+    leadsProgress: targetLeads > 0 ? (actualLeads / targetLeads) * 100 : null,
+    remainingSpend: Math.max(targetSpend - actualSpend, 0),
+    remainingLeads: Math.max(targetLeads - actualLeads, 0),
+    costPerLeadDelta:
+      actualCostPerLead !== null && targetCostPerLead !== null
+        ? actualCostPerLead - targetCostPerLead
+        : null,
+    dailyLeadTarget: periodDays > 0 ? targetLeads / periodDays : null,
+  };
 }
 
 function validateInternalRequest(req: Request): {
@@ -403,6 +450,121 @@ metaRouter.post("/dashboard/share", async (req, res, next) => {
   }
 });
 
+metaRouter.get("/dashboard/goals", async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const query = dashboardMetricsQuerySchema.parse(req.query);
+
+    if (!query.startDate || !query.endDate) {
+      return res.status(400).json({ message: "Forneca startDate e endDate para carregar metas." });
+    }
+
+    const startDate = parseISO(query.startDate);
+    const endDate = parseISO(query.endDate);
+    if (!isValid(startDate) || !isValid(endDate) || startDate > endDate) {
+      return res.status(400).json({ message: "Periodo de metas invalido." });
+    }
+
+    const accountIds = parseNumberQueryParam(req.query.accountId) ?? [];
+    const allResources = await storage.getResourcesByTenant(user.tenantId);
+    const accountResources = allResources.filter((resource) => resource.type === "account");
+    const selectedAccounts =
+      accountIds.length > 0
+        ? accountResources.filter((resource) => accountIds.includes(resource.id))
+        : [];
+
+    const goals = await storage.getDashboardGoalsByPeriod(
+      user.tenantId,
+      query.startDate,
+      query.endDate,
+      selectedAccounts.map((account) => account.id),
+    );
+    const goalByAccountId = new Map(goals.map((goal) => [goal.accountId, goal] as const));
+
+    const rows = selectedAccounts.map((account) => ({
+      accountId: account.id,
+      accountName: account.name,
+      accountValue: account.value,
+      goal: (() => {
+        const goal = goalByAccountId.get(account.id);
+        if (!goal) return null;
+        return {
+          ...goal,
+          targetSpend: Number(goal.targetSpend),
+        };
+      })(),
+    }));
+
+    const goalsCount = rows.filter((row) => row.goal).length;
+    const missingCount = Math.max(rows.length - goalsCount, 0);
+    const status =
+      goalsCount === 0 ? "empty" : missingCount === 0 ? "complete" : "partial";
+
+    return res.json({
+      startDate: query.startDate,
+      endDate: query.endDate,
+      accounts: rows,
+      summary: {
+        totalAccounts: rows.length,
+        goalsCount,
+        missingCount,
+        status,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+metaRouter.post("/dashboard/goals", async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const body = dashboardGoalUpsertBodySchema.parse(req.body);
+
+    const startDate = parseISO(body.startDate);
+    const endDate = parseISO(body.endDate);
+    if (!isValid(startDate) || !isValid(endDate) || startDate > endDate) {
+      return res.status(400).json({ message: "Periodo de metas invalido." });
+    }
+
+    const allResources = await storage.getResourcesByTenant(user.tenantId);
+    const accountResources = allResources.filter((resource) => resource.type === "account");
+    const validAccountIds = new Set(accountResources.map((resource) => resource.id));
+
+    const invalidGoal = body.goals.find((goal) => !validAccountIds.has(goal.accountId));
+    if (invalidGoal) {
+      return res.status(400).json({
+        message: `Conta invalida para metas: ${invalidGoal.accountId}.`,
+      });
+    }
+
+    const savedGoals = await storage.upsertDashboardGoals(
+      user.tenantId,
+      body.goals.map((goal) => ({
+        tenantId: user.tenantId,
+        accountId: goal.accountId,
+        accountName: goal.accountName,
+        startDate: body.startDate,
+        endDate: body.endDate,
+        targetSpend: goal.targetSpend.toFixed(2),
+        targetLeads: goal.targetLeads,
+      })),
+    );
+
+    clearDashboardCache();
+
+    return res.json({
+      message: "Metas salvas com sucesso.",
+      goals: savedGoals.map((goal) => ({
+        ...goal,
+        targetSpend: Number(goal.targetSpend),
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 publicMetaRouter.get("/dashboard/share/metadata", async (req, res, next) => {
   try {
     const token = parseQueryParam(req.query.token);
@@ -452,11 +614,8 @@ publicMetaRouter.get("/dashboard/metrics", async (req, res, next) => {
 
     const startDate = parseISO(claims.startDate);
     const endDate = parseISO(claims.endDate);
-    const rangeDays = differenceInCalendarDays(endDate, startDate) + 1;
-    const previousEndDate = subDays(startDate, 1);
-    const previousStartDate = subDays(previousEndDate, Math.max(rangeDays - 1, 0));
-    const previousStart = format(previousStartDate, "yyyy-MM-dd");
-    const previousEnd = format(previousEndDate, "yyyy-MM-dd");
+    const { previousStart, previousEnd } = buildPreviousMonthRange(startDate, endDate);
+    const periodDays = differenceInCalendarDays(endDate, startDate) + 1;
 
     const client = new MetaGraphClient(metaAccess.accessToken, metaAppSecret);
     const payload = await getOrCreateDashboardCache(
@@ -474,6 +633,41 @@ publicMetaRouter.get("/dashboard/metrics", async (req, res, next) => {
           previousStartDate: previousStart,
           previousEndDate: previousEnd,
         });
+        const goals = await storage.getDashboardGoalsByPeriod(
+          claims.tenantId,
+          claims.startDate,
+          claims.endDate,
+          selectedAccounts.map((account) => account.id),
+        );
+        const goalByAccountId = new Map(goals.map((goal) => [goal.accountId, goal] as const));
+        let targetSpendTotal = 0;
+        let targetLeadsTotal = 0;
+
+        const accountsWithGoals = metrics.accounts.map((account) => {
+          const goal = goalByAccountId.get(account.id);
+          if (!goal) {
+            return {
+              ...account,
+              goal: null,
+            };
+          }
+
+          const targetSpend = Number(goal.targetSpend);
+
+          targetSpendTotal += targetSpend;
+          targetLeadsTotal += goal.targetLeads;
+
+          return {
+            ...account,
+            goal: buildGoalMetrics({
+              targetSpend,
+              targetLeads: goal.targetLeads,
+              actualSpend: account.metrics.spend,
+              actualLeads: account.metrics.leads,
+              periodDays,
+            }),
+          };
+        });
 
         return {
           dateRange: {
@@ -484,7 +678,17 @@ publicMetaRouter.get("/dashboard/metrics", async (req, res, next) => {
           },
           totals: metrics.totals,
           previousTotals: metrics.previousTotals,
-          accounts: metrics.accounts,
+          accounts: accountsWithGoals,
+          goalTotals:
+            targetSpendTotal > 0 || targetLeadsTotal > 0
+              ? buildGoalMetrics({
+                  targetSpend: targetSpendTotal,
+                  targetLeads: targetLeadsTotal,
+                  actualSpend: metrics.totals.spend,
+                  actualLeads: metrics.totals.leads,
+                  periodDays,
+                })
+              : null,
           timeline: metrics.timeline,
         };
       },
@@ -574,6 +778,7 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
         },
         totals: emptyTotals(),
         previousTotals: emptyTotals(),
+        goalTotals: null,
         accounts: [],
         timeline: [],
       });
@@ -619,12 +824,15 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
         return res.status(400).json({ message: "O startDate deve ser menor ou igual ao endDate" });
       }
 
-      const rangeDays = differenceInCalendarDays(endDate, startDate) + 1;
-      const previousEndDate = subDays(startDate, 1);
-      const previousStartDate = subDays(previousEndDate, Math.max(rangeDays - 1, 0));
-      previousStart = format(previousStartDate, "yyyy-MM-dd");
-      previousEnd = format(previousEndDate, "yyyy-MM-dd");
+      const previousRange = buildPreviousMonthRange(startDate, endDate);
+      previousStart = previousRange.previousStart;
+      previousEnd = previousRange.previousEnd;
     }
+
+    const periodDays =
+      query.startDate && query.endDate
+        ? differenceInCalendarDays(parseISO(query.endDate), parseISO(query.startDate)) + 1
+        : 0;
 
     const client = new MetaGraphClient(metaAccess.accessToken, metaAppSecret);
     const cacheKey = buildDashboardCacheKey("dashboard-metrics", {
@@ -654,6 +862,44 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
           previousStartDate: previousStart ?? undefined,
           previousEndDate: previousEnd ?? undefined,
         });
+        const goals =
+          query.startDate && query.endDate
+            ? await storage.getDashboardGoalsByPeriod(
+                user.tenantId,
+                query.startDate,
+                query.endDate,
+                selectedAccounts.map((account) => account.id),
+              )
+            : [];
+        const goalByAccountId = new Map(goals.map((goal) => [goal.accountId, goal] as const));
+        let targetSpendTotal = 0;
+        let targetLeadsTotal = 0;
+
+        const accountsWithGoals = metrics.accounts.map((account) => {
+          const goal = goalByAccountId.get(account.id);
+          if (!goal) {
+            return {
+              ...account,
+              goal: null,
+            };
+          }
+
+          const targetSpend = Number(goal.targetSpend);
+
+          targetSpendTotal += targetSpend;
+          targetLeadsTotal += goal.targetLeads;
+
+          return {
+            ...account,
+            goal: buildGoalMetrics({
+              targetSpend,
+              targetLeads: goal.targetLeads,
+              actualSpend: account.metrics.spend,
+              actualLeads: account.metrics.leads,
+              periodDays,
+            }),
+          };
+        });
 
         return {
           dateRange: {
@@ -664,7 +910,17 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
           },
           totals: metrics.totals,
           previousTotals: metrics.previousTotals,
-          accounts: metrics.accounts,
+          goalTotals:
+            targetSpendTotal > 0 || targetLeadsTotal > 0
+              ? buildGoalMetrics({
+                  targetSpend: targetSpendTotal,
+                  targetLeads: targetLeadsTotal,
+                  actualSpend: metrics.totals.spend,
+                  actualLeads: metrics.totals.leads,
+                  periodDays,
+                })
+              : null,
+          accounts: accountsWithGoals,
           timeline: metrics.timeline,
         };
       },

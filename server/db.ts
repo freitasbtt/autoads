@@ -223,6 +223,26 @@ export async function ensureGcsStorageSchema(): Promise<void> {
       CREATE UNIQUE INDEX IF NOT EXISTS uniq_meta_adset_snapshots
       ON meta_adset_snapshots (tenant_id, ad_account_id, campaign_id, adset_id)
     `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS dashboard_goals (
+        id serial PRIMARY KEY,
+        tenant_id integer NOT NULL REFERENCES tenants(id),
+        account_id integer NOT NULL REFERENCES resources(id),
+        account_name text NOT NULL,
+        start_date date NOT NULL,
+        end_date date NOT NULL,
+        target_spend numeric(14,2) NOT NULL,
+        target_leads integer NOT NULL,
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_tenant_dashboard_goal
+      ON dashboard_goals (tenant_id, account_id, start_date, end_date)
+    `);
   } finally {
     client.release();
   }

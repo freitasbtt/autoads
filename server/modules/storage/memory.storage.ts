@@ -4,12 +4,14 @@ import type {
   Automation,
   Campaign,
   CampaignMetric,
+  DashboardGoal,
   ExistingCampaignRun,
   InsertAppSettings,
   InsertAudience,
   InsertAutomation,
   InsertCampaign,
   InsertCampaignMetric,
+  InsertDashboardGoal,
   InsertExistingCampaignRun,
   InsertIntegration,
   InsertMetaAccountSnapshot,
@@ -55,6 +57,7 @@ export class MemStorage implements IStorage {
   private integrations = new Map<number, Integration>();
   private automations = new Map<number, Automation>();
   private campaignMetrics = new Map<number, CampaignMetric>();
+  private dashboardGoals = new Map<number, DashboardGoal>();
   private existingCampaignRuns = new Map<string, ExistingCampaignRun>();
   private storageUploadLinks = new Map<number, StorageUploadLink>();
   private storageUploads = new Map<number, StorageUpload>();
@@ -549,6 +552,64 @@ export class MemStorage implements IStorage {
     };
     this.campaignMetrics.set(id, created);
     return created;
+  }
+
+  async getDashboardGoalsByPeriod(
+    tenantId: number,
+    startDate: string,
+    endDate: string,
+    accountIds: number[],
+  ): Promise<DashboardGoal[]> {
+    return Array.from(this.dashboardGoals.values()).filter(
+      (goal) =>
+        goal.tenantId === tenantId &&
+        goal.startDate === startDate &&
+        goal.endDate === endDate &&
+        accountIds.includes(goal.accountId),
+    );
+  }
+
+  async upsertDashboardGoals(
+    tenantId: number,
+    goals: Array<InsertDashboardGoal & { tenantId: number }>,
+  ): Promise<DashboardGoal[]> {
+    const saved: DashboardGoal[] = [];
+
+    for (const goal of goals) {
+      const existing = Array.from(this.dashboardGoals.values()).find(
+        (entry) =>
+          entry.tenantId === tenantId &&
+          entry.accountId === goal.accountId &&
+          entry.startDate === goal.startDate &&
+          entry.endDate === goal.endDate,
+      );
+
+      if (existing) {
+        const updated: DashboardGoal = {
+          ...existing,
+          accountName: goal.accountName,
+          targetSpend: goal.targetSpend,
+          targetLeads: goal.targetLeads,
+          updatedAt: new Date(),
+        };
+        this.dashboardGoals.set(existing.id, updated);
+        saved.push(updated);
+        continue;
+      }
+
+      const id = this.nextId++;
+      const created: DashboardGoal = {
+        ...goal,
+        tenantId,
+        id,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      this.dashboardGoals.set(id, created);
+      saved.push(created);
+    }
+
+    return saved;
   }
 
   async getIntegration(id: number): Promise<Integration | undefined> {

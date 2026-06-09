@@ -13,12 +13,14 @@ import type {
   Automation,
   Campaign,
   CampaignMetric,
+  DashboardGoal,
   ExistingCampaignRun,
   InsertAppSettings,
   InsertAudience,
   InsertAutomation,
   InsertCampaign,
   InsertCampaignMetric,
+  InsertDashboardGoal,
   InsertExistingCampaignRun,
   InsertIntegration,
   InsertMetaAccountSnapshot,
@@ -526,6 +528,77 @@ export class DbStorage implements IStorage {
       .values(metric)
       .returning();
     return created;
+  }
+
+  async getDashboardGoalsByPeriod(
+    tenantId: number,
+    startDate: string,
+    endDate: string,
+    accountIds: number[],
+  ): Promise<DashboardGoal[]> {
+    if (accountIds.length === 0) {
+      return [];
+    }
+
+    return db.query.dashboardGoals.findMany({
+      where: and(
+        eq(schema.dashboardGoals.tenantId, tenantId),
+        eq(schema.dashboardGoals.startDate, startDate),
+        eq(schema.dashboardGoals.endDate, endDate),
+        inArray(schema.dashboardGoals.accountId, accountIds),
+      ),
+    });
+  }
+
+  async upsertDashboardGoals(
+    tenantId: number,
+    goals: Array<InsertDashboardGoal & { tenantId: number }>,
+  ): Promise<DashboardGoal[]> {
+    if (goals.length === 0) {
+      return [];
+    }
+
+    return db.transaction(async (tx) => {
+      const saved: DashboardGoal[] = [];
+
+      for (const goal of goals) {
+        const existing = await tx.query.dashboardGoals.findFirst({
+          where: and(
+            eq(schema.dashboardGoals.tenantId, tenantId),
+            eq(schema.dashboardGoals.accountId, goal.accountId),
+            eq(schema.dashboardGoals.startDate, goal.startDate),
+            eq(schema.dashboardGoals.endDate, goal.endDate),
+          ),
+        });
+
+        if (existing) {
+          const [updated] = await tx
+            .update(schema.dashboardGoals)
+            .set({
+              accountName: goal.accountName,
+              targetSpend: goal.targetSpend,
+              targetLeads: goal.targetLeads,
+              updatedAt: new Date(),
+            })
+            .where(eq(schema.dashboardGoals.id, existing.id))
+            .returning();
+          saved.push(updated);
+          continue;
+        }
+
+        const [created] = await tx
+          .insert(schema.dashboardGoals)
+          .values({
+            ...goal,
+            tenantId,
+            updatedAt: new Date(),
+          })
+          .returning();
+        saved.push(created);
+      }
+
+      return saved;
+    });
   }
 
   async getIntegration(id: number): Promise<Integration | undefined> {
