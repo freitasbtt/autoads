@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CampaignCreativesDialog } from "@/components/CampaignCreativesDialog";
 import { DashboardCampaignsView } from "@/features/dashboard/components/DashboardCampaignsView";
 import { DashboardFiltersCard } from "@/features/dashboard/components/DashboardFiltersCard";
+import { DashboardGoalsDialog } from "@/features/dashboard/components/DashboardGoalsDialog";
 import { DashboardHeader } from "@/features/dashboard/components/DashboardHeader";
 import { DashboardMacroView } from "@/features/dashboard/components/DashboardMacroView";
 import { useDashboardController } from "@/features/dashboard/hooks/useDashboardController";
@@ -39,6 +40,8 @@ export default function Dashboard(props: DashboardProps = {}) {
     isSystemAdmin,
     showDebug,
     setShowDebug,
+    isGoalsDialogOpen,
+    setIsGoalsDialogOpen,
     accountOptions,
     campaignOptions,
     objectiveOptions,
@@ -67,6 +70,10 @@ export default function Dashboard(props: DashboardProps = {}) {
     spendByAccountData,
     funnelSteps,
     quickRanges,
+    isGoalsLoading,
+    goalsButtonLabel,
+    isSavingGoals,
+    saveGoals,
     applyQuickRange,
     applyFilters,
     sameRange,
@@ -114,6 +121,9 @@ export default function Dashboard(props: DashboardProps = {}) {
               isApplyingFilters={isBlockingLoading}
               isDataError={isError || isTopCreativesError}
               isDataReady={hasSelectedAccounts && !!metricsData && !isError && !isBlockingLoading}
+              goalsButtonLabel={goalsButtonLabel}
+              isGoalsLoading={isGoalsLoading}
+              isGoalsButtonDisabled={!hasSelectedAccounts || isGoalsLoading || hasPendingChanges}
               onRangeChange={setRawRange}
               onApplyQuickRange={applyQuickRange}
               onAccountsChange={handleAccountsChange}
@@ -122,6 +132,7 @@ export default function Dashboard(props: DashboardProps = {}) {
               onObjectiveChange={setObjectiveFilter}
               onStatusChange={setStatusFilter}
               onApplyFilters={applyFilters}
+              onOpenGoals={() => setIsGoalsDialogOpen(true)}
               onClearAllFilters={clearAllFilters}
               sameRange={sameRange}
             />
@@ -275,6 +286,16 @@ export default function Dashboard(props: DashboardProps = {}) {
         headerSnapshot={creativeDialogInfo?.header ?? null}
         startDate={startDateStr}
         endDate={endDateStr}
+      />
+
+      <DashboardGoalsDialog
+        open={isGoalsDialogOpen}
+        onOpenChange={setIsGoalsDialogOpen}
+        periodLabel={periodLabel}
+        accounts={accounts}
+        isLoading={isGoalsLoading}
+        isSaving={isSavingGoals}
+        onSave={saveGoals}
       />
 
       {isBlockingLoading && (

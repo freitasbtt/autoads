@@ -79,6 +79,7 @@ export type CampaignHeaderSnapshot = {
 type CampaignAdReport = {
   ad_id: string;
   ad_name: string | null;
+  ad_status: string | null;
   creative_id: string | null;
   thumbnailUrl: string | null;
   metrics: {
@@ -348,15 +349,24 @@ export function CampaignCreativesDialog({
 
   function CreativeCard(item: CampaignAdReport) {
     const m = item.metrics;
+    const isActive = item.ad_status?.toLowerCase() === "active";
+    const statusLabel = isActive ? "Ativo" : "Pausado";
 
     return (
       <div className="flex flex-col overflow-hidden rounded-xl border bg-background shadow-sm">
         {/* Header textual do criativo */}
         <div className="border-b bg-card/40 p-4">
-          <div className="text-[0.8rem] font-semibold text-foreground leading-tight">
-            {item.ad_name
-              ? item.ad_name
-              : "Peça criativa veiculada nesse período"}
+          <div className="flex items-start justify-between gap-3">
+            <div className="text-[0.8rem] font-semibold text-foreground leading-tight">
+              {item.ad_name
+                ? item.ad_name
+                : "Peça criativa veiculada nesse período"}
+            </div>
+            <span
+              className={`mt-0.5 inline-flex h-2.5 w-2.5 flex-shrink-0 rounded-full border border-white shadow-sm ${isActive ? "bg-emerald-500" : "bg-slate-300"}`}
+              title={statusLabel}
+              aria-label={`Status do anúncio: ${statusLabel}`}
+            />
           </div>
           <div className="text-[0.7rem] text-muted-foreground leading-tight">
             Peça criativa veiculada nesse período

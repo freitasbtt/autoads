@@ -276,18 +276,22 @@ export function DateRangePickerField({
   onChange: (range: DateRange | null) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [draftRange, setDraftRange] = useState<DateRange | undefined>(value);
   const currentLabel = labelFromRange(value);
 
   const handleSelect = (next: DateRange | undefined) => {
     if (!next || !next.from) {
+      setDraftRange(undefined);
       onChange(null);
       return;
     }
     if (!next.to) {
-      onChange({ from: next.from, to: next.from });
+      setDraftRange({ from: next.from, to: undefined });
       return;
     }
-    onChange(normalizeRange(next));
+    const normalized = normalizeRange(next);
+    setDraftRange(normalized);
+    onChange(normalized);
     setOpen(false);
   };
 
@@ -297,7 +301,17 @@ export function DateRangePickerField({
         Período
       </span>
 
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover
+        open={open}
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          if (nextOpen) {
+            setDraftRange(value);
+            return;
+          }
+          setDraftRange(undefined);
+        }}
+      >
         <PopoverTrigger asChild>
           <Button variant="outline" className="w-full justify-start text-left font-normal">
             <CalendarIcon className="mr-2 h-4 w-4" />
@@ -315,7 +329,7 @@ export function DateRangePickerField({
             <Calendar
               mode="range"
               numberOfMonths={2}
-              selected={value}
+              selected={draftRange}
               disabled={{ after: new Date() }}
               onSelect={handleSelect}
             />
@@ -326,7 +340,9 @@ export function DateRangePickerField({
                 variant="outline"
                 className="text-xs"
                 onClick={() => {
-                  onChange(normalizeRange(buildDefaultRange()));
+                  const normalized = normalizeRange(buildDefaultRange());
+                  setDraftRange(normalized);
+                  onChange(normalized);
                   setOpen(false);
                 }}
               >
@@ -338,6 +354,7 @@ export function DateRangePickerField({
                 variant="ghost"
                 className="text-xs"
                 onClick={() => {
+                  setDraftRange(undefined);
                   onChange(null);
                   setOpen(false);
                 }}

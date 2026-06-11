@@ -1975,6 +1975,7 @@ tasksRouter.get("/tasks/:id/distribution/payload", async (req, res, next) => {
     const pairsPayload = selectedPairs.map((pair) => {
       return {
         pair_id: pair.pairId,
+        pair_name: pair.name ?? "",
         message_text: pair.text ?? "",
         title_text: pair.title ?? "",
         cta: "SIGN_UP",
@@ -2058,6 +2059,7 @@ tasksRouter.get("/tasks/:id/distribution/payload", async (req, res, next) => {
             selected_pairs: Array<{
               asset_key: string;
               pair_id: string;
+              pair_name: string;
               message_text: string;
               title_text: string;
               cta: string;
@@ -2103,6 +2105,7 @@ tasksRouter.get("/tasks/:id/distribution/payload", async (req, res, next) => {
               .map((pair) => ({
                 asset_key: `task_${context.task.id}__${pair.pair_id}__${destination.adAccountId}`,
                 pair_id: pair.pair_id,
+                pair_name: pair.pair_name,
                 message_text: pair.message_text,
                 title_text: pair.title_text,
                 cta: pair.cta,
@@ -2154,6 +2157,7 @@ tasksRouter.get("/tasks/:id/distribution/payload", async (req, res, next) => {
                   tenant_id: String(user.tenantId),
                   client_id: clientId,
                   asset_key: `task_${context.task.id}__${pair.pairId}__${destination.adAccountId}`,
+                  pair_name: pair.name ?? "",
                   ad_account_id: destination.adAccountId,
                   campaign_id: destination.campaign.id,
                   adset_id: adset.id,
@@ -2239,6 +2243,7 @@ tasksRouter.post("/tasks/:id/distribution/send", async (req, res, next) => {
     const pairsPayload = selectedPairs.map((pair) => {
       return {
         pair_id: pair.pairId,
+        pair_name: pair.name ?? "",
         message_text: pair.text ?? "",
         title_text: pair.title ?? "",
         cta: "SIGN_UP",
@@ -2344,6 +2349,7 @@ tasksRouter.post("/tasks/:id/distribution/send", async (req, res, next) => {
               .map((pair) => ({
                 asset_key: `task_${context.task.id}__${pair.pair_id}__${destination.adAccountId}`,
                 pair_id: pair.pair_id,
+                pair_name: pair.pair_name,
                 message_text: pair.message_text,
                 title_text: pair.title_text,
                 cta: pair.cta,
@@ -2395,6 +2401,7 @@ tasksRouter.post("/tasks/:id/distribution/send", async (req, res, next) => {
                   tenant_id: String(user.tenantId),
                   client_id: clientId,
                   asset_key: `task_${context.task.id}__${pair.pairId}__${destination.adAccountId}`,
+                  pair_name: pair.name ?? "",
                   ad_account_id: destination.adAccountId,
                   campaign_id: destination.campaign.id,
                   adset_id: adset.id,

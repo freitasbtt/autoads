@@ -1,15 +1,15 @@
 import { format as formatDate, parseISO } from "date-fns";
 import {
   BarChart3,
+  CircleDashed,
   Loader2,
-  MessageSquareText,
   Target,
   TrendingDown,
   TrendingUp,
   Users,
   Wallet,
 } from "lucide-react";
-import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
+import { Area, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from "recharts";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,7 @@ import {
   formatInteger,
   formatPercent,
   calcTrend,
+  getCPM,
   getCTR,
   getCostPerLead,
   getObjectiveLabel,
@@ -147,9 +148,11 @@ export function DashboardCampaignsView({
           const previousCostPerLead = account.previousMetrics
             ? getCostPerLead(account.previousMetrics.spend, account.previousMetrics.leads)
             : null;
+          const currentCpm = getCPM(account.metrics.spend, account.metrics.impressions);
+          const previousCpm = account.previousMetrics
+            ? getCPM(account.previousMetrics.spend, account.previousMetrics.impressions)
+            : null;
           const campaignsWithDelivery = account.campaigns.filter((campaign) => campaign.metrics.spend > 0);
-          const campaignsWithoutDelivery = account.campaigns.filter((campaign) => campaign.metrics.spend <= 0);
-          const orderedCampaigns = [...campaignsWithDelivery, ...campaignsWithoutDelivery];
           const creativeGroup = topCreativesByAccountMap.get(account.id);
           const accountTimelineData = (account.timeline ?? []).map((point) => ({
             ...point,
@@ -186,12 +189,30 @@ export function DashboardCampaignsView({
 
                     <div className="flex flex-wrap gap-2">
                       <Badge variant="outline" className="rounded-full px-2.5 py-0.5 text-[10px]">
-                        {formatInteger(account.campaigns.length)} campanhas no recorte
+                        {formatInteger(campaignsWithDelivery.length)} campanhas com veiculação
                       </Badge>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-1 gap-3 p-3.5 sm:grid-cols-2 lg:grid-cols-5">
+                    <AccountKpiCard
+                      label="Total Gasto"
+                      value={formatCurrency(account.metrics.spend)}
+                      trend={calcTrend(account.metrics.spend, account.previousMetrics?.spend ?? null)}
+                      icon={Wallet}
+                    />
+                    <AccountKpiCard
+                      label="CPM"
+                      value={currentCpm !== null ? formatCurrency(currentCpm) : "N/D"}
+                      trend={calcTrend(currentCpm, previousCpm, true)}
+                      icon={BarChart3}
+                    />
+                    <AccountKpiCard
+                      label="Contas Alcancadas"
+                      value={formatInteger(account.metrics.reach)}
+                      trend={calcTrend(account.metrics.reach, account.previousMetrics?.reach ?? null)}
+                      icon={Users}
+                    />
                     <AccountKpiCard
                       label="Leads"
                       value={formatInteger(account.metrics.leads)}
@@ -199,42 +220,71 @@ export function DashboardCampaignsView({
                       icon={Target}
                     />
                     <AccountKpiCard
-                      label="Custo por lead"
+                      label="Custo por Lead"
                       value={costPerLead !== null ? formatCurrency(costPerLead) : "N/D"}
                       trend={calcTrend(costPerLead, previousCostPerLead, true)}
-                      icon={Wallet}
-                    />
-                    <AccountKpiCard
-                      label="Gasto"
-                      value={formatCurrency(account.metrics.spend)}
-                      trend={calcTrend(account.metrics.spend, account.previousMetrics?.spend ?? null)}
-                      icon={Wallet}
-                    />
-                    <AccountKpiCard
-                      label="Alcance"
-                      value={formatInteger(account.metrics.reach)}
-                      trend={calcTrend(account.metrics.reach, account.previousMetrics?.reach ?? null)}
-                      icon={Users}
-                    />
-                    <AccountKpiCard
-                      label="Conversas"
-                      value={formatInteger(account.metrics.messagingConversationsStarted)}
-                      trend={calcTrend(
-                        account.metrics.messagingConversationsStarted,
-                        account.previousMetrics?.messagingConversationsStarted ?? null,
-                      )}
-                      icon={MessageSquareText}
+                      icon={TrendingUp}
                     />
                   </div>
                 </div>
 
+                {account.goal ? (
+                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                    <GoalGaugeCard
+                      label="Investimento"
+                      value={`${formatCurrency(account.metrics.spend)} / ${formatCurrency(account.goal.targetSpend)}`}
+                      progress={account.goal.spendProgress}
+                      progressLabel={
+                        account.goal.spendProgress !== null
+                          ? `${account.goal.spendProgress.toFixed(1)}% da verba`
+                          : undefined
+                      }
+                      helper={
+                        account.goal.remainingSpend !== null
+                          ? `${formatCurrency(account.goal.remainingSpend)} restantes`
+                          : undefined
+                      }
+                      positive={account.goal.spendProgress !== null ? account.goal.spendProgress <= 100 : undefined}
+                      variant="investment"
+                    />
+                    <GoalGaugeCard
+                      label="Leads"
+                      value={`${formatInteger(account.metrics.leads)} / ${formatInteger(account.goal.targetLeads)}`}
+                      progress={account.goal.leadsProgress}
+                      progressLabel={
+                        account.goal.leadsProgress !== null
+                          ? `${account.goal.leadsProgress.toFixed(1)}% da meta`
+                          : undefined
+                      }
+                      helper={
+                        account.goal.remainingLeads !== null
+                          ? `${formatInteger(account.goal.remainingLeads)} restantes`
+                          : undefined
+                      }
+                      positive={account.goal.leadsProgress !== null ? account.goal.leadsProgress >= 100 : undefined}
+                      variant="leads"
+                    />
+                  </div>
+                ) : (
+                  <div className="rounded-[22px] border border-dashed border-slate-200 bg-slate-50/65 p-5 text-sm text-slate-600">
+                    <div className="flex items-center gap-2 font-medium text-slate-700">
+                      <CircleDashed className="h-4 w-4" />
+                      Sem meta cadastrada para esta conta no periodo selecionado.
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">
+                      Cadastre metas no topo do dashboard para acompanhar investimento, leads, CPL e atingimento.
+                    </p>
+                  </div>
+                )}
+
                 <AccountTimelineChart
                   data={accountTimelineData}
                   accountKey={String(account.id)}
+                  dailyGoalLeads={account.goal?.dailyLeadTarget ?? null}
                   reportMode={reportMode}
                 />
 
-                {orderedCampaigns.length === 0 ? (
+                {campaignsWithDelivery.length === 0 ? (
                   <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
                     {hasActiveFilters
                       ? "Nenhuma campanha corresponde aos filtros."
@@ -245,9 +295,6 @@ export function DashboardCampaignsView({
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <Badge variant="secondary">
                         {formatInteger(campaignsWithDelivery.length)} com veiculacao
-                      </Badge>
-                      <Badge variant="outline">
-                        {formatInteger(campaignsWithoutDelivery.length)} sem veiculacao
                       </Badge>
                     </div>
 
@@ -293,7 +340,7 @@ export function DashboardCampaignsView({
                         </thead>
 
                         <tbody>
-                          {orderedCampaigns.map((campaign) => {
+                          {campaignsWithDelivery.map((campaign) => {
                             const result = summarizeResult(campaign.metrics, campaign.resultado);
                             const ctr = getCTR(campaign.metrics.clicks, campaign.metrics.impressions);
                             const displayName = campaign.name ?? `Campanha ${campaign.id}`;
@@ -578,17 +625,104 @@ function AccountKpiCard({
   );
 }
 
+function GoalGaugeCard({
+  label,
+  value,
+  progress,
+  progressLabel,
+  helper,
+  positive,
+  variant,
+}: {
+  label: string;
+  value: string;
+  progress: number | null;
+  progressLabel?: string;
+  helper?: string;
+  positive?: boolean;
+  variant: "investment" | "leads";
+}) {
+  const normalizedProgress = progress !== null ? Math.max(0, Math.min(progress, 100)) : 0;
+  const progressText = progress !== null ? `${progress.toFixed(1)}%` : "N/D";
+  const strokeColor =
+    positive === false
+      ? variant === "investment"
+        ? "#dc2626"
+        : "#2563eb"
+      : variant === "investment"
+        ? "#0f766e"
+        : "#16a34a";
+  const accentClass =
+    positive === false
+      ? variant === "investment"
+        ? "text-red-600"
+        : "text-sky-700"
+      : variant === "investment"
+        ? "text-teal-700"
+        : "text-emerald-700";
+
+  return (
+    <div className="flex min-h-[250px] flex-col rounded-2xl border border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.94))] p-4 shadow-[0_18px_40px_-34px_rgba(15,23,42,0.28)]">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+        {label}
+      </div>
+
+      <div className="relative mt-4 flex items-center justify-center">
+        <svg viewBox="0 0 200 120" className="h-32 w-full max-w-[240px]">
+          <path
+            d="M 20 100 A 80 80 0 0 1 180 100"
+            fill="none"
+            stroke="#e2e8f0"
+            strokeWidth="16"
+            strokeLinecap="round"
+            pathLength={100}
+          />
+          <path
+            d="M 20 100 A 80 80 0 0 1 180 100"
+            fill="none"
+            stroke={strokeColor}
+            strokeWidth="16"
+            strokeLinecap="round"
+            strokeDasharray={`${normalizedProgress} 100`}
+            pathLength={100}
+          />
+        </svg>
+
+        <div className="absolute bottom-4 flex flex-col items-center">
+          <span className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Atingimento</span>
+          <span className={cn("text-2xl font-semibold tracking-tight", accentClass)}>
+            {progressText}
+          </span>
+        </div>
+      </div>
+
+      <div className="mt-2 text-center text-lg font-semibold tracking-tight text-slate-950">
+        {value}
+      </div>
+      {helper ? <div className="mt-2 text-center text-xs text-slate-500">{helper}</div> : null}
+      {progressLabel ? (
+        <div className={cn("mt-auto pt-4 text-center text-xs font-medium", accentClass)}>
+          {progressLabel}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function AccountTimelineChart({
   data,
   accountKey,
+  dailyGoalLeads,
   reportMode,
 }: {
   data: Array<{
     date: string;
     label: string;
     leads: number;
+    goalLeadsPerDay?: number | null;
   }>;
   accountKey: string;
+  dailyGoalLeads: number | null;
   reportMode: boolean;
 }) {
   if (data.length === 0) {
@@ -596,6 +730,10 @@ function AccountTimelineChart({
   }
 
   const chartId = `accountLeadsFill-${accountKey.replace(/[^a-z0-9]/gi, "-")}`;
+  const chartData = data.map((point) => ({
+    ...point,
+    goalLeadsPerDay: dailyGoalLeads,
+  }));
 
   return (
     <div className="rounded-[22px] border border-slate-200/80 bg-white/94 p-4 shadow-[0_18px_42px_-38px_rgba(15,23,42,0.24)]">
@@ -614,10 +752,14 @@ function AccountTimelineChart({
             label: "Leads",
             color: "#2563eb",
           },
+          goalLeadsPerDay: {
+            label: "Meta diaria",
+            color: "#f59e0b",
+          },
         }}
         className="h-[190px] w-full"
       >
-        <AreaChart data={data} margin={{ left: 0, right: 8, top: 10, bottom: 0 }}>
+        <ComposedChart data={chartData} margin={{ left: 0, right: 8, top: 10, bottom: 0 }}>
           <defs>
             <linearGradient id={chartId} x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#2563eb" stopOpacity={0.18} />
@@ -644,7 +786,9 @@ function AccountTimelineChart({
             cursor={{ stroke: "rgba(37,99,235,0.24)", strokeDasharray: "4 6" }}
             content={({ active, payload }) => {
               if (!active || !payload?.length) return null;
-              const point = payload[0]?.payload as { label: string; leads: number } | undefined;
+              const point = payload[0]?.payload as
+                | { label: string; leads: number; goalLeadsPerDay?: number | null }
+                | undefined;
               if (!point) return null;
 
               return (
@@ -656,6 +800,14 @@ function AccountTimelineChart({
                       {formatInteger(point.leads)}
                     </span>
                   </div>
+                  {point.goalLeadsPerDay !== null && point.goalLeadsPerDay !== undefined ? (
+                    <div className="mt-2 flex items-center justify-between gap-6">
+                      <span className="text-slate-500">Meta diaria</span>
+                      <span className="font-semibold text-amber-600">
+                        {point.goalLeadsPerDay.toFixed(1)}
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
               );
             }}
@@ -684,7 +836,19 @@ function AccountTimelineChart({
             }}
             isAnimationActive={!reportMode}
           />
-        </AreaChart>
+          {dailyGoalLeads !== null ? (
+            <Line
+              type="monotone"
+              dataKey="goalLeadsPerDay"
+              stroke="#f59e0b"
+              strokeWidth={2}
+              strokeDasharray="6 6"
+              dot={false}
+              activeDot={false}
+              isAnimationActive={!reportMode}
+            />
+          ) : null}
+        </ComposedChart>
       </ChartContainer>
     </div>
   );

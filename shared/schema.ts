@@ -282,6 +282,35 @@ export const insertCampaignMetricSchema = createInsertSchema(campaignMetrics).om
 export type InsertCampaignMetric = z.infer<typeof insertCampaignMetricSchema>;
 export type CampaignMetric = typeof campaignMetrics.$inferSelect;
 
+export const dashboardGoals = pgTable(
+  "dashboard_goals",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+    accountId: integer("account_id").notNull().references(() => resources.id),
+    accountName: text("account_name").notNull(),
+    startDate: pgDate("start_date").notNull(),
+    endDate: pgDate("end_date").notNull(),
+    targetSpend: numeric("target_spend", { precision: 14, scale: 2 }).notNull(),
+    targetLeads: integer("target_leads").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    uniqueTenantDashboardGoal: uniqueIndex("uniq_tenant_dashboard_goal")
+      .on(table.tenantId, table.accountId, table.startDate, table.endDate),
+  }),
+);
+
+export const insertDashboardGoalSchema = createInsertSchema(dashboardGoals).omit({
+  id: true,
+  tenantId: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertDashboardGoal = z.infer<typeof insertDashboardGoalSchema>;
+export type DashboardGoal = typeof dashboardGoals.$inferSelect;
+
 // App Settings table - global OAuth and webhook configuration (admin only)
 export const appSettings = pgTable("app_settings", {
   id: serial("id").primaryKey(),

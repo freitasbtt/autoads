@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type { DateRange } from "react-day-picker";
 import {
-  endOfMonth,
   format as formatDate,
   parseISO,
   startOfMonth,
@@ -18,6 +17,11 @@ import {
 } from "lucide-react";
 
 import type { Campaign, Resource } from "@shared/schema";
+import {
+  apiRequest,
+  queryClient,
+} from "@/lib/queryClient";
+import { toast } from "@/hooks/use-toast";
 import type {
   ActiveFilterChip,
   CurrentUser,
@@ -95,6 +99,7 @@ export function useDashboardController({
   } | null>(null);
   const [showDebug, setShowDebug] = useState(false);
   const [printAssetsReady, setPrintAssetsReady] = useState(false);
+  const [isGoalsDialogOpen, setIsGoalsDialogOpen] = useState(false);
 
   const shareMetadataEndpoint = shareToken
     ? `/api/public/dashboard/share/metadata?token=${encodeURIComponent(shareToken)}`
@@ -653,7 +658,7 @@ export function useDashboardController({
     return [
       { label: "Últimos 7 dias", range: { from: subDays(now, 6), to: now } },
       { label: "Últimos 30 dias", range: { from: subDays(now, 29), to: now } },
-      { label: "Este mês", range: { from: startOfMonth(now), to: endOfMonth(now) } },
+      { label: "Este mês", range: { from: startOfMonth(now), to: now } },
     ];
   }, []);
 
@@ -748,6 +753,48 @@ export function useDashboardController({
     });
   };
 
+  const goalsButtonLabel = useMemo(() => {
+    if (accounts.length === 0) return "Cadastrar metas";
+    const goalsCount = accounts.filter((account) => account.goal).length;
+    if (goalsCount === 0) return "Cadastrar metas";
+    if (goalsCount === accounts.length) return "Editar metas";
+    return "Completar metas";
+  }, [accounts]);
+
+  const saveGoalsMutation = useMutation({
+    mutationFn: async (
+      goals: Array<{
+        accountId: number;
+        accountName: string;
+        targetSpend: number;
+        targetLeads: number;
+      }>,
+    ) => {
+      const response = await apiRequest("POST", "/api/dashboard/goals", {
+        startDate: effectiveStartDateStr,
+        endDate: effectiveEndDateStr,
+        goals,
+      });
+      return response.json();
+    },
+    onSuccess: async () => {
+      setIsGoalsDialogOpen(false);
+      await metricsQuery.refetch();
+      await queryClient.invalidateQueries({ queryKey: [metricsEndpoint] });
+      toast({
+        title: "Metas salvas",
+        description: "As metas do periodo foram atualizadas com sucesso.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Falha ao salvar metas",
+        description: error instanceof Error ? error.message : "Nao foi possivel salvar as metas.",
+      });
+    },
+  });
+
   return {
     isSharedMode,
     startDateStr,
@@ -775,6 +822,8 @@ export function useDashboardController({
     setCreativeDialogInfo,
     showDebug,
     setShowDebug,
+    isGoalsDialogOpen,
+    setIsGoalsDialogOpen,
     accountOptions,
     campaignOptions,
     objectiveOptions,
@@ -804,6 +853,10 @@ export function useDashboardController({
     spendByAccountData,
     funnelSteps,
     quickRanges,
+    isGoalsLoading: hasSelectedAccounts && metricsQuery.isLoading && !metricsQuery.data,
+    goalsButtonLabel,
+    isSavingGoals: saveGoalsMutation.isPending,
+    saveGoals: saveGoalsMutation.mutateAsync,
     applyQuickRange,
     applyFilters,
     sameRange,

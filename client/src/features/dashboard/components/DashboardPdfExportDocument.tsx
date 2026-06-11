@@ -6,6 +6,7 @@ import type {
   DashboardAccountMetrics,
   DashboardFunnelStep,
   DashboardKpi,
+  DashboardLeadsByAccountDatum,
   DashboardMetricsResponse,
   DashboardSpendByAccountDatum,
   DashboardTimelinePoint,
@@ -36,12 +37,7 @@ type DashboardPdfExportDocumentProps = {
   metricsData?: DashboardMetricsResponse;
   timelineData: DashboardTimelinePoint[];
   funnelSteps: DashboardFunnelStep[];
-  leadsByAccountData: Array<{
-    name: string;
-    shortName: string;
-    leads: number;
-    spend: number;
-  }>;
+  leadsByAccountData: DashboardLeadsByAccountDatum[];
   spendByAccountData: DashboardSpendByAccountDatum[];
   topCreativesByAccount: DashboardTopCreativesAccountGroup[];
   isLoading: boolean;
@@ -519,12 +515,7 @@ function FunnelCard({
 function RankingCard({
   leadsByAccountData,
 }: {
-  leadsByAccountData: Array<{
-    name: string;
-    shortName: string;
-    leads: number;
-    spend: number;
-  }>;
+  leadsByAccountData: DashboardLeadsByAccountDatum[];
 }) {
   const sorted = [...leadsByAccountData].sort((a, b) => b.leads - a.leads);
   const maxLeads = Math.max(...sorted.map((item) => item.leads), 1);
