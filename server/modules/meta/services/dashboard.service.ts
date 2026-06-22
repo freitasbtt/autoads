@@ -8,11 +8,12 @@ import type {
   DashboardTopCreativesAccountGroup,
   GraphCampaign,
   GraphAdsetInsightRow,
+  GraphInsightRow,
   MetaDashboardResult,
   MetricTotals,
   TimeRange,
 } from "../types";
-import { addDays, format, parseISO } from "date-fns";
+import { addDays, differenceInCalendarDays, format, parseISO } from "date-fns";
 import {
   aggregateInsightRowsByAdset,
   buildAdsetBundle,
@@ -34,6 +35,25 @@ import { mapWithConcurrency } from "../utils/concurrency";
 
 const ACCOUNT_CONCURRENCY_LIMIT = 2;
 const CREATIVE_CAMPAIGN_CONCURRENCY_LIMIT = 3;
+const LONG_RANGE_ACCOUNT_CONCURRENCY_LIMIT = 1;
+const LONG_RANGE_THRESHOLD_DAYS = 90;
+
+function resolveAccountConcurrency(startDate?: string, endDate?: string): number {
+  if (!startDate || !endDate) {
+    return ACCOUNT_CONCURRENCY_LIMIT;
+  }
+
+  const start = parseISO(startDate);
+  const end = parseISO(endDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+    return ACCOUNT_CONCURRENCY_LIMIT;
+  }
+
+  const totalDays = Math.max(differenceInCalendarDays(end, start) + 1, 1);
+  return totalDays > LONG_RANGE_THRESHOLD_DAYS
+    ? LONG_RANGE_ACCOUNT_CONCURRENCY_LIMIT
+    : ACCOUNT_CONCURRENCY_LIMIT;
+}
 
 function campaignMatchesFilters(
   campaign: GraphCampaign,
@@ -83,6 +103,45 @@ function campaignMatchesFilters(
 }
 
 function summarizeLeadMetricsFromRow(row: GraphAdsetInsightRow): {
+  leads: number;
+  messagingConversationsStarted: number;
+} {
+  let leads = 0;
+  let messagingConversationsStarted = 0;
+  const leadQuantities = new Map<string, number>();
+
+  if (!Array.isArray(row.actions)) {
+    return { leads, messagingConversationsStarted };
+  }
+
+  for (const action of row.actions) {
+    const type = normalizeActionType(action.action_type);
+    if (!type) continue;
+
+    const value = extractEntryTotal(action);
+    if (value <= 0) continue;
+
+    if (MESSAGING_CONVERSATION_STARTED_ACTION_TYPES.has(type)) {
+      messagingConversationsStarted += value;
+    }
+
+    if (LEAD_RESULT_ACTION_TYPES.includes(type)) {
+      leadQuantities.set(type, value);
+    }
+  }
+
+  for (const type of LEAD_RESULT_ACTION_TYPES) {
+    const quantity = leadQuantities.get(type) ?? 0;
+    if (quantity > 0) {
+      leads = quantity;
+      break;
+    }
+  }
+
+  return { leads, messagingConversationsStarted };
+}
+
+function summarizeLeadMetricsFromCampaignRow(row: GraphInsightRow): {
   leads: number;
   messagingConversationsStarted: number;
 } {
@@ -208,6 +267,7 @@ export async function fetchMetaDashboardMetrics(
     previousStartDate && previousEndDate
       ? { since: previousStartDate, until: previousEndDate }
       : null;
+  const accountConcurrencyLimit = resolveAccountConcurrency(startDate, endDate);
 
   const accountsResults: DashboardAccountMetrics[] = [];
   const totals = createEmptyTotals();
@@ -218,16 +278,16 @@ export async function fetchMetaDashboardMetrics(
   const campaignCache = new Map<number, GraphCampaign[]>();
   const accountSnapshots = await mapWithConcurrency(
     accounts,
-    ACCOUNT_CONCURRENCY_LIMIT,
+    accountConcurrencyLimit,
     async (account) => {
-      const [campaigns, adsetRows, dailyRows] = await Promise.all([
+      const [campaigns, adsetRows, dailyCampaignRows] = await Promise.all([
         client.fetchCampaigns(account.value),
         client.fetchAdsetInsights(account.value, timeRange),
         timeRange
-          ? client.fetchAdsetInsights(account.value, timeRange, {
+          ? client.fetchCampaignInsights(account.value, timeRange, {
               timeIncrement: 1,
             })
-          : Promise.resolve<GraphAdsetInsightRow[]>([]),
+          : Promise.resolve<GraphInsightRow[]>([]),
       ]);
 
       const groupedAdsets = aggregateInsightRowsByAdset(adsetRows);
@@ -319,12 +379,12 @@ export async function fetchMetaDashboardMetrics(
         Omit<DailyTimelinePoint, "date" | "costPerLead">
       >();
 
-      if (dailyRows.length > 0) {
+      if (dailyCampaignRows.length > 0) {
         const campaignById = new Map(
           campaigns.map((campaign) => [campaign.id, campaign] as const),
         );
 
-        for (const row of dailyRows) {
+        for (const row of dailyCampaignRows) {
           const campaignId = row.campaign_id;
           const dateKey = row.date_start;
           if (!campaignId || !dateKey) continue;
@@ -349,7 +409,7 @@ export async function fetchMetaDashboardMetrics(
             leads: 0,
             messagingConversationsStarted: 0,
           };
-          const summary = summarizeLeadMetricsFromRow(row);
+          const summary = summarizeLeadMetricsFromCampaignRow(row);
 
           bucket.spend += parseNumber(row.spend);
           bucket.impressions += parseNumber(row.impressions);
@@ -395,7 +455,7 @@ export async function fetchMetaDashboardMetrics(
   if (previousRange) {
     const previousSnapshots = await mapWithConcurrency(
       accounts,
-      ACCOUNT_CONCURRENCY_LIMIT,
+      accountConcurrencyLimit,
       async (account) => {
         const campaigns = campaignCache.get(account.id) ?? [];
         if (campaigns.length === 0) {

@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import { addDays, differenceInCalendarDays, format, isValid, parseISO } from "date-fns";
 import {
   DEFAULT_ATTRIBUTION_WINDOWS,
   GRAPH_BASE_URL,
@@ -32,12 +33,30 @@ import { getObjectiveResultRule } from "./utils/aggregation";
 
 export class MetaApiError extends Error {
   status: number;
+  graphCode?: number;
+  graphSubcode?: number;
 
-  constructor(message: string, status = 500) {
+  constructor(
+    message: string,
+    status = 500,
+    options?: {
+      graphCode?: number;
+      graphSubcode?: number;
+    },
+  ) {
     super(message);
     this.status = status;
+    this.graphCode = options?.graphCode;
+    this.graphSubcode = options?.graphSubcode;
   }
 }
+
+const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_RETRY_ATTEMPTS = 4;
+const DAILY_INSIGHTS_CHUNK_DAYS = 30;
+const DEFAULT_INSIGHTS_CHUNK_DAYS = 90;
+const RETRYABLE_HTTP_STATUS = new Set([429, 500, 502, 503, 504]);
+const RETRYABLE_GRAPH_CODES = new Set([1, 2, 4, 17, 32, 341, 613]);
 
 function pickPreferredActionQuantity(
   actionTotals: Record<string, number>,
@@ -63,6 +82,84 @@ export class MetaGraphClient implements MetaGraphApiClient {
       .digest("hex");
   }
 
+  private normalizeHttpStatus(status: number): number {
+    if (status >= 400 && status < 600) {
+      return status;
+    }
+
+    return 500;
+  }
+
+  private shouldRetry(status: number, graphCode?: number): boolean {
+    return RETRYABLE_HTTP_STATUS.has(status) || (graphCode !== undefined && RETRYABLE_GRAPH_CODES.has(graphCode));
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private buildRetryDelayMs(attempt: number): number {
+    const baseDelay = 500 * 2 ** attempt;
+    const jitter = Math.floor(Math.random() * 250);
+    return Math.min(baseDelay + jitter, 5_000);
+  }
+
+  private buildTimeRanges(timeRange: TimeRange, maxDaysPerRequest: number): TimeRange[] {
+    if (!timeRange?.since || !timeRange.until) {
+      return [null];
+    }
+
+    const start = parseISO(timeRange.since);
+    const end = parseISO(timeRange.until);
+    if (!isValid(start) || !isValid(end) || start > end) {
+      return [timeRange];
+    }
+
+    const totalDays = differenceInCalendarDays(end, start) + 1;
+    if (totalDays <= maxDaysPerRequest) {
+      return [timeRange];
+    }
+
+    const ranges: NonNullable<TimeRange>[] = [];
+    for (let cursor = start; cursor <= end; cursor = addDays(cursor, maxDaysPerRequest)) {
+      const chunkEnd = addDays(cursor, maxDaysPerRequest - 1);
+      ranges.push({
+        since: format(cursor, "yyyy-MM-dd"),
+        until: format(chunkEnd < end ? chunkEnd : end, "yyyy-MM-dd"),
+      });
+    }
+
+    return ranges;
+  }
+
+  private async fetchInsightsEdge<T>(
+    path: string,
+    baseParams: Record<string, string>,
+    timeRange: TimeRange,
+    maxDaysPerRequest: number,
+  ): Promise<T[]> {
+    const rows: T[] = [];
+    const ranges = this.buildTimeRanges(timeRange, maxDaysPerRequest);
+
+    for (const range of ranges) {
+      const params: Record<string, string> = { ...baseParams };
+
+      if (range?.since && range.until) {
+        params.time_range = JSON.stringify({
+          since: range.since,
+          until: range.until,
+        });
+      } else {
+        params.date_preset = "maximum";
+      }
+
+      const batch = await this.fetchEdge<T>(path, params);
+      rows.push(...batch);
+    }
+
+    return rows;
+  }
+
   private buildUrl(path: string, params?: Record<string, string>): URL {
     const cleanPath = path.startsWith("/") ? path : `/${path}`;
     const url = new URL(`${GRAPH_BASE_URL}${cleanPath}`);
@@ -82,26 +179,55 @@ export class MetaGraphClient implements MetaGraphApiClient {
   }
 
   private async request<T>(url: URL): Promise<T> {
-    const response = await fetch(url.toString());
-    const json = (await response.json()) as GraphPagingResponse<T>;
+    for (let attempt = 0; attempt < MAX_RETRY_ATTEMPTS; attempt += 1) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-    if (!response.ok || (json as GraphPagingResponse<T>).error) {
-      const errorPayload = json as GraphPagingResponse<T>;
-      const message =
-        errorPayload.error?.message ??
-        `Meta API request failed with status ${response.status}`;
+      try {
+        const response = await fetch(url.toString(), {
+          signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
 
-      let status = errorPayload.error?.code ?? response.status ?? 500;
+        const text = await response.text();
+        const json = (text.length > 0 ? JSON.parse(text) : {}) as GraphPagingResponse<T>;
+        const graphError = json.error;
 
-      if (status === 200) status = 403;
-      if (status < 400 || status >= 600) {
-        status = 500;
+        if (!response.ok || graphError) {
+          const status = this.normalizeHttpStatus(response.status);
+          const message = graphError?.message ?? `Meta API request failed with status ${response.status}`;
+
+          if (attempt < MAX_RETRY_ATTEMPTS - 1 && this.shouldRetry(status, graphError?.code)) {
+            await this.sleep(this.buildRetryDelayMs(attempt));
+            continue;
+          }
+
+          throw new MetaApiError(message, status, {
+            graphCode: graphError?.code,
+            graphSubcode: graphError?.error_subcode,
+          });
+        }
+
+        return json as unknown as T;
+      } catch (error) {
+        clearTimeout(timeoutId);
+
+        if (error instanceof MetaApiError) {
+          throw error;
+        }
+
+        if (attempt < MAX_RETRY_ATTEMPTS - 1) {
+          await this.sleep(this.buildRetryDelayMs(attempt));
+          continue;
+        }
+
+        const message =
+          error instanceof Error ? error.message : "Unknown error while calling Meta API";
+        throw new MetaApiError(message, 502);
       }
-
-      throw new MetaApiError(message, status);
     }
 
-    return json as unknown as T;
+    throw new MetaApiError("Meta API request failed after retries.", 502);
   }
 
   private ensureNextUrl(next?: string): URL | null {
@@ -162,25 +288,28 @@ export class MetaGraphClient implements MetaGraphApiClient {
   async fetchCampaignInsights(
     accountId: string,
     timeRange: TimeRange,
+    options?: {
+      timeIncrement?: number;
+    },
   ): Promise<GraphInsightRow[]> {
     const params: Record<string, string> = {
       level: "campaign",
       fields:
-        "campaign_id,campaign_name,spend,impressions,clicks,actions,cost_per_action_type",
+        "campaign_id,campaign_name,date_start,date_stop,spend,impressions,reach,clicks,actions,cost_per_action_type",
       limit: "200",
       action_attribution_windows: JSON.stringify(DEFAULT_ATTRIBUTION_WINDOWS),
     };
 
-    if (timeRange && timeRange.since && timeRange.until) {
-      params.time_range = JSON.stringify({
-        since: timeRange.since,
-        until: timeRange.until,
-      });
-    } else {
-      params.date_preset = "maximum";
+    if (typeof options?.timeIncrement === "number" && options.timeIncrement > 0) {
+      params.time_increment = String(options.timeIncrement);
     }
 
-    return this.fetchEdge<GraphInsightRow>(`/${accountId}/insights`, params);
+    return this.fetchInsightsEdge<GraphInsightRow>(
+      `/${accountId}/insights`,
+      params,
+      timeRange,
+      options?.timeIncrement === 1 ? DAILY_INSIGHTS_CHUNK_DAYS : DEFAULT_INSIGHTS_CHUNK_DAYS,
+    );
   }
 
   async fetchAdsetInsights(
@@ -202,16 +331,12 @@ export class MetaGraphClient implements MetaGraphApiClient {
       params.time_increment = String(options.timeIncrement);
     }
 
-    if (timeRange && timeRange.since && timeRange.until) {
-      params.time_range = JSON.stringify({
-        since: timeRange.since,
-        until: timeRange.until,
-      });
-    } else {
-      params.date_preset = "maximum";
-    }
-
-    return this.fetchEdge<GraphAdsetInsightRow>(`/${accountId}/insights`, params);
+    return this.fetchInsightsEdge<GraphAdsetInsightRow>(
+      `/${accountId}/insights`,
+      params,
+      timeRange,
+      options?.timeIncrement === 1 ? DAILY_INSIGHTS_CHUNK_DAYS : DEFAULT_INSIGHTS_CHUNK_DAYS,
+    );
   }
 
   private async fetchAdLevelInsightsForCampaign(

@@ -261,6 +261,65 @@ export function useDashboardController({
     !topCreativesQuery.isLoading &&
     !topCreativesQuery.isFetching &&
     printAssetsReady;
+  const loadingSteps = useMemo(() => {
+    const steps = [
+      {
+        label: "Metricas",
+        enabled: hasSelectedAccounts,
+        complete:
+          hasSelectedAccounts &&
+          !metricsQuery.isLoading &&
+          !metricsQuery.isFetching &&
+          !metricsQuery.isRefetching,
+      },
+      {
+        label: "Criativos",
+        enabled: hasSelectedAccounts,
+        complete:
+          hasSelectedAccounts &&
+          !topCreativesQuery.isLoading &&
+          !topCreativesQuery.isFetching &&
+          !topCreativesQuery.isRefetching,
+      },
+    ];
+
+    if (isSharedMode) {
+      steps.unshift({
+        label: "Contexto compartilhado",
+        enabled: true,
+        complete: !isShareMetadataLoading,
+      });
+    }
+
+    return steps;
+  }, [
+    hasSelectedAccounts,
+    isShareMetadataLoading,
+    isSharedMode,
+    metricsQuery.isFetching,
+    metricsQuery.isLoading,
+    metricsQuery.isRefetching,
+    topCreativesQuery.isFetching,
+    topCreativesQuery.isLoading,
+    topCreativesQuery.isRefetching,
+  ]);
+  const loadingProgress = useMemo(() => {
+    const activeSteps = loadingSteps.filter((step) => step.enabled);
+    if (activeSteps.length === 0) {
+      return 0;
+    }
+
+    const completedSteps = activeSteps.filter((step) => step.complete).length;
+    return Math.round((completedSteps / activeSteps.length) * 100);
+  }, [loadingSteps]);
+  const loadingStatusLabel = useMemo(() => {
+    const pendingStep = loadingSteps.find((step) => step.enabled && !step.complete);
+    if (!pendingStep) {
+      return "Concluindo carregamento";
+    }
+
+    return `Carregando ${pendingStep.label.toLocaleLowerCase("pt-BR")}`;
+  }, [loadingSteps]);
 
   const campaignIndex = useMemo(() => {
     const map = new Map<string, DashboardCampaignIndexEntry>();
@@ -845,6 +904,8 @@ export function useDashboardController({
     isTopCreativesError: topCreativesQuery.isError,
     topCreativesError: topCreativesQuery.error ?? null,
     refetchTopCreatives: topCreativesQuery.refetch,
+    loadingProgress,
+    loadingStatusLabel,
     isPrintReady,
     campaignIndex,
     kpis,

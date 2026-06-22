@@ -37,8 +37,11 @@ export type GraphActionEntry = {
 export type GraphInsightRow = {
   campaign_id: string;
   campaign_name?: string;
+  date_start?: string;
+  date_stop?: string;
   spend?: string;
   impressions?: string;
+  reach?: string;
   clicks?: string;
   actions?: GraphActionEntry[];
   cost_per_action_type?: GraphActionEntry[];
@@ -376,6 +379,13 @@ export type CampaignActionAggregation = Record<
 
 export interface MetaGraphApiClient {
   fetchCampaigns(accountId: string): Promise<GraphCampaign[]>;
+  fetchCampaignInsights(
+    accountId: string,
+    timeRange: TimeRange,
+    options?: {
+      timeIncrement?: number;
+    },
+  ): Promise<GraphInsightRow[]>;
   fetchAdsetInsights(
     accountId: string,
     timeRange: TimeRange,
@@ -383,6 +393,12 @@ export interface MetaGraphApiClient {
       timeIncrement?: number;
     },
   ): Promise<GraphAdsetInsightRow[]>;
+  fetchCampaignAdReports(
+    accountId: string,
+    campaignId: string,
+    campaignObjective: string | null | undefined,
+    timeRange: TimeRange,
+  ): Promise<CampaignAdReport[]>;
 }
 
 export type DashboardBuilderOptions = {

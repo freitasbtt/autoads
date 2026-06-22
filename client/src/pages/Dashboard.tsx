@@ -4,6 +4,7 @@ import { Bug, Loader2 } from "lucide-react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { CampaignCreativesDialog } from "@/components/CampaignCreativesDialog";
 import { DashboardCampaignsView } from "@/features/dashboard/components/DashboardCampaignsView";
 import { DashboardFiltersCard } from "@/features/dashboard/components/DashboardFiltersCard";
@@ -63,6 +64,8 @@ export default function Dashboard(props: DashboardProps = {}) {
     isTopCreativesError,
     topCreativesError,
     refetchTopCreatives,
+    loadingProgress,
+    loadingStatusLabel,
     campaignIndex,
     kpis,
     timelineData,
@@ -306,6 +309,17 @@ export default function Dashboard(props: DashboardProps = {}) {
             </div>
             <div className="mt-4 text-base font-semibold text-slate-950">
               Atualizando dashboard
+            </div>
+            <div className="mt-5 space-y-2 text-left">
+              <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                <span>{loadingStatusLabel}</span>
+                <span>{loadingProgress}%</span>
+              </div>
+              <Progress
+                value={loadingProgress}
+                className="h-2.5 rounded-full bg-slate-200 [&>div]:bg-sky-600"
+                aria-label={loadingStatusLabel}
+              />
             </div>
             <p className="mt-2 text-sm leading-6 text-slate-600">
               Aguarde o carregamento completo de metricas, graficos e criativos.
