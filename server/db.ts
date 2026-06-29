@@ -382,3 +382,271 @@ export async function ensureGcsStorageSchema(): Promise<void> {
     client.release();
   }
 }
+
+export async function ensureDashboardSyncSchema(): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'dashboard_sync_status') THEN
+          CREATE TYPE dashboard_sync_status AS ENUM ('never_synced', 'active', 'paused', 'syncing', 'error');
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'meta_sync_job_type') THEN
+          CREATE TYPE meta_sync_job_type AS ENUM (
+            'sync_entities',
+            'sync_today_insights',
+            'sync_recent_insights',
+            'sync_historical_insights',
+            'sync_manual'
+          );
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'meta_sync_job_status') THEN
+          CREATE TYPE meta_sync_job_status AS ENUM ('pending', 'running', 'completed', 'failed', 'cancelled');
+        END IF;
+      END $$;
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS dashboard_sync_accounts (
+        id serial PRIMARY KEY,
+        tenant_id integer NOT NULL REFERENCES tenants(id),
+        ad_account_id text NOT NULL,
+        account_name text NOT NULL,
+        sync_enabled boolean NOT NULL DEFAULT false,
+        sync_status dashboard_sync_status NOT NULL DEFAULT 'never_synced',
+        sync_frequency_minutes integer NOT NULL DEFAULT 30,
+        first_enabled_at timestamp,
+        last_enabled_at timestamp,
+        disabled_at timestamp,
+        last_manual_sync_at timestamp,
+        last_auto_sync_at timestamp,
+        last_success_sync_at timestamp,
+        last_failed_sync_at timestamp,
+        last_error_message text,
+        created_by integer REFERENCES users(id),
+        updated_by integer REFERENCES users(id),
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS meta_campaigns (
+        id serial PRIMARY KEY,
+        tenant_id integer NOT NULL REFERENCES tenants(id),
+        ad_account_id text NOT NULL,
+        campaign_id text NOT NULL,
+        name text,
+        objective text,
+        status text,
+        buying_type text,
+        configured_status text,
+        effective_status text,
+        daily_budget text,
+        lifetime_budget text,
+        updated_time text,
+        special_ad_categories jsonb NOT NULL DEFAULT '[]'::jsonb,
+        raw_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+        synced_at timestamp NOT NULL DEFAULT now(),
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS meta_adsets (
+        id serial PRIMARY KEY,
+        tenant_id integer NOT NULL REFERENCES tenants(id),
+        ad_account_id text NOT NULL,
+        campaign_id text NOT NULL,
+        adset_id text NOT NULL,
+        name text,
+        status text,
+        configured_status text,
+        effective_status text,
+        optimization_goal text,
+        billing_event text,
+        bid_strategy text,
+        updated_time text,
+        promoted_object jsonb,
+        raw_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+        synced_at timestamp NOT NULL DEFAULT now(),
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS meta_ads (
+        id serial PRIMARY KEY,
+        tenant_id integer NOT NULL REFERENCES tenants(id),
+        ad_account_id text NOT NULL,
+        campaign_id text,
+        adset_id text,
+        ad_id text NOT NULL,
+        creative_id text,
+        name text,
+        status text,
+        effective_status text,
+        raw_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+        synced_at timestamp NOT NULL DEFAULT now(),
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS meta_creatives (
+        id serial PRIMARY KEY,
+        tenant_id integer NOT NULL REFERENCES tenants(id),
+        ad_account_id text NOT NULL,
+        creative_id text NOT NULL,
+        name text,
+        thumbnail_url text,
+        image_url text,
+        storage_thumbnail_bucket text,
+        storage_thumbnail_path text,
+        storage_thumbnail_content_type text,
+        storage_thumbnail_source_url text,
+        asset_status text NOT NULL DEFAULT 'pending',
+        asset_synced_at timestamp,
+        asset_error_message text,
+        last_seen_at timestamp,
+        raw_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+        synced_at timestamp NOT NULL DEFAULT now(),
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+    await client.query(`
+      ALTER TABLE meta_creatives
+        ADD COLUMN IF NOT EXISTS storage_thumbnail_bucket text,
+        ADD COLUMN IF NOT EXISTS storage_thumbnail_path text,
+        ADD COLUMN IF NOT EXISTS storage_thumbnail_content_type text,
+        ADD COLUMN IF NOT EXISTS storage_thumbnail_source_url text,
+        ADD COLUMN IF NOT EXISTS asset_status text NOT NULL DEFAULT 'pending',
+        ADD COLUMN IF NOT EXISTS asset_synced_at timestamp,
+        ADD COLUMN IF NOT EXISTS asset_error_message text,
+        ADD COLUMN IF NOT EXISTS last_seen_at timestamp
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS meta_ad_insights_daily (
+        id serial PRIMARY KEY,
+        tenant_id integer NOT NULL REFERENCES tenants(id),
+        ad_account_id text NOT NULL,
+        campaign_id text NOT NULL,
+        adset_id text NOT NULL,
+        ad_id text NOT NULL,
+        date_start date NOT NULL,
+        date_stop date NOT NULL,
+        campaign_name text,
+        adset_name text,
+        ad_name text,
+        spend numeric(14, 4) NOT NULL DEFAULT 0,
+        impressions integer NOT NULL DEFAULT 0,
+        reach integer NOT NULL DEFAULT 0,
+        frequency numeric(14, 6),
+        clicks integer NOT NULL DEFAULT 0,
+        inline_link_clicks integer NOT NULL DEFAULT 0,
+        link_clicks integer NOT NULL DEFAULT 0,
+        ctr numeric(14, 6),
+        cpc numeric(14, 6),
+        cpm numeric(14, 6),
+        cpp numeric(14, 6),
+        leads integer NOT NULL DEFAULT 0,
+        cost_per_lead numeric(14, 6),
+        video_plays integer NOT NULL DEFAULT 0,
+        video_p25 integer NOT NULL DEFAULT 0,
+        video_p50 integer NOT NULL DEFAULT 0,
+        video_p75 integer NOT NULL DEFAULT 0,
+        video_p95 integer NOT NULL DEFAULT 0,
+        video_p100 integer NOT NULL DEFAULT 0,
+        thruplays integer NOT NULL DEFAULT 0,
+        actions_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+        cost_per_action_type_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+        raw_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+        synced_at timestamp NOT NULL DEFAULT now(),
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS meta_sync_jobs (
+        id serial PRIMARY KEY,
+        tenant_id integer NOT NULL REFERENCES tenants(id),
+        ad_account_id text NOT NULL,
+        job_type meta_sync_job_type NOT NULL,
+        job_source text NOT NULL DEFAULT 'manual',
+        date_start date,
+        date_end date,
+        status meta_sync_job_status NOT NULL DEFAULT 'pending',
+        priority integer NOT NULL DEFAULT 100,
+        attempts integer NOT NULL DEFAULT 0,
+        max_attempts integer NOT NULL DEFAULT 3,
+        started_at timestamp,
+        finished_at timestamp,
+        error_message text,
+        created_by integer REFERENCES users(id),
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS dashboard_share_links (
+        id serial PRIMARY KEY,
+        tenant_id integer NOT NULL REFERENCES tenants(id),
+        public_id text NOT NULL UNIQUE,
+        password_hash text NOT NULL,
+        start_date date NOT NULL,
+        end_date date NOT NULL,
+        account_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
+        campaign_id text,
+        objective text,
+        status text,
+        expires_at timestamp NOT NULL,
+        created_by integer REFERENCES users(id),
+        created_at timestamp NOT NULL DEFAULT now(),
+        updated_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_dashboard_sync_accounts_tenant_account
+      ON dashboard_sync_accounts (tenant_id, ad_account_id)
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_meta_campaigns_tenant_campaign
+      ON meta_campaigns (tenant_id, ad_account_id, campaign_id)
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_meta_adsets_tenant_adset
+      ON meta_adsets (tenant_id, ad_account_id, adset_id)
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_meta_ads_tenant_ad
+      ON meta_ads (tenant_id, ad_account_id, ad_id)
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_meta_creatives_tenant_creative
+      ON meta_creatives (tenant_id, ad_account_id, creative_id)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS idx_meta_creatives_tenant_asset_status
+      ON meta_creatives (tenant_id, asset_status)
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_meta_ad_insights_daily_tenant_ad_date
+      ON meta_ad_insights_daily (tenant_id, ad_account_id, ad_id, date_start, date_stop)
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS uniq_dashboard_share_links_public_id
+      ON dashboard_share_links (public_id)
+    `);
+  } finally {
+    client.release();
+  }
+}

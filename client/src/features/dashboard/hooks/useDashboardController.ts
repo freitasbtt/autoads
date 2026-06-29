@@ -34,6 +34,7 @@ import type {
   DashboardProps,
   DashboardQuickRange,
   DashboardShareMetadataResponse,
+  DashboardSyncAccountsResponse,
   DashboardSpendByAccountDatum,
   DashboardTimelinePoint,
   DashboardTopCreativesResponse,
@@ -100,6 +101,7 @@ export function useDashboardController({
   const [showDebug, setShowDebug] = useState(false);
   const [printAssetsReady, setPrintAssetsReady] = useState(false);
   const [isGoalsDialogOpen, setIsGoalsDialogOpen] = useState(false);
+  const [didApplyShareRange, setDidApplyShareRange] = useState(false);
 
   const shareMetadataEndpoint = shareToken
     ? `/api/public/dashboard/share/metadata?token=${encodeURIComponent(shareToken)}`
@@ -121,12 +123,19 @@ export function useDashboardController({
       enabled: isSharedMode && !!shareMetadataEndpoint,
     });
 
-  const effectiveStartDateStr = isSharedMode
-    ? shareMetadata?.dateRange.start ?? startDateStr
-    : startDateStr;
-  const effectiveEndDateStr = isSharedMode
-    ? shareMetadata?.dateRange.end ?? endDateStr
-    : endDateStr;
+  useEffect(() => {
+    if (!isSharedMode || !shareMetadata || didApplyShareRange) return;
+    const range = normalizeRange({
+      from: parseISO(shareMetadata.dateRange.start),
+      to: parseISO(shareMetadata.dateRange.end),
+    });
+    setRawRange(range);
+    setAppliedRange(range);
+    setDidApplyShareRange(true);
+  }, [didApplyShareRange, isSharedMode, shareMetadata]);
+
+  const effectiveStartDateStr = startDateStr;
+  const effectiveEndDateStr = endDateStr;
   const periodLabel = isSharedMode
     ? shareMetadata
       ? labelFromRange({
@@ -155,7 +164,15 @@ export function useDashboardController({
     queryKey: ["/api/campaigns"],
     enabled: !isSharedMode,
   });
-
+  const syncAccountsQuery = useQuery<DashboardSyncAccountsResponse, Error>({
+    queryKey: ["/api/dashboard/sync-accounts"],
+    enabled: !isSharedMode,
+    refetchOnWindowFocus: false,
+    refetchInterval: (query) =>
+      query.state.data?.accounts.some((account) => account.syncStatus === "syncing")
+        ? 5000
+        : false,
+  });
   const accountResources = useMemo(
     () => resources.filter((resource) => resource.type === "account"),
     [resources],
@@ -171,14 +188,44 @@ export function useDashboardController({
 
   const accountOptions: FilterOption[] = useMemo(
     () =>
-      accountResources
+      (syncAccountsQuery.data?.accounts ?? [])
+        .filter(
+          (account) =>
+            account.syncEnabled &&
+            account.id !== null &&
+            Number.isFinite(account.resourceId),
+        )
         .map((account) => ({
-          value: String(account.id),
-          label: account.name,
-          description: account.value,
+          value: String(account.resourceId),
+          label: account.accountName,
+          description: account.adAccountId,
         }))
         .sort((a, b) => a.label.localeCompare(b.label, "pt-BR")),
-    [accountResources],
+    [syncAccountsQuery.data?.accounts],
+  );
+
+  const syncCandidateOptions: FilterOption[] = useMemo(() => {
+    const syncedAccountIds = new Set(
+      (syncAccountsQuery.data?.accounts ?? []).map((account) => account.adAccountId),
+    );
+
+    return accountResources
+      .filter((account) => !syncedAccountIds.has(account.value))
+      .map((account) => ({
+        value: account.value,
+        label: account.name,
+        description: account.value,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
+  }, [accountResources, syncAccountsQuery.data?.accounts]);
+  const syncingAccountResourceIds = useMemo(
+    () =>
+      new Set(
+        (syncAccountsQuery.data?.accounts ?? [])
+          .filter((account) => account.syncEnabled && account.syncStatus === "syncing")
+          .map((account) => String(account.resourceId)),
+      ),
+    [syncAccountsQuery.data?.accounts],
   );
 
   const sharedAccountIds = useMemo(
@@ -203,6 +250,7 @@ export function useDashboardController({
   const hasSelectedAccounts = isSharedMode
     ? sharedAccountIds.length > 0
     : appliedAccountIds.length > 0;
+  const canLoadDashboardData = hasSelectedAccounts && (!isSharedMode || didApplyShareRange);
 
   const params = new URLSearchParams({
     startDate: effectiveStartDateStr,
@@ -218,24 +266,27 @@ export function useDashboardController({
 
   const metricsEndpoint =
     isSharedMode && shareToken
-      ? `/api/public/dashboard/metrics?token=${encodeURIComponent(shareToken)}`
+      ? `/api/public/dashboard/metrics?token=${encodeURIComponent(shareToken)}&${params.toString()}`
       : `/api/dashboard/metrics?${params.toString()}`;
 
   const metricsQuery = useQuery<DashboardMetricsResponse, Error>({
     queryKey: [metricsEndpoint],
     queryFn: async () => {
       const res = await fetch(metricsEndpoint);
-      if (!res.ok) throw new Error("Erro ao carregar métricas.");
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message ?? "Erro ao carregar metricas.");
+      }
       return res.json();
     },
-    enabled: hasSelectedAccounts,
+    enabled: canLoadDashboardData,
     placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: false,
   });
 
   const topCreativesEndpoint =
     isSharedMode && shareToken
-      ? `/api/public/dashboard/top-creatives?token=${encodeURIComponent(shareToken)}`
+      ? `/api/public/dashboard/top-creatives?token=${encodeURIComponent(shareToken)}&${params.toString()}`
       : `/api/dashboard/top-creatives?${params.toString()}`;
 
   const topCreativesQuery = useQuery<DashboardTopCreativesResponse, Error>({
@@ -243,11 +294,12 @@ export function useDashboardController({
     queryFn: async () => {
       const res = await fetch(topCreativesEndpoint);
       if (!res.ok) {
-        throw new Error("Erro ao carregar top criativos.");
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message ?? "Erro ao carregar top criativos.");
       }
       return res.json();
     },
-    enabled: hasSelectedAccounts,
+    enabled: canLoadDashboardData,
     placeholderData: (previousData) => previousData,
     refetchOnWindowFocus: false,
   });
@@ -265,18 +317,18 @@ export function useDashboardController({
     const steps = [
       {
         label: "Metricas",
-        enabled: hasSelectedAccounts,
+        enabled: canLoadDashboardData,
         complete:
-          hasSelectedAccounts &&
+          canLoadDashboardData &&
           !metricsQuery.isLoading &&
           !metricsQuery.isFetching &&
           !metricsQuery.isRefetching,
       },
       {
         label: "Criativos",
-        enabled: hasSelectedAccounts,
+        enabled: canLoadDashboardData,
         complete:
-          hasSelectedAccounts &&
+          canLoadDashboardData &&
           !topCreativesQuery.isLoading &&
           !topCreativesQuery.isFetching &&
           !topCreativesQuery.isRefetching,
@@ -293,7 +345,7 @@ export function useDashboardController({
 
     return steps;
   }, [
-    hasSelectedAccounts,
+    canLoadDashboardData,
     isShareMetadataLoading,
     isSharedMode,
     metricsQuery.isFetching,
@@ -553,7 +605,7 @@ export function useDashboardController({
     !!appliedStatusFilter;
 
   const hasPendingChanges = isSharedMode
-    ? false
+    ? !sameRange(normalizedRange, appliedRange)
     : !sameRange(normalizedRange, appliedRange) ||
       !sameStringArray(selectedAccountIds, appliedAccountIds) ||
       campaignFilter !== appliedCampaignFilter ||
@@ -563,6 +615,14 @@ export function useDashboardController({
 
   const applyFilters = () => {
     const nextAccounts = [...selectedAccountIds].sort((a, b) => a.localeCompare(b, "pt-BR"));
+    if (nextAccounts.some((value) => syncingAccountResourceIds.has(value))) {
+      toast({
+        variant: "destructive",
+        title: "Aguarde a sincronizacao",
+        description: "Uma das contas selecionadas ainda esta carregando os dados. Tente aplicar o filtro novamente quando a sincronizacao terminar.",
+      });
+      return;
+    }
     setSelectedAccountIds(nextAccounts);
     setAppliedRange(normalizedRange);
     setAppliedAccountIds(nextAccounts);
@@ -795,6 +855,14 @@ export function useDashboardController({
   }, [effectiveEndDateStr, effectiveStartDateStr, isSharedMode]);
 
   const handleAccountsChange = (values: string[]) => {
+    if (values.some((value) => syncingAccountResourceIds.has(value))) {
+      toast({
+        variant: "destructive",
+        title: "Aguarde a sincronizacao",
+        description: "Essa conta ainda esta carregando os dados. Tente filtrar novamente quando a sincronizacao terminar.",
+      });
+      return;
+    }
     setSelectedAccountIds(values);
     setCampaignFilter(null);
     setCreativeDialogInfo(null);
@@ -854,6 +922,116 @@ export function useDashboardController({
     },
   });
 
+  const syncAccountMutation = useMutation({
+    mutationFn: async ({
+      adAccountId,
+      action,
+      dateStart,
+      dateEnd,
+    }: {
+      adAccountId: string;
+      action: "enable" | "disable" | "sync-now";
+      dateStart?: string;
+      dateEnd?: string;
+    }) => {
+      const response = await apiRequest(
+        "POST",
+        `/api/dashboard/sync-accounts/${encodeURIComponent(adAccountId)}/${action}`,
+        action === "sync-now" && dateStart && dateEnd
+          ? { dateStart, dateEnd }
+          : undefined,
+      );
+      return response.json();
+    },
+    onSuccess: async (_data, variables) => {
+      await syncAccountsQuery.refetch();
+      await metricsQuery.refetch();
+      await queryClient.invalidateQueries({ queryKey: [metricsEndpoint] });
+      toast({
+        title:
+          variables.action === "enable"
+            ? "Sincronizacao ativada"
+            : variables.action === "disable"
+              ? "Sincronizacao pausada"
+              : "Sincronizacao concluida",
+        description:
+          variables.action === "sync-now"
+            ? "Os dados do dashboard foram atualizados a partir do cache interno."
+            : "O status da conta foi atualizado.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Falha na sincronizacao",
+        description: error instanceof Error ? error.message : "Nao foi possivel atualizar a sincronizacao.",
+      });
+    },
+  });
+
+  const addMetaAccountMutation = useMutation({
+    mutationFn: async ({
+      adAccountId,
+      accountName,
+    }: {
+      adAccountId: string;
+      accountName: string;
+    }) => {
+      const response = await apiRequest(
+        "POST",
+        `/api/dashboard/sync-accounts/${encodeURIComponent(adAccountId)}/add`,
+        { accountName },
+      );
+      return response.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/resources"] });
+      await syncAccountsQuery.refetch();
+      toast({
+        title: "Conta adicionada",
+        description: "A conta foi adicionada a lista. Ligue o switch para iniciar a sincronizacao.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Falha ao adicionar conta",
+        description: error instanceof Error ? error.message : "Nao foi possivel adicionar a conta.",
+      });
+    },
+  });
+
+  const createShareLinkMutation = useMutation({
+    mutationFn: async ({ password }: { password: string }) => {
+      const response = await apiRequest("POST", "/api/dashboard/share", {
+        startDate: effectiveStartDateStr,
+        endDate: effectiveEndDateStr,
+        accountIds: appliedAccountIds.map((id) => Number(id)).filter(Number.isFinite),
+        campaignId: appliedCampaignFilter,
+        objective: appliedObjectiveFilter,
+        status: appliedStatusFilter,
+        expiresInHours: 168,
+        password,
+      });
+      return response.json() as Promise<{ path: string; expiresAt: string; token: string }>;
+    },
+    onSuccess: async (data) => {
+      const url = `${window.location.origin}${data.path}`;
+      await navigator.clipboard?.writeText(url).catch(() => undefined);
+      toast({
+        title: "Link compartilhavel criado",
+        description: "O link foi copiado para a area de transferencia.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        variant: "destructive",
+        title: "Falha ao criar link",
+        description: error instanceof Error ? error.message : "Nao foi possivel criar o link compartilhavel.",
+      });
+    },
+  });
+
   return {
     isSharedMode,
     startDateStr,
@@ -884,6 +1062,12 @@ export function useDashboardController({
     isGoalsDialogOpen,
     setIsGoalsDialogOpen,
     accountOptions,
+    syncCandidateOptions,
+    addMetaAccountPendingId: addMetaAccountMutation.isPending
+      ? addMetaAccountMutation.variables?.adAccountId ?? null
+      : null,
+    addMetaAccount: (adAccountId: string, accountName: string) =>
+      addMetaAccountMutation.mutateAsync({ adAccountId, accountName }),
     campaignOptions,
     objectiveOptions,
     statusOptions,
@@ -892,6 +1076,17 @@ export function useDashboardController({
     hasPendingChanges,
     hasSelectedAccounts,
     accounts,
+    syncAccounts: syncAccountsQuery.data?.accounts ?? [],
+    isSyncAccountsLoading: syncAccountsQuery.isLoading,
+    syncAccountPendingKey: syncAccountMutation.isPending
+      ? `${syncAccountMutation.variables?.adAccountId}:${syncAccountMutation.variables?.action}`
+      : null,
+    enableSyncAccount: (adAccountId: string) =>
+      syncAccountMutation.mutateAsync({ adAccountId, action: "enable" }),
+    disableSyncAccount: (adAccountId: string) =>
+      syncAccountMutation.mutateAsync({ adAccountId, action: "disable" }),
+    isCreatingShareLink: createShareLinkMutation.isPending,
+    createShareLink: (password: string) => createShareLinkMutation.mutateAsync({ password }),
     metricsData: metricsQuery.data,
     isLoading: metricsQuery.isLoading,
     isFetching: metricsQuery.isFetching,

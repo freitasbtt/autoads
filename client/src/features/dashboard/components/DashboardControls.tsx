@@ -45,6 +45,7 @@ export function FilterCombobox({
   onChange,
   testId,
   className,
+  disabled = false,
 }: {
   label: string;
   placeholder: string;
@@ -54,6 +55,7 @@ export function FilterCombobox({
   onChange: (next: string | null) => void;
   testId: string;
   className?: string;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const selected = options.find((option) => option.value === value);
@@ -64,13 +66,17 @@ export function FilterCombobox({
         {label}
       </span>
 
-      <Popover open={open} onOpenChange={setOpen}>
+      <Popover
+        open={open && !disabled}
+        onOpenChange={(nextOpen) => setOpen(disabled ? false : nextOpen)}
+      >
         <PopoverTrigger asChild>
           <Button
             variant="outline"
             role="combobox"
             data-testid={testId}
             aria-expanded={open}
+            disabled={disabled}
             className="w-full justify-between"
           >
             <span className="truncate text-left">

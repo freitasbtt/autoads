@@ -5,6 +5,27 @@ import { z } from "zod";
 
 // Enums
 export const userRoleEnum = pgEnum("user_role", ["system_admin", "tenant_admin", "member"]);
+export const dashboardSyncStatusEnum = pgEnum("dashboard_sync_status", [
+  "never_synced",
+  "active",
+  "paused",
+  "syncing",
+  "error",
+]);
+export const metaSyncJobTypeEnum = pgEnum("meta_sync_job_type", [
+  "sync_entities",
+  "sync_today_insights",
+  "sync_recent_insights",
+  "sync_historical_insights",
+  "sync_manual",
+]);
+export const metaSyncJobStatusEnum = pgEnum("meta_sync_job_status", [
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+]);
 
 // Tenants table for multi-tenancy
 export const tenants = pgTable("tenants", {
@@ -310,6 +331,259 @@ export const insertDashboardGoalSchema = createInsertSchema(dashboardGoals).omit
 });
 export type InsertDashboardGoal = z.infer<typeof insertDashboardGoalSchema>;
 export type DashboardGoal = typeof dashboardGoals.$inferSelect;
+
+export const dashboardSyncAccounts = pgTable(
+  "dashboard_sync_accounts",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+    adAccountId: text("ad_account_id").notNull(),
+    accountName: text("account_name").notNull(),
+    syncEnabled: boolean("sync_enabled").notNull().default(false),
+    syncStatus: dashboardSyncStatusEnum("sync_status").notNull().default("never_synced"),
+    syncFrequencyMinutes: integer("sync_frequency_minutes").notNull().default(30),
+    firstEnabledAt: timestamp("first_enabled_at"),
+    lastEnabledAt: timestamp("last_enabled_at"),
+    disabledAt: timestamp("disabled_at"),
+    lastManualSyncAt: timestamp("last_manual_sync_at"),
+    lastAutoSyncAt: timestamp("last_auto_sync_at"),
+    lastSuccessSyncAt: timestamp("last_success_sync_at"),
+    lastFailedSyncAt: timestamp("last_failed_sync_at"),
+    lastErrorMessage: text("last_error_message"),
+    createdBy: integer("created_by").references(() => users.id),
+    updatedBy: integer("updated_by").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    uniqueTenantDashboardSyncAccount: uniqueIndex("uniq_dashboard_sync_accounts_tenant_account")
+      .on(table.tenantId, table.adAccountId),
+  }),
+);
+
+export type InsertDashboardSyncAccount = typeof dashboardSyncAccounts.$inferInsert;
+export type DashboardSyncAccount = typeof dashboardSyncAccounts.$inferSelect;
+
+export const metaCampaigns = pgTable(
+  "meta_campaigns",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+    adAccountId: text("ad_account_id").notNull(),
+    campaignId: text("campaign_id").notNull(),
+    name: text("name"),
+    objective: text("objective"),
+    status: text("status"),
+    buyingType: text("buying_type"),
+    configuredStatus: text("configured_status"),
+    effectiveStatus: text("effective_status"),
+    dailyBudget: text("daily_budget"),
+    lifetimeBudget: text("lifetime_budget"),
+    updatedTime: text("updated_time"),
+    specialAdCategories: jsonb("special_ad_categories").$type<string[]>().default(sql`'[]'::jsonb`).notNull(),
+    rawJson: jsonb("raw_json").$type<Record<string, unknown>>().default(sql`'{}'::jsonb`).notNull(),
+    syncedAt: timestamp("synced_at").defaultNow().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    uniqueTenantMetaCampaign: uniqueIndex("uniq_meta_campaigns_tenant_campaign")
+      .on(table.tenantId, table.adAccountId, table.campaignId),
+  }),
+);
+
+export type InsertMetaCampaign = typeof metaCampaigns.$inferInsert;
+export type MetaCampaign = typeof metaCampaigns.$inferSelect;
+
+export const metaAdsets = pgTable(
+  "meta_adsets",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+    adAccountId: text("ad_account_id").notNull(),
+    campaignId: text("campaign_id").notNull(),
+    adsetId: text("adset_id").notNull(),
+    name: text("name"),
+    status: text("status"),
+    configuredStatus: text("configured_status"),
+    effectiveStatus: text("effective_status"),
+    optimizationGoal: text("optimization_goal"),
+    billingEvent: text("billing_event"),
+    bidStrategy: text("bid_strategy"),
+    updatedTime: text("updated_time"),
+    promotedObject: jsonb("promoted_object").$type<Record<string, unknown> | null>(),
+    rawJson: jsonb("raw_json").$type<Record<string, unknown>>().default(sql`'{}'::jsonb`).notNull(),
+    syncedAt: timestamp("synced_at").defaultNow().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    uniqueTenantMetaAdset: uniqueIndex("uniq_meta_adsets_tenant_adset")
+      .on(table.tenantId, table.adAccountId, table.adsetId),
+  }),
+);
+
+export type InsertMetaAdset = typeof metaAdsets.$inferInsert;
+export type MetaAdset = typeof metaAdsets.$inferSelect;
+
+export const metaAds = pgTable(
+  "meta_ads",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+    adAccountId: text("ad_account_id").notNull(),
+    campaignId: text("campaign_id"),
+    adsetId: text("adset_id"),
+    adId: text("ad_id").notNull(),
+    creativeId: text("creative_id"),
+    name: text("name"),
+    status: text("status"),
+    effectiveStatus: text("effective_status"),
+    rawJson: jsonb("raw_json").$type<Record<string, unknown>>().default(sql`'{}'::jsonb`).notNull(),
+    syncedAt: timestamp("synced_at").defaultNow().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    uniqueTenantMetaAd: uniqueIndex("uniq_meta_ads_tenant_ad")
+      .on(table.tenantId, table.adAccountId, table.adId),
+  }),
+);
+
+export type InsertMetaAd = typeof metaAds.$inferInsert;
+export type MetaAd = typeof metaAds.$inferSelect;
+
+export const metaCreatives = pgTable(
+  "meta_creatives",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+    adAccountId: text("ad_account_id").notNull(),
+    creativeId: text("creative_id").notNull(),
+    name: text("name"),
+    thumbnailUrl: text("thumbnail_url"),
+    imageUrl: text("image_url"),
+    storageThumbnailBucket: text("storage_thumbnail_bucket"),
+    storageThumbnailPath: text("storage_thumbnail_path"),
+    storageThumbnailContentType: text("storage_thumbnail_content_type"),
+    storageThumbnailSourceUrl: text("storage_thumbnail_source_url"),
+    assetStatus: text("asset_status").notNull().default("pending"),
+    assetSyncedAt: timestamp("asset_synced_at"),
+    assetErrorMessage: text("asset_error_message"),
+    lastSeenAt: timestamp("last_seen_at"),
+    rawJson: jsonb("raw_json").$type<Record<string, unknown>>().default(sql`'{}'::jsonb`).notNull(),
+    syncedAt: timestamp("synced_at").defaultNow().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    uniqueTenantMetaCreative: uniqueIndex("uniq_meta_creatives_tenant_creative")
+      .on(table.tenantId, table.adAccountId, table.creativeId),
+  }),
+);
+
+export type InsertMetaCreative = typeof metaCreatives.$inferInsert;
+export type MetaCreative = typeof metaCreatives.$inferSelect;
+
+export const metaAdInsightsDaily = pgTable(
+  "meta_ad_insights_daily",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+    adAccountId: text("ad_account_id").notNull(),
+    campaignId: text("campaign_id").notNull(),
+    adsetId: text("adset_id").notNull(),
+    adId: text("ad_id").notNull(),
+    dateStart: pgDate("date_start").notNull(),
+    dateStop: pgDate("date_stop").notNull(),
+    campaignName: text("campaign_name"),
+    adsetName: text("adset_name"),
+    adName: text("ad_name"),
+    spend: numeric("spend", { precision: 14, scale: 4 }).notNull().default("0"),
+    impressions: integer("impressions").notNull().default(0),
+    reach: integer("reach").notNull().default(0),
+    frequency: numeric("frequency", { precision: 14, scale: 6 }),
+    clicks: integer("clicks").notNull().default(0),
+    inlineLinkClicks: integer("inline_link_clicks").notNull().default(0),
+    linkClicks: integer("link_clicks").notNull().default(0),
+    ctr: numeric("ctr", { precision: 14, scale: 6 }),
+    cpc: numeric("cpc", { precision: 14, scale: 6 }),
+    cpm: numeric("cpm", { precision: 14, scale: 6 }),
+    cpp: numeric("cpp", { precision: 14, scale: 6 }),
+    leads: integer("leads").notNull().default(0),
+    costPerLead: numeric("cost_per_lead", { precision: 14, scale: 6 }),
+    videoPlays: integer("video_plays").notNull().default(0),
+    videoP25: integer("video_p25").notNull().default(0),
+    videoP50: integer("video_p50").notNull().default(0),
+    videoP75: integer("video_p75").notNull().default(0),
+    videoP95: integer("video_p95").notNull().default(0),
+    videoP100: integer("video_p100").notNull().default(0),
+    thruplays: integer("thruplays").notNull().default(0),
+    actionsJson: jsonb("actions_json").$type<Array<Record<string, unknown>>>().default(sql`'[]'::jsonb`).notNull(),
+    costPerActionTypeJson: jsonb("cost_per_action_type_json").$type<Array<Record<string, unknown>>>().default(sql`'[]'::jsonb`).notNull(),
+    rawJson: jsonb("raw_json").$type<Record<string, unknown>>().default(sql`'{}'::jsonb`).notNull(),
+    syncedAt: timestamp("synced_at").defaultNow().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    uniqueTenantMetaAdInsightDaily: uniqueIndex("uniq_meta_ad_insights_daily_tenant_ad_date")
+      .on(table.tenantId, table.adAccountId, table.adId, table.dateStart, table.dateStop),
+  }),
+);
+
+export type InsertMetaAdInsightDaily = typeof metaAdInsightsDaily.$inferInsert;
+export type MetaAdInsightDaily = typeof metaAdInsightsDaily.$inferSelect;
+
+export const metaSyncJobs = pgTable("meta_sync_jobs", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+  adAccountId: text("ad_account_id").notNull(),
+  jobType: metaSyncJobTypeEnum("job_type").notNull(),
+  jobSource: text("job_source").notNull().default("manual"),
+  dateStart: pgDate("date_start"),
+  dateEnd: pgDate("date_end"),
+  status: metaSyncJobStatusEnum("status").notNull().default("pending"),
+  priority: integer("priority").notNull().default(100),
+  attempts: integer("attempts").notNull().default(0),
+  maxAttempts: integer("max_attempts").notNull().default(3),
+  startedAt: timestamp("started_at"),
+  finishedAt: timestamp("finished_at"),
+  errorMessage: text("error_message"),
+  createdBy: integer("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type InsertMetaSyncJob = typeof metaSyncJobs.$inferInsert;
+export type MetaSyncJob = typeof metaSyncJobs.$inferSelect;
+
+export const dashboardShareLinks = pgTable(
+  "dashboard_share_links",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").notNull().references(() => tenants.id),
+    publicId: text("public_id").notNull().unique(),
+    passwordHash: text("password_hash").notNull(),
+    startDate: pgDate("start_date").notNull(),
+    endDate: pgDate("end_date").notNull(),
+    accountIds: jsonb("account_ids").$type<number[]>().default(sql`'[]'::jsonb`).notNull(),
+    campaignId: text("campaign_id"),
+    objective: text("objective"),
+    status: text("status"),
+    expiresAt: timestamp("expires_at").notNull(),
+    createdBy: integer("created_by").references(() => users.id),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    uniqueDashboardSharePublicId: uniqueIndex("uniq_dashboard_share_links_public_id")
+      .on(table.publicId),
+  }),
+);
+
+export type InsertDashboardShareLink = typeof dashboardShareLinks.$inferInsert;
+export type DashboardShareLink = typeof dashboardShareLinks.$inferSelect;
 
 // App Settings table - global OAuth and webhook configuration (admin only)
 export const appSettings = pgTable("app_settings", {

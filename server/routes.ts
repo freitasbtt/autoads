@@ -1,6 +1,6 @@
 import { createServer, type Server } from "http";
 import { storage } from "./modules/storage";
-import { ensureGcsStorageSchema, pingDatabase } from "./db";
+import { ensureDashboardSyncSchema, ensureGcsStorageSchema, pingDatabase } from "./db";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import session from "express-session";
@@ -22,6 +22,7 @@ import { integrationsRouter } from "./modules/integrations/routes";
 import { authRouter } from "./modules/auth/routes";
 import { adminRouter } from "./modules/admin/routes";
 import { metaRouter, internalMetaRouter, publicMetaRouter } from "./modules/meta/routes";
+import { startDashboardSyncCron } from "./modules/meta/services/dashboard-sync.service";
 import { oauthRouter } from "./modules/oauth/routes";
 import { realtimeRouter } from "./modules/realtime/routes";
 import { gcsRouter, publicGcsRouter } from "./modules/gcs/routes";
@@ -38,6 +39,7 @@ declare module "express-session" {
     oauthState?: string;
     oauthProvider?: "meta";
     csrfToken?: string;
+    dashboardShareUnlocks?: Record<string, boolean>;
   }
 }
 
@@ -82,6 +84,8 @@ passport.deserializeUser(async (id: number, done) => {
 
 export async function registerRoutes(app: Express): Promise<Server> {
   await ensureGcsStorageSchema();
+  await ensureDashboardSyncSchema();
+  startDashboardSyncCron();
 
   app.get("/api/health", async (_req, res) => {
     try {
@@ -108,7 +112,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       cookie: {
         httpOnly: true,
         sameSite: "lax",
-        secure: (process.env.NODE_ENV ?? "development") === "production" || process.env.FORCE_HTTPS === "true",
+        secure: process.env.FORCE_HTTPS === "true",
         maxAge: 7 * 24 * 60 * 60 * 1000,
       }, // 7 days
     })

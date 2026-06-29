@@ -17,6 +17,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    const publicPath = window.location.pathname;
+    if (publicPath.startsWith("/shared/dashboard") || publicPath.startsWith("/upload/")) {
+      setIsLoading(false);
+      return;
+    }
+
     // Check if user is already authenticated on mount
     async function checkAuth() {
       try {

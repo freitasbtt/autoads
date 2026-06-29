@@ -1,5 +1,5 @@
 import type { DateRange } from "react-day-picker";
-import { ChevronsUpDown, Filter, Loader2, TrendingDown, TrendingUp, X } from "lucide-react";
+import { ChevronsUpDown, Filter, Loader2, RefreshCw, TrendingDown, TrendingUp, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,6 @@ import type {
   ActiveFilterChip,
   DashboardKpi,
   DashboardQuickRange,
-  DashboardShareMetadataResponse,
   FilterOption,
 } from "../types";
 import {
@@ -23,7 +22,6 @@ import {
 type DashboardFiltersCardProps = {
   isSharedMode: boolean;
   periodLabel: string;
-  shareMetadata?: DashboardShareMetadataResponse;
   hasSelectedAccounts: boolean;
   kpis: DashboardKpi[];
   normalizedRange: DateRange;
@@ -49,6 +47,8 @@ type DashboardFiltersCardProps = {
   onRangeChange: (range: DateRange | null) => void;
   onApplyQuickRange: (range: DateRange) => void;
   onAccountsChange: (values: string[]) => void;
+  onOpenSyncModal: () => void;
+  onOpenShareModal: () => void;
   onCampaignChange: (value: string | null) => void;
   onCampaignSearchTermChange: (value: string) => void;
   onObjectiveChange: (value: string | null) => void;
@@ -62,7 +62,6 @@ type DashboardFiltersCardProps = {
 export function DashboardFiltersCard({
   isSharedMode,
   periodLabel,
-  shareMetadata,
   hasSelectedAccounts,
   kpis,
   normalizedRange,
@@ -88,6 +87,8 @@ export function DashboardFiltersCard({
   onRangeChange,
   onApplyQuickRange,
   onAccountsChange,
+  onOpenSyncModal,
+  onOpenShareModal,
   onCampaignChange,
   onCampaignSearchTermChange,
   onObjectiveChange,
@@ -101,36 +102,31 @@ export function DashboardFiltersCard({
     <Card className="rounded-[28px] border border-slate-200/80 bg-white/95 shadow-[0_18px_45px_-35px_rgba(15,23,42,0.35)]">
       <CardContent className="relative space-y-6 px-5 py-5 sm:px-6">
         {isSharedMode ? (
-          <div className="grid gap-4 md:grid-cols-4">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/75 p-4">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Periodo
-              </div>
-              <div className="mt-2 text-sm font-semibold text-foreground">{periodLabel}</div>
+          <div className="flex flex-col gap-3 md:flex-row md:items-end">
+            <div className="w-full md:max-w-sm">
+              <DateRangePickerField value={normalizedRange} onChange={onRangeChange} />
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/75 p-4">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Contas
-              </div>
-              <div className="mt-2 text-sm font-semibold text-foreground">
-                {shareMetadata?.accounts.length ?? 0} selecionadas
-              </div>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/75 p-4">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Link expira em
-              </div>
-              <div className="mt-2 text-sm font-semibold text-foreground">
-                {shareMetadata
-                  ? new Date(shareMetadata.expiresAt).toLocaleString("pt-BR")
-                  : "Carregando"}
-              </div>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50/75 p-4">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Modo
-              </div>
-              <div className="mt-2 text-sm font-semibold text-foreground">Somente leitura</div>
+            <div className="flex flex-1 flex-wrap items-center gap-2">
+              {quickRanges.map((quickRange) => (
+                <Button
+                  key={quickRange.label}
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onApplyQuickRange(quickRange.range)}
+                  className="h-9 rounded-full px-3 text-xs"
+                >
+                  {quickRange.label}
+                </Button>
+              ))}
+              <Button
+                size="sm"
+                onClick={onApplyFilters}
+                disabled={isApplyingFilters || !hasPendingChanges}
+                className="h-9 rounded-full px-5 shadow-sm"
+              >
+                {isApplyingFilters ? "Carregando..." : "Aplicar data"}
+              </Button>
             </div>
           </div>
         ) : (
@@ -201,6 +197,24 @@ export function DashboardFiltersCard({
                   className="rounded-full px-5 shadow-sm"
                 >
                   {isGoalsLoading ? "Carregando metas..." : goalsButtonLabel}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onOpenSyncModal}
+                  className="rounded-full px-5 shadow-sm"
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Sincronizar
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={onOpenShareModal}
+                  disabled={!hasSelectedAccounts || hasPendingChanges}
+                  className="rounded-full px-5 shadow-sm"
+                >
+                  Compartilhar
                 </Button>
                 <div
                   className={cn(

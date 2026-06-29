@@ -1,28 +1,42 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { Bug, Loader2 } from "lucide-react";
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { CampaignCreativesDialog } from "@/components/CampaignCreativesDialog";
 import { DashboardCampaignsView } from "@/features/dashboard/components/DashboardCampaignsView";
 import { DashboardFiltersCard } from "@/features/dashboard/components/DashboardFiltersCard";
+import { FilterCombobox } from "@/features/dashboard/components/DashboardControls";
 import { DashboardGoalsDialog } from "@/features/dashboard/components/DashboardGoalsDialog";
 import { DashboardHeader } from "@/features/dashboard/components/DashboardHeader";
 import { DashboardMacroView } from "@/features/dashboard/components/DashboardMacroView";
+import { DashboardSyncPanel } from "@/features/dashboard/components/DashboardSyncPanel";
 import { useDashboardController } from "@/features/dashboard/hooks/useDashboardController";
 import type { DashboardProps } from "@/features/dashboard/types";
 
 export default function Dashboard(props: DashboardProps = {}) {
   const controller = useDashboardController(props);
+  const [isSyncDialogOpen, setIsSyncDialogOpen] = useState(false);
+  const [selectedMetaAccountId, setSelectedMetaAccountId] = useState<string | null>(null);
+  const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+  const [sharePassword, setSharePassword] = useState("");
 
   const {
     isSharedMode,
     startDateStr,
     endDateStr,
     periodLabel,
-    shareMetadata,
     normalizedRange,
     setRawRange,
     selectedAccountIds,
@@ -36,14 +50,15 @@ export default function Dashboard(props: DashboardProps = {}) {
     setStatusFilter,
     activeView,
     setActiveView,
-    creativeDialogInfo,
-    setCreativeDialogInfo,
     isSystemAdmin,
     showDebug,
     setShowDebug,
     isGoalsDialogOpen,
     setIsGoalsDialogOpen,
     accountOptions,
+    syncCandidateOptions,
+    addMetaAccountPendingId,
+    addMetaAccount,
     campaignOptions,
     objectiveOptions,
     statusOptions,
@@ -52,6 +67,13 @@ export default function Dashboard(props: DashboardProps = {}) {
     hasPendingChanges,
     hasSelectedAccounts,
     accounts,
+    syncAccounts,
+    isSyncAccountsLoading,
+    syncAccountPendingKey,
+    enableSyncAccount,
+    disableSyncAccount,
+    isCreatingShareLink,
+    createShareLink,
     metricsData,
     isLoading,
     isFetching,
@@ -66,7 +88,6 @@ export default function Dashboard(props: DashboardProps = {}) {
     refetchTopCreatives,
     loadingProgress,
     loadingStatusLabel,
-    campaignIndex,
     kpis,
     timelineData,
     leadsByAccountData,
@@ -81,13 +102,27 @@ export default function Dashboard(props: DashboardProps = {}) {
     applyFilters,
     sameRange,
     clearAllFilters,
-    openCampaignCreatives,
     handleAccountsChange,
   } = controller;
 
   const isBlockingLoading =
     hasSelectedAccounts &&
     (isLoading || isFetching || isTopCreativesLoading || isTopCreativesFetching);
+
+  const metaAccountOptions = useMemo(
+    () => syncCandidateOptions,
+    [syncCandidateOptions],
+  );
+
+  const handleMetaAccountSelect = (accountId: string | null) => {
+    setSelectedMetaAccountId(accountId);
+    if (!accountId) return;
+    const account = metaAccountOptions.find((entry) => entry.value === accountId);
+    if (!account) return;
+    void addMetaAccount(account.value, account.label).finally(() => {
+      setSelectedMetaAccountId(null);
+    });
+  };
 
   return (
     <>
@@ -104,7 +139,6 @@ export default function Dashboard(props: DashboardProps = {}) {
             <DashboardFiltersCard
               isSharedMode={isSharedMode}
               periodLabel={periodLabel}
-              shareMetadata={shareMetadata}
               hasSelectedAccounts={hasSelectedAccounts}
               kpis={kpis}
               normalizedRange={normalizedRange}
@@ -130,6 +164,8 @@ export default function Dashboard(props: DashboardProps = {}) {
               onRangeChange={setRawRange}
               onApplyQuickRange={applyQuickRange}
               onAccountsChange={handleAccountsChange}
+              onOpenSyncModal={() => setIsSyncDialogOpen(true)}
+              onOpenShareModal={() => setIsShareDialogOpen(true)}
               onCampaignChange={setCampaignFilter}
               onCampaignSearchTermChange={setCampaignNameSearch}
               onObjectiveChange={setObjectiveFilter}
@@ -171,8 +207,6 @@ export default function Dashboard(props: DashboardProps = {}) {
                   onRetryMetrics={() => {
                     void refetch();
                   }}
-                  onOpenCampaignCreatives={openCampaignCreatives}
-                  campaignIndex={campaignIndex}
                   topCreativesByAccount={topCreativesByAccount}
                   isTopCreativesLoading={isTopCreativesLoading}
                   isTopCreativesFetching={isTopCreativesFetching}
@@ -230,8 +264,6 @@ export default function Dashboard(props: DashboardProps = {}) {
                     onRetryMetrics={() => {
                       void refetch();
                     }}
-                    onOpenCampaignCreatives={openCampaignCreatives}
-                    campaignIndex={campaignIndex}
                     topCreativesByAccount={topCreativesByAccount}
                     isTopCreativesLoading={isTopCreativesLoading}
                     isTopCreativesFetching={isTopCreativesFetching}
@@ -281,16 +313,6 @@ export default function Dashboard(props: DashboardProps = {}) {
         </div>
       </div>
 
-      <CampaignCreativesDialog
-        open={!!creativeDialogInfo}
-        onClose={() => setCreativeDialogInfo(null)}
-        campaign={creativeDialogInfo?.campaign ?? null}
-        account={creativeDialogInfo?.account ?? null}
-        headerSnapshot={creativeDialogInfo?.header ?? null}
-        startDate={startDateStr}
-        endDate={endDateStr}
-      />
-
       <DashboardGoalsDialog
         open={isGoalsDialogOpen}
         onOpenChange={setIsGoalsDialogOpen}
@@ -300,6 +322,101 @@ export default function Dashboard(props: DashboardProps = {}) {
         isSaving={isSavingGoals}
         onSave={saveGoals}
       />
+
+      <Dialog open={isShareDialogOpen} onOpenChange={setIsShareDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Criar link compartilhavel</DialogTitle>
+            <DialogDescription>
+              O link usa os filtros aplicados agora e exige senha para acesso publico.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Input
+              type="password"
+              placeholder="Senha do link"
+              value={sharePassword}
+              onChange={(event) => setSharePassword(event.target.value)}
+            />
+            <Button
+              className="w-full"
+              disabled={isCreatingShareLink || sharePassword.trim().length < 4}
+              onClick={() => {
+                void createShareLink(sharePassword.trim()).then(() => {
+                  setSharePassword("");
+                  setIsShareDialogOpen(false);
+                });
+              }}
+            >
+              {isCreatingShareLink && <Loader2 className="h-4 w-4 animate-spin" />}
+              Criar e copiar link
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isSyncDialogOpen} onOpenChange={setIsSyncDialogOpen}>
+        <DialogContent className="max-h-[86vh] max-w-[980px] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Sincronizar contas</DialogTitle>
+            <DialogDescription>
+              Selecione contas da integracao Meta e ligue o switch para iniciar a sincronizacao.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+            <div>
+              <div className="text-sm font-medium text-slate-950">Contas da integracao Meta</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                Ao selecionar uma conta, ela entra na lista abaixo. O switch liga ou desliga o job.
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4">
+            <div className="text-sm font-semibold text-slate-950">Adicionar conta a sincronizacao</div>
+            {metaAccountOptions.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-muted-foreground">
+                Todas as contas da integracao ja foram adicionadas ou nenhuma conta foi importada pela integracao Meta.
+              </div>
+            ) : (
+              <div className="flex items-end gap-3">
+                <FilterCombobox
+                  label="Conta de anuncio"
+                  placeholder="Buscar conta da Meta"
+                  emptyLabel="Nenhuma conta disponivel"
+                  options={metaAccountOptions}
+                  value={selectedMetaAccountId}
+                  onChange={handleMetaAccountSelect}
+                  testId="sync-meta-account"
+                  className="flex-1"
+                  disabled={!!addMetaAccountPendingId}
+                />
+                {addMetaAccountPendingId && (
+                  <div className="flex h-10 items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Adicionando
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {syncAccounts.length === 0 && !isSyncAccountsLoading ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-sm text-muted-foreground">
+              Nenhuma conta adicionada a sincronizacao ainda.
+            </div>
+          ) : (
+            <DashboardSyncPanel
+              accounts={syncAccounts}
+              isLoading={isSyncAccountsLoading}
+              pendingKey={syncAccountPendingKey}
+              onEnable={enableSyncAccount}
+              onDisable={disableSyncAccount}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {isBlockingLoading && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/22 backdrop-blur-[2px]">

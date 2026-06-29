@@ -111,6 +111,42 @@ export type DashboardMetricsResponse = {
   goalTotals: DashboardGoalMetrics | null;
   accounts: DashboardAccountMetrics[];
   timeline: DashboardRawTimelinePoint[];
+  data?: {
+    totals: MetricTotals;
+    previousTotals: MetricTotals;
+    goalTotals: DashboardGoalMetrics | null;
+    accounts: DashboardAccountMetrics[];
+    timeline: DashboardRawTimelinePoint[];
+  } | null;
+  last_synced_at?: string | null;
+  sync_status?: string | null;
+  is_updating?: boolean;
+  last_error_message?: string | null;
+};
+
+export type DashboardSyncAccount = {
+  id: number | null;
+  resourceId: number;
+  tenantId: number;
+  adAccountId: string;
+  accountName: string;
+  syncEnabled: boolean;
+  syncStatus: "never_synced" | "active" | "paused" | "syncing" | "error";
+  syncFrequencyMinutes: number;
+  firstEnabledAt: string | null;
+  lastEnabledAt: string | null;
+  disabledAt: string | null;
+  lastManualSyncAt: string | null;
+  lastAutoSyncAt: string | null;
+  lastSuccessSyncAt: string | null;
+  lastFailedSyncAt: string | null;
+  lastErrorMessage: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type DashboardSyncAccountsResponse = {
+  accounts: DashboardSyncAccount[];
 };
 
 export type DashboardGoalsResponse = {

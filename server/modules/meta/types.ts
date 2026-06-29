@@ -91,15 +91,36 @@ export type GraphPromotedObject = {
 };
 
 export type GraphAdLevelInsightRow = {
+  account_id?: string;
+  account_name?: string;
+  campaign_id?: string;
+  campaign_name?: string;
+  adset_id?: string;
+  adset_name?: string;
   ad_id?: string;
   ad_name?: string;
+  date_start?: string;
+  date_stop?: string;
   impressions?: string;
+  reach?: string;
   clicks?: string;
+  inline_link_clicks?: string;
+  link_clicks?: string;
   spend?: string;
   frequency?: string;
   actions?: GraphActionEntry[];
   cost_per_action_type?: GraphActionEntry[];
   ctr?: string;
+  cpc?: string;
+  cpm?: string;
+  cpp?: string;
+  video_play_actions?: GraphActionEntry[];
+  video_p25_watched_actions?: GraphActionEntry[];
+  video_p50_watched_actions?: GraphActionEntry[];
+  video_p75_watched_actions?: GraphActionEntry[];
+  video_p95_watched_actions?: GraphActionEntry[];
+  video_p100_watched_actions?: GraphActionEntry[];
+  video_thruplay_watched_actions?: GraphActionEntry[];
 };
 
 export type GraphAdCreative = {
@@ -143,6 +164,8 @@ export type GraphAdCreative = {
 
 export type GraphAd = {
   id?: string;
+  name?: string;
+  campaign_id?: string;
   adset_id?: string;
   status?: string;
   effective_status?: string;
@@ -153,7 +176,11 @@ export type GraphAd = {
   };
   creative?: {
     id?: string;
+    name?: string;
+    thumbnail_url?: string;
+    image_url?: string;
     object_story_spec?: GraphAdCreative["object_story_spec"];
+    asset_feed_spec?: GraphAdCreative["asset_feed_spec"];
   };
 };
 
@@ -393,6 +420,13 @@ export interface MetaGraphApiClient {
       timeIncrement?: number;
     },
   ): Promise<GraphAdsetInsightRow[]>;
+  fetchAdInsights(
+    accountId: string,
+    timeRange: TimeRange,
+    options?: {
+      timeIncrement?: number;
+    },
+  ): Promise<GraphAdLevelInsightRow[]>;
   fetchCampaignAdReports(
     accountId: string,
     campaignId: string,

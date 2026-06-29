@@ -9,14 +9,16 @@ import {
   isValid,
   parseISO,
   startOfMonth,
+  subDays,
   subMonths,
 } from "date-fns";
-import type { Resource, User } from "@shared/schema";
+import type { DashboardShareLink, Resource, User } from "@shared/schema";
+import { dashboardShareLinks, dashboardSyncAccounts, metaAdInsightsDaily, metaSyncJobs } from "@shared/schema";
+import { db } from "../../db";
 import { storage } from "../storage";
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import {
   MetaGraphClient,
-  fetchMetaDashboardMetrics,
-  fetchMetaDashboardTopCreatives,
 } from ".";
 import type { MetricTotals as MetaMetricTotals } from ".";
 import { getMetaAccess } from "./services/access.service";
@@ -26,16 +28,20 @@ import { isAuthenticated } from "../../middlewares/auth";
 import { createRateLimit } from "../../middlewares/rate-limit";
 import { generateAppSecretProof } from "./utils/crypto";
 import { isSystemAdminRole } from "../auth/services/role.service";
-import {
-  createDashboardShareToken,
-  verifyDashboardShareToken,
-  type DashboardShareClaims,
-} from "./utils/dashboard-share";
+import { hashPassword, verifyPassword } from "../auth/services/password.service";
+import { verifyDashboardShareToken, type DashboardShareClaims } from "./utils/dashboard-share";
 import {
   buildDashboardCacheKey,
   clearDashboardCache,
   getOrCreateDashboardCache,
 } from "./utils/dashboard-cache";
+import {
+  createManualDashboardSyncJob,
+  fetchDashboardMetricsFromCache,
+  fetchDashboardTopCreativesFromCache,
+  getDashboardSyncSummary,
+  runDashboardSyncJob,
+} from "./services/dashboard-sync.service";
 
 const DATE_PARAM_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const dashboardMetricsQuerySchema = z.object({
@@ -50,6 +56,10 @@ const dashboardShareBodySchema = z.object({
   objective: z.string().min(1).nullable().optional(),
   status: z.string().min(1).nullable().optional(),
   expiresInHours: z.number().int().min(1).max(168).optional(),
+  password: z.string().min(4).max(120),
+});
+const dashboardShareUnlockBodySchema = z.object({
+  password: z.string().min(1).max(120),
 });
 const dashboardGoalUpsertBodySchema = z.object({
   startDate: z.string().regex(DATE_PARAM_REGEX),
@@ -62,6 +72,21 @@ const dashboardGoalUpsertBodySchema = z.object({
       targetLeads: z.number().int().positive(),
     }),
   ),
+});
+const dashboardSyncNowBodySchema = z.object({
+  dateStart: z.string().regex(DATE_PARAM_REGEX).optional(),
+  dateEnd: z.string().regex(DATE_PARAM_REGEX).optional(),
+}).superRefine((data, ctx) => {
+  if ((data.dateStart && !data.dateEnd) || (!data.dateStart && data.dateEnd)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "dateStart e dateEnd devem ser enviados juntos.",
+      path: ["dateEnd"],
+    });
+  }
+});
+const dashboardAddSyncAccountBodySchema = z.object({
+  accountName: z.string().min(1).optional(),
 });
 
 const DASHBOARD_METRICS_CACHE_TTL_MS = 60_000;
@@ -267,10 +292,57 @@ async function fetchMetaTokenDebug(options: {
   return { ok: response.ok, status: response.status, body };
 }
 
+async function fetchMetaAdAccountsForDashboard(options: {
+  accessToken: string;
+  appSecretProof: string;
+}): Promise<MetaAdAccountListItem[]> {
+  const items: MetaAdAccountListItem[] = [];
+  let nextUrl: URL | null = new URL("https://graph.facebook.com/v24.0/me/adaccounts");
+  nextUrl.searchParams.set("fields", "id,name,account_id,account_status");
+  nextUrl.searchParams.set("limit", "200");
+
+  while (nextUrl) {
+    nextUrl.searchParams.set("access_token", options.accessToken);
+    nextUrl.searchParams.set("appsecret_proof", options.appSecretProof);
+
+    const response = await fetch(nextUrl);
+    const text = await response.text();
+    let body: any = {};
+    try {
+      body = text.length > 0 ? JSON.parse(text) : {};
+    } catch {
+      throw new Error("Falha ao interpretar resposta da Meta ao buscar contas.");
+    }
+
+    if (!response.ok || body?.error) {
+      const message =
+        typeof body?.error?.message === "string"
+          ? body.error.message
+          : "Falha ao buscar contas de anuncio na Meta.";
+      throw new Error(message);
+    }
+
+    if (Array.isArray(body?.data)) {
+      items.push(...body.data);
+    }
+
+    nextUrl = typeof body?.paging?.next === "string" ? new URL(body.paging.next) : null;
+  }
+
+  return items;
+}
+
 type FetchRetryOptions = {
   timeoutMs: number;
   retryCount: number;
   retryDelayMs: number;
+};
+
+type MetaAdAccountListItem = {
+  id?: string;
+  name?: string;
+  account_id?: string;
+  account_status?: number;
 };
 
 type LeadformPageCacheEntry = {
@@ -438,7 +510,104 @@ const internalMetaTokenRateLimit = createRateLimit({
   },
 });
 
-async function resolveDashboardShareContext(token: string): Promise<{
+const publicDashboardShareUnlockRateLimit = createRateLimit({
+  name: "public-dashboard-share-unlock",
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: "Muitas tentativas de senha. Tente novamente em alguns minutos.",
+  keyGenerator: (req) => {
+    const token =
+      typeof req.query.token === "string" && req.query.token.trim().length > 0
+        ? req.query.token.trim()
+        : "unknown-token";
+    return `${req.ip}:${token}`;
+  },
+});
+
+function buildShareClaimsFromLink(link: DashboardShareLink): DashboardShareClaims {
+  return {
+    v: 1,
+    tenantId: link.tenantId,
+    startDate: String(link.startDate),
+    endDate: String(link.endDate),
+    accountIds: Array.isArray(link.accountIds) ? link.accountIds : [],
+    campaignId: link.campaignId ?? null,
+    objective: link.objective ?? null,
+    status: link.status ?? null,
+    expiresAt: link.expiresAt instanceof Date ? link.expiresAt.toISOString() : new Date(link.expiresAt).toISOString(),
+  };
+}
+
+async function getDashboardShareLink(token: string) {
+  return db.query.dashboardShareLinks.findFirst({
+    where: eq(dashboardShareLinks.publicId, token),
+  });
+}
+
+function ensureShareUnlocked(req: Request, token: string): void {
+  if (req.session.dashboardShareUnlocks?.[token]) return;
+  const error = new Error("Informe a senha para acessar este dashboard compartilhado.");
+  (error as Error & { status?: number }).status = 423;
+  throw error;
+}
+
+function resolvePublicDashboardDateRange(claims: DashboardShareClaims, query: Request["query"]) {
+  const parsed = dashboardMetricsQuerySchema.parse(query);
+  const start = parsed.startDate ?? claims.startDate;
+  const end = parsed.endDate ?? claims.endDate;
+  const startDate = parseISO(start);
+  const endDate = parseISO(end);
+  if (!isValid(startDate) || !isValid(endDate) || startDate > endDate) {
+    const error = new Error("Periodo invalido.");
+    (error as Error & { status?: number }).status = 400;
+    throw error;
+  }
+  return { start, end, startDate, endDate };
+}
+
+async function hasCachedDashboardData(options: {
+  tenantId: number;
+  accounts: Resource[];
+  startDate: string;
+  endDate: string;
+}) {
+  const today = format(new Date(), "yyyy-MM-dd");
+  if (options.endDate > today) {
+    return false;
+  }
+
+  const rows = await db
+    .select({
+      adAccountId: metaAdInsightsDaily.adAccountId,
+      firstDate: sql<string | null>`min(${metaAdInsightsDaily.dateStart})`,
+      lastDate: sql<string | null>`max(${metaAdInsightsDaily.dateStart})`,
+    })
+    .from(metaAdInsightsDaily)
+    .where(
+      and(
+        eq(metaAdInsightsDaily.tenantId, options.tenantId),
+        inArray(metaAdInsightsDaily.adAccountId, options.accounts.map((account) => account.value)),
+        gte(metaAdInsightsDaily.dateStart, options.startDate),
+        lte(metaAdInsightsDaily.dateStart, options.endDate),
+      ),
+    )
+    .groupBy(metaAdInsightsDaily.adAccountId);
+  const requiredEndDate =
+    options.endDate === today ? format(subDays(new Date(), 1), "yyyy-MM-dd") : options.endDate;
+  const coverageByAccount = new Map(rows.map((row) => [row.adAccountId, row] as const));
+
+  return options.accounts.every((account) => {
+    const coverage = coverageByAccount.get(account.value);
+    return Boolean(
+      coverage?.firstDate &&
+        coverage.lastDate &&
+        coverage.firstDate <= options.startDate &&
+        coverage.lastDate >= requiredEndDate,
+    );
+  });
+}
+
+async function resolveDashboardShareContext(req: Request, token: string): Promise<{
   claims: DashboardShareClaims;
   selectedAccounts: Resource[];
   campaignFilterSet: Set<string> | undefined;
@@ -446,12 +615,23 @@ async function resolveDashboardShareContext(token: string): Promise<{
   statusFilterSet: Set<string> | undefined;
 }> {
   let claims: DashboardShareClaims;
-  try {
-    claims = verifyDashboardShareToken(token);
-  } catch {
-    const error = new Error("Link compartilhado invalido ou expirado.");
-    (error as Error & { status?: number }).status = 401;
-    throw error;
+  const link = await getDashboardShareLink(token);
+  if (link) {
+    if (new Date(link.expiresAt).getTime() <= Date.now()) {
+      const error = new Error("Link compartilhado invalido ou expirado.");
+      (error as Error & { status?: number }).status = 401;
+      throw error;
+    }
+    ensureShareUnlocked(req, token);
+    claims = buildShareClaimsFromLink(link);
+  } else {
+    try {
+      claims = verifyDashboardShareToken(token);
+    } catch {
+      const error = new Error("Link compartilhado invalido ou expirado.");
+      (error as Error & { status?: number }).status = 401;
+      throw error;
+    }
   }
   const allResources = await storage.getResourcesByTenant(claims.tenantId);
   const accountResources = allResources.filter((resource) => resource.type === "account");
@@ -476,6 +656,608 @@ async function resolveDashboardShareContext(token: string): Promise<{
 
 metaRouter.use(isAuthenticated);
 
+async function resolveTenantAdAccount(user: User, adAccountId: string): Promise<Resource | null> {
+  const accounts = (await storage.getResourcesByTenant(user.tenantId)).filter(
+    (resource) => resource.type === "account",
+  );
+  return accounts.find((account) => account.value === adAccountId) ?? null;
+}
+
+function buildInitialDashboardSyncRange() {
+  const now = new Date();
+  return {
+    dateStart: format(subDays(now, 89), "yyyy-MM-dd"),
+    dateEnd: format(now, "yyyy-MM-dd"),
+  };
+}
+
+async function upsertTenantMetaAccountResource(options: {
+  tenantId: number;
+  adAccountId: string;
+  accountName: string;
+  accountStatus?: number | null;
+}) {
+  const resources = await storage.getResourcesByTenant(options.tenantId);
+  const existing = resources.find(
+    (resource) => resource.type === "account" && resource.value === options.adAccountId,
+  );
+  const metadata = {
+    accountStatus: typeof options.accountStatus === "number" ? options.accountStatus : null,
+    source: "meta",
+    syncedAt: new Date().toISOString(),
+  };
+
+  if (existing) {
+    return storage.updateResource(existing.id, {
+      name: options.accountName,
+      metadata,
+    }, options.tenantId);
+  }
+
+  return storage.createResource({
+    tenantId: options.tenantId,
+    type: "account",
+    name: options.accountName,
+    value: options.adAccountId,
+    metadata,
+  });
+}
+
+async function ensureHistoricalDashboardRangeForAccounts(options: {
+  tenantId: number;
+  userId: number;
+  accounts: Resource[];
+  startDate?: string;
+  endDate?: string;
+}) {
+  if (!options.startDate || !options.endDate || options.accounts.length === 0) return;
+
+  const requestedStart = parseISO(options.startDate);
+  const requestedEnd = parseISO(options.endDate);
+  if (!isValid(requestedStart) || !isValid(requestedEnd) || requestedStart > requestedEnd) return;
+
+  const defaultWindowStart = subDays(new Date(), 89);
+  if (requestedStart >= defaultWindowStart) return;
+
+  for (const account of options.accounts) {
+    const completedCoverage = await db.query.metaSyncJobs.findFirst({
+      where: and(
+        eq(metaSyncJobs.tenantId, options.tenantId),
+        eq(metaSyncJobs.adAccountId, account.value),
+        inArray(metaSyncJobs.jobType, ["sync_historical_insights", "sync_manual"]),
+        eq(metaSyncJobs.status, "completed"),
+        lte(metaSyncJobs.dateStart, options.startDate),
+        gte(metaSyncJobs.dateEnd, options.endDate),
+      ),
+    });
+    if (completedCoverage) continue;
+
+    const [job] = await db.insert(metaSyncJobs).values({
+      tenantId: options.tenantId,
+      adAccountId: account.value,
+      jobType: "sync_historical_insights",
+      jobSource: "dashboard_filter",
+      dateStart: options.startDate,
+      dateEnd: options.endDate,
+      status: "pending",
+      priority: 30,
+      createdBy: options.userId,
+      updatedAt: new Date(),
+    }).returning();
+
+    await runDashboardSyncJob(job.id);
+  }
+
+  clearDashboardCache();
+}
+
+metaRouter.get("/dashboard/sync-accounts", async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const accounts = (await storage.getResourcesByTenant(user.tenantId)).filter(
+      (resource) => resource.type === "account",
+    );
+    const resourceByAccount = new Map(accounts.map((account) => [account.value, account] as const));
+    const syncRows = await db.query.dashboardSyncAccounts.findMany({
+      where: eq(dashboardSyncAccounts.tenantId, user.tenantId),
+    });
+
+    return res.json({
+      accounts: syncRows.flatMap((sync) => {
+        const account = resourceByAccount.get(sync.adAccountId);
+        if (!account) return [];
+        return {
+          id: sync.id,
+          resourceId: account.id,
+          tenantId: user.tenantId,
+          adAccountId: sync.adAccountId,
+          accountName: sync.accountName,
+          syncEnabled: sync.syncEnabled,
+          syncStatus: sync.syncStatus,
+          syncFrequencyMinutes: sync.syncFrequencyMinutes,
+          firstEnabledAt: sync.firstEnabledAt,
+          lastEnabledAt: sync.lastEnabledAt,
+          disabledAt: sync.disabledAt,
+          lastManualSyncAt: sync.lastManualSyncAt,
+          lastAutoSyncAt: sync.lastAutoSyncAt,
+          lastSuccessSyncAt: sync.lastSuccessSyncAt,
+          lastFailedSyncAt: sync.lastFailedSyncAt,
+          lastErrorMessage: sync.lastErrorMessage,
+          createdAt: sync.createdAt,
+          updatedAt: sync.updatedAt,
+        };
+      }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+metaRouter.post("/dashboard/sync-accounts/import-meta-accounts", async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const metaAccess = await getMetaAccess(user.tenantId);
+    if (!metaAccess) {
+      return res.status(400).json({
+        message: "Integracao com Meta nao esta conectada, token expirado ou app secret ausente.",
+      });
+    }
+
+    const [metaAccounts, existingResources, existingSyncRows] = await Promise.all([
+      fetchMetaAdAccountsForDashboard({
+        accessToken: metaAccess.accessToken,
+        appSecretProof: metaAccess.appSecretProof,
+      }),
+      storage.getResourcesByTenant(user.tenantId),
+      db.query.dashboardSyncAccounts.findMany({
+        where: eq(dashboardSyncAccounts.tenantId, user.tenantId),
+      }),
+    ]);
+
+    const existingResourceByValue = new Map(
+      existingResources
+        .filter((resource) => resource.type === "account")
+        .map((resource) => [resource.value, resource] as const),
+    );
+    const existingSyncByValue = new Map(existingSyncRows.map((row) => [row.adAccountId, row] as const));
+
+    const importedAccounts = [];
+    const now = new Date();
+
+    for (const account of metaAccounts) {
+      const adAccountId =
+        typeof account.id === "string" && account.id.trim().length > 0
+          ? account.id.trim()
+          : typeof account.account_id === "string" && account.account_id.trim().length > 0
+            ? account.account_id.trim()
+            : null;
+      if (!adAccountId) continue;
+
+      const accountName =
+        typeof account.name === "string" && account.name.trim().length > 0
+          ? account.name.trim()
+          : adAccountId;
+      const metadata = {
+        accountStatus: typeof account.account_status === "number" ? account.account_status : null,
+        source: "meta",
+        syncedAt: now.toISOString(),
+      };
+
+      const existingResource = existingResourceByValue.get(adAccountId);
+      const resource = existingResource
+        ? await storage.updateResource(existingResource.id, { name: accountName, metadata }, user.tenantId)
+        : await storage.createResource({
+            tenantId: user.tenantId,
+            type: "account",
+            name: accountName,
+            value: adAccountId,
+            metadata,
+          });
+
+      const existingSync = existingSyncByValue.get(adAccountId);
+      const [syncAccount] = await db
+        .insert(dashboardSyncAccounts)
+        .values({
+          tenantId: user.tenantId,
+          adAccountId,
+          accountName,
+          syncEnabled: existingSync?.syncEnabled ?? false,
+          syncStatus: existingSync?.syncStatus ?? "never_synced",
+          createdBy: user.id,
+          updatedBy: user.id,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [dashboardSyncAccounts.tenantId, dashboardSyncAccounts.adAccountId],
+          set: {
+            accountName,
+            updatedBy: user.id,
+            updatedAt: now,
+          },
+        })
+        .returning();
+
+      importedAccounts.push({
+        resourceId: resource?.id ?? existingResource?.id ?? null,
+        adAccountId,
+        accountName,
+        syncAccount,
+      });
+    }
+
+    return res.json({
+      imported: importedAccounts.length,
+      accounts: importedAccounts,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+metaRouter.get("/dashboard/sync-accounts/meta-accounts", async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const metaAccess = await getMetaAccess(user.tenantId);
+    if (!metaAccess) {
+      return res.status(400).json({
+        message: "Integracao com Meta nao esta conectada, token expirado ou app secret ausente.",
+      });
+    }
+
+    const [metaAccounts, syncRows] = await Promise.all([
+      fetchMetaAdAccountsForDashboard({
+        accessToken: metaAccess.accessToken,
+        appSecretProof: metaAccess.appSecretProof,
+      }),
+      db.query.dashboardSyncAccounts.findMany({
+        where: eq(dashboardSyncAccounts.tenantId, user.tenantId),
+      }),
+    ]);
+    const syncByAccountId = new Map(syncRows.map((row) => [row.adAccountId, row] as const));
+
+    return res.json({
+      accounts: metaAccounts.flatMap((account) => {
+        const adAccountId =
+          typeof account.id === "string" && account.id.trim().length > 0
+            ? account.id.trim()
+            : typeof account.account_id === "string" && account.account_id.trim().length > 0
+              ? account.account_id.trim()
+              : null;
+        if (!adAccountId) return [];
+
+        const accountName =
+          typeof account.name === "string" && account.name.trim().length > 0
+            ? account.name.trim()
+            : adAccountId;
+        const sync = syncByAccountId.get(adAccountId);
+
+        return {
+          adAccountId,
+          accountName,
+          accountStatus: typeof account.account_status === "number" ? account.account_status : null,
+          isAdded: Boolean(sync),
+          syncEnabled: sync?.syncEnabled ?? false,
+          syncStatus: sync?.syncStatus ?? "never_synced",
+          lastSuccessSyncAt: sync?.lastSuccessSyncAt ?? null,
+          lastErrorMessage: sync?.lastErrorMessage ?? null,
+        };
+      }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+metaRouter.post("/dashboard/sync-accounts/:adAccountId/add", async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const adAccountId = req.params.adAccountId.trim();
+    const body = dashboardAddSyncAccountBodySchema.parse(req.body ?? {});
+    let accountName = body.accountName?.trim() || "";
+    let accountStatus: number | null = null;
+    let resource = await resolveTenantAdAccount(user, adAccountId);
+
+    if (resource) {
+      accountName = accountName || resource.name;
+      const metadata = (resource.metadata ?? {}) as Record<string, unknown>;
+      accountStatus = typeof metadata.accountStatus === "number" ? metadata.accountStatus : null;
+    } else {
+      const metaAccess = await getMetaAccess(user.tenantId);
+      if (!metaAccess) {
+        return res.status(400).json({
+          message: "Integracao com Meta nao esta conectada, token expirado ou app secret ausente.",
+        });
+      }
+
+      const metaAccounts = await fetchMetaAdAccountsForDashboard({
+        accessToken: metaAccess.accessToken,
+        appSecretProof: metaAccess.appSecretProof,
+      });
+      const metaAccount = metaAccounts.find((account) => {
+        const id = typeof account.id === "string" ? account.id.trim() : "";
+        const accountId = typeof account.account_id === "string" ? account.account_id.trim() : "";
+        return id === adAccountId || accountId === adAccountId;
+      });
+
+      if (!metaAccount) {
+        return res.status(404).json({ message: "Conta nao encontrada na integracao Meta." });
+      }
+
+      accountName =
+        accountName ||
+        (typeof metaAccount.name === "string" && metaAccount.name.trim().length > 0
+          ? metaAccount.name.trim()
+          : adAccountId);
+      accountStatus = typeof metaAccount.account_status === "number" ? metaAccount.account_status : null;
+      resource = await upsertTenantMetaAccountResource({
+        tenantId: user.tenantId,
+        adAccountId,
+        accountName,
+        accountStatus,
+      });
+    }
+
+    accountName = accountName || adAccountId;
+
+    const now = new Date();
+    const [syncAccount] = await db
+      .insert(dashboardSyncAccounts)
+      .values({
+        tenantId: user.tenantId,
+        adAccountId,
+        accountName,
+        syncEnabled: false,
+        syncStatus: "never_synced",
+        createdBy: user.id,
+        updatedBy: user.id,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [dashboardSyncAccounts.tenantId, dashboardSyncAccounts.adAccountId],
+        set: {
+          accountName,
+          updatedBy: user.id,
+          updatedAt: now,
+        },
+      })
+      .returning();
+
+    return res.json({ resource, account: syncAccount, initialJob: null });
+  } catch (err) {
+    next(err);
+  }
+});
+
+metaRouter.post("/dashboard/sync-accounts/:adAccountId/enable", async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const adAccountId = req.params.adAccountId.trim();
+    const account = await resolveTenantAdAccount(user, adAccountId);
+    if (!account) {
+      return res.status(404).json({ message: "Conta nao encontrada ou nao pertence ao tenant atual." });
+    }
+
+    const now = new Date();
+    const existing = await db.query.dashboardSyncAccounts.findFirst({
+      where: and(
+        eq(dashboardSyncAccounts.tenantId, user.tenantId),
+        eq(dashboardSyncAccounts.adAccountId, adAccountId),
+      ),
+    });
+
+    const [syncAccount] = await db
+      .insert(dashboardSyncAccounts)
+      .values({
+        tenantId: user.tenantId,
+        adAccountId,
+        accountName: account.name,
+        syncEnabled: true,
+        syncStatus: "active",
+        firstEnabledAt: now,
+        lastEnabledAt: now,
+        createdBy: user.id,
+        updatedBy: user.id,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [dashboardSyncAccounts.tenantId, dashboardSyncAccounts.adAccountId],
+        set: {
+          accountName: account.name,
+          syncEnabled: true,
+          syncStatus: "active",
+          firstEnabledAt: existing?.firstEnabledAt ?? now,
+          lastEnabledAt: now,
+          disabledAt: null,
+          updatedBy: user.id,
+          updatedAt: now,
+        },
+      })
+      .returning();
+
+    let initialJob = null;
+    if (!existing?.lastSuccessSyncAt) {
+      const initialRange = buildInitialDashboardSyncRange();
+      initialJob = await createManualDashboardSyncJob({
+        tenantId: user.tenantId,
+        adAccountId,
+        userId: user.id,
+        dateStart: initialRange.dateStart,
+        dateEnd: initialRange.dateEnd,
+      });
+      await db
+        .update(dashboardSyncAccounts)
+        .set({
+          syncStatus: "syncing",
+          lastErrorMessage: null,
+          updatedBy: user.id,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(dashboardSyncAccounts.tenantId, user.tenantId),
+            eq(dashboardSyncAccounts.adAccountId, adAccountId),
+          ),
+        );
+      void runDashboardSyncJob(initialJob.id).catch((error) => {
+        console.error("Falha ao executar job inicial do dashboard", {
+          jobId: initialJob?.id,
+          tenantId: user.tenantId,
+          adAccountId,
+          error,
+        });
+      });
+    }
+
+    return res.json({
+      account: initialJob ? { ...syncAccount, syncStatus: "syncing", lastErrorMessage: null } : syncAccount,
+      initialJob,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+metaRouter.post("/dashboard/sync-accounts/:adAccountId/disable", async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const adAccountId = req.params.adAccountId.trim();
+    const account = await resolveTenantAdAccount(user, adAccountId);
+    if (!account) {
+      return res.status(404).json({ message: "Conta nao encontrada ou nao pertence ao tenant atual." });
+    }
+
+    const now = new Date();
+    const [syncAccount] = await db
+      .insert(dashboardSyncAccounts)
+      .values({
+        tenantId: user.tenantId,
+        adAccountId,
+        accountName: account.name,
+        syncEnabled: false,
+        syncStatus: "paused",
+        disabledAt: now,
+        createdBy: user.id,
+        updatedBy: user.id,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [dashboardSyncAccounts.tenantId, dashboardSyncAccounts.adAccountId],
+        set: {
+          accountName: account.name,
+          syncEnabled: false,
+          syncStatus: "paused",
+          disabledAt: now,
+          updatedBy: user.id,
+          updatedAt: now,
+        },
+      })
+      .returning();
+
+    return res.json({ account: syncAccount });
+  } catch (err) {
+    next(err);
+  }
+});
+
+metaRouter.post("/dashboard/sync-accounts/:adAccountId/sync-now", async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const adAccountId = req.params.adAccountId.trim();
+    const body = dashboardSyncNowBodySchema.parse(req.body ?? {});
+    if (body.dateStart && body.dateEnd) {
+      const startDate = parseISO(body.dateStart);
+      const endDate = parseISO(body.dateEnd);
+      if (!isValid(startDate) || !isValid(endDate)) {
+        return res.status(400).json({ message: "Parametros de data invalidos." });
+      }
+      if (startDate > endDate) {
+        return res.status(400).json({ message: "dateStart deve ser menor ou igual a dateEnd." });
+      }
+    }
+
+    const account = await resolveTenantAdAccount(user, adAccountId);
+    if (!account) {
+      return res.status(404).json({ message: "Conta nao encontrada ou nao pertence ao tenant atual." });
+    }
+
+    const now = new Date();
+    await db
+      .insert(dashboardSyncAccounts)
+      .values({
+        tenantId: user.tenantId,
+        adAccountId,
+        accountName: account.name,
+        syncEnabled: false,
+        syncStatus: "never_synced",
+        lastManualSyncAt: now,
+        createdBy: user.id,
+        updatedBy: user.id,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [dashboardSyncAccounts.tenantId, dashboardSyncAccounts.adAccountId],
+        set: {
+          accountName: account.name,
+          lastManualSyncAt: now,
+          updatedBy: user.id,
+          updatedAt: now,
+        },
+      });
+
+    const job = await createManualDashboardSyncJob({
+      tenantId: user.tenantId,
+      adAccountId,
+      userId: user.id,
+      dateStart: body.dateStart,
+      dateEnd: body.dateEnd,
+    });
+    const result = await runDashboardSyncJob(job.id);
+    clearDashboardCache();
+
+    return res.json({ job: { ...job, status: "completed" }, result });
+  } catch (err) {
+    next(err);
+  }
+});
+
+metaRouter.get("/dashboard/sync-accounts/:adAccountId/status", async (req, res, next) => {
+  try {
+    const user = req.user as User;
+    const adAccountId = req.params.adAccountId.trim();
+    const account = await resolveTenantAdAccount(user, adAccountId);
+    if (!account) {
+      return res.status(404).json({ message: "Conta nao encontrada ou nao pertence ao tenant atual." });
+    }
+
+    const syncAccount = await db.query.dashboardSyncAccounts.findFirst({
+      where: and(
+        eq(dashboardSyncAccounts.tenantId, user.tenantId),
+        eq(dashboardSyncAccounts.adAccountId, adAccountId),
+      ),
+    });
+    const recentJobs = await db.query.metaSyncJobs.findMany({
+      where: and(
+        eq(metaSyncJobs.tenantId, user.tenantId),
+        eq(metaSyncJobs.adAccountId, adAccountId),
+      ),
+      orderBy: [desc(metaSyncJobs.createdAt)],
+      limit: 5,
+    });
+
+    return res.json({
+      account: syncAccount ?? {
+        adAccountId,
+        accountName: account.name,
+        syncEnabled: false,
+        syncStatus: "never_synced",
+      },
+      jobs: recentJobs,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 metaRouter.post("/dashboard/share", async (req, res, next) => {
   try {
     const user = req.user as User;
@@ -491,12 +1273,14 @@ metaRouter.post("/dashboard/share", async (req, res, next) => {
       });
     }
 
-    const expiresAt = new Date(
-      Date.now() + (body.expiresInHours ?? 72) * 60 * 60 * 1000,
-    ).toISOString();
+    const expiresAt = new Date(Date.now() + (body.expiresInHours ?? 72) * 60 * 60 * 1000);
+    const publicId = crypto.randomBytes(24).toString("base64url");
+    const passwordHash = await hashPassword(body.password);
 
-    const token = createDashboardShareToken({
+    const [shareLink] = await db.insert(dashboardShareLinks).values({
       tenantId: user.tenantId,
+      publicId,
+      passwordHash,
       startDate: body.startDate,
       endDate: body.endDate,
       accountIds: body.accountIds,
@@ -504,12 +1288,14 @@ metaRouter.post("/dashboard/share", async (req, res, next) => {
       objective: body.objective ?? null,
       status: body.status ?? null,
       expiresAt,
-    });
+      createdBy: user.id,
+      updatedAt: new Date(),
+    }).returning();
 
     return res.json({
-      token,
-      path: `/shared/dashboard?token=${encodeURIComponent(token)}`,
-      expiresAt,
+      token: shareLink.publicId,
+      path: `/shared/dashboard?token=${encodeURIComponent(shareLink.publicId)}`,
+      expiresAt: shareLink.expiresAt,
     });
   } catch (err) {
     next(err);
@@ -642,7 +1428,7 @@ metaRouter.post("/dashboard/goals", async (req, res, next) => {
 publicMetaRouter.get("/dashboard/share/metadata", async (req, res, next) => {
   try {
     const token = parseQueryParam(req.query.token);
-    const { claims, selectedAccounts } = await resolveDashboardShareContext(token);
+    const { claims, selectedAccounts } = await resolveDashboardShareContext(req, token);
 
     return res.json({
       expiresAt: claims.expiresAt,
@@ -666,50 +1452,110 @@ publicMetaRouter.get("/dashboard/share/metadata", async (req, res, next) => {
   }
 });
 
+publicMetaRouter.get("/dashboard/share/status", async (req, res, next) => {
+  try {
+    const token = parseQueryParam(req.query.token);
+    const link = await getDashboardShareLink(token);
+    if (!link) {
+      try {
+        verifyDashboardShareToken(token);
+        return res.json({ exists: true, requiresPassword: false, unlocked: true });
+      } catch {
+        return res.status(404).json({ message: "Link compartilhado invalido ou expirado." });
+      }
+    }
+    if (new Date(link.expiresAt).getTime() <= Date.now()) {
+      return res.status(401).json({ message: "Link compartilhado invalido ou expirado." });
+    }
+    return res.json({
+      exists: true,
+      requiresPassword: true,
+      unlocked: Boolean(req.session.dashboardShareUnlocks?.[token]),
+      expiresAt: link.expiresAt,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+publicMetaRouter.post("/dashboard/share/unlock", publicDashboardShareUnlockRateLimit, async (req, res, next) => {
+  try {
+    const token = parseQueryParam(req.query.token);
+    const body = dashboardShareUnlockBodySchema.parse(req.body ?? {});
+    const link = await getDashboardShareLink(token);
+    if (!link || new Date(link.expiresAt).getTime() <= Date.now()) {
+      return res.status(401).json({ message: "Link compartilhado invalido ou expirado." });
+    }
+
+    const valid = await verifyPassword(body.password, link.passwordHash);
+    if (!valid) {
+      return res.status(401).json({ message: "Senha invalida." });
+    }
+
+    req.session.dashboardShareUnlocks = {
+      ...(req.session.dashboardShareUnlocks ?? {}),
+      [token]: true,
+    };
+    req.session.save((saveError) => {
+      if (saveError) {
+        next(saveError);
+        return;
+      }
+      res.json({ unlocked: true });
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 publicMetaRouter.get("/dashboard/metrics", async (req, res, next) => {
   try {
     const token = parseQueryParam(req.query.token);
     const { claims, selectedAccounts, campaignFilterSet, objectiveFilterSet, statusFilterSet } =
-      await resolveDashboardShareContext(token);
+      await resolveDashboardShareContext(req, token);
 
-    const metaAccess = await getMetaAccess(claims.tenantId);
-    if (!metaAccess) {
-      return res.status(400).json({
-        message:
-          "Integracao com Meta nao esta conectada, token expirado ou app secret ausente.",
-      });
-    }
-
-    const settings = await storage.getAppSettings();
-    const metaAppSecret = resolveMetaAppSecret(settings);
-    if (!metaAppSecret) {
-      return res.status(500).json({ message: "Meta app secret nao configurado." });
-    }
-
-    const startDate = parseISO(claims.startDate);
-    const endDate = parseISO(claims.endDate);
+    const requestedRange = resolvePublicDashboardDateRange(claims, req.query);
+    const startDate = requestedRange.startDate;
+    const endDate = requestedRange.endDate;
     const { previousStart, previousEnd } = buildPreviousMonthRange(startDate, endDate);
-    const goalRange = resolveGoalPeriodRange(claims.startDate, claims.endDate);
+    const goalRange = resolveGoalPeriodRange(requestedRange.start, requestedRange.end);
     if (!goalRange) {
       return res.status(400).json({ message: "Periodo de metas invalido." });
     }
+    if (!(await hasCachedDashboardData({
+      tenantId: claims.tenantId,
+      accounts: selectedAccounts,
+      startDate: requestedRange.start,
+      endDate: requestedRange.end,
+    }))) {
+      return res.status(404).json({
+        message: "Dados indisponiveis para este periodo. Solicite ao administrador o carregamento desses dados.",
+      });
+    }
 
-    const client = new MetaGraphClient(metaAccess.accessToken, metaAppSecret);
     const payload = await getOrCreateDashboardCache(
-      buildDashboardCacheKey("public-dashboard-metrics", { token }),
+      buildDashboardCacheKey("public-dashboard-metrics", {
+        token,
+        startDate: requestedRange.start,
+        endDate: requestedRange.end,
+      }),
       DASHBOARD_METRICS_CACHE_TTL_MS,
       async () => {
-        const metrics = await fetchMetaDashboardMetrics({
+        const metrics = await fetchDashboardMetricsFromCache({
+          tenantId: claims.tenantId,
           accounts: selectedAccounts,
-          client,
           campaignFilterSet,
           objectiveFilterSet,
           statusFilterSet,
-          startDate: claims.startDate,
-          endDate: claims.endDate,
+          startDate: requestedRange.start,
+          endDate: requestedRange.end,
           previousStartDate: previousStart,
           previousEndDate: previousEnd,
         });
+        const syncSummary = await getDashboardSyncSummary(
+          claims.tenantId,
+          selectedAccounts.map((account) => account.value),
+        );
         const goals = await storage.getDashboardGoalsByPeriod(
           claims.tenantId,
           goalRange.startDate,
@@ -746,10 +1592,10 @@ publicMetaRouter.get("/dashboard/metrics", async (req, res, next) => {
           };
         });
 
-        return {
+        const response = {
           dateRange: {
-            start: claims.startDate,
-            end: claims.endDate,
+            start: requestedRange.start,
+            end: requestedRange.end,
             previousStart,
             previousEnd,
           },
@@ -767,6 +1613,18 @@ publicMetaRouter.get("/dashboard/metrics", async (req, res, next) => {
                 })
               : null,
           timeline: metrics.timeline,
+          ...syncSummary,
+        };
+
+        return {
+          ...response,
+          data: {
+            totals: response.totals,
+            previousTotals: response.previousTotals,
+            goalTotals: response.goalTotals,
+            accounts: response.accounts,
+            timeline: response.timeline,
+          },
         };
       },
     );
@@ -781,39 +1639,36 @@ publicMetaRouter.get("/dashboard/top-creatives", async (req, res, next) => {
   try {
     const token = parseQueryParam(req.query.token);
     const { claims, selectedAccounts, campaignFilterSet, objectiveFilterSet, statusFilterSet } =
-      await resolveDashboardShareContext(token);
-
-    const metaAccess = await getMetaAccess(claims.tenantId);
-    if (!metaAccess) {
-      return res.status(400).json({
-        message:
-          "Integracao com Meta nao esta conectada, token expirado ou app secret ausente.",
+      await resolveDashboardShareContext(req, token);
+    const requestedRange = resolvePublicDashboardDateRange(claims, req.query);
+    if (!(await hasCachedDashboardData({
+      tenantId: claims.tenantId,
+      accounts: selectedAccounts,
+      startDate: requestedRange.start,
+      endDate: requestedRange.end,
+    }))) {
+      return res.status(404).json({
+        message: "Dados indisponiveis para este periodo. Solicite ao administrador o carregamento desses dados.",
       });
     }
-
-    const settings = await storage.getAppSettings();
-    const metaAppSecret = resolveMetaAppSecret(settings);
-    if (!metaAppSecret) {
-      return res.status(500).json({ message: "Meta app secret nao configurado." });
-    }
-
-    const client = new MetaGraphClient(metaAccess.accessToken, metaAppSecret);
     const payload = await getOrCreateDashboardCache(
-      buildDashboardCacheKey("public-dashboard-top-creatives", { token }),
+      buildDashboardCacheKey("public-dashboard-top-creatives", {
+        token,
+        startDate: requestedRange.start,
+        endDate: requestedRange.end,
+      }),
       DASHBOARD_TOP_CREATIVES_CACHE_TTL_MS,
-      async () => {
-        const accountsWithCreatives = await fetchMetaDashboardTopCreatives({
+      async () => ({
+        accounts: await fetchDashboardTopCreativesFromCache({
+          tenantId: claims.tenantId,
           accounts: selectedAccounts,
-          client,
           campaignFilterSet,
           objectiveFilterSet,
           statusFilterSet,
-          startDate: claims.startDate,
-          endDate: claims.endDate,
-        });
-
-        return { accounts: accountsWithCreatives };
-      },
+          startDate: requestedRange.start,
+          endDate: requestedRange.end,
+        }),
+      }),
     );
 
     return res.json(payload);
@@ -847,6 +1702,7 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
 
     if (selectedAccounts.length === 0) {
       return res.json({
+        data: null,
         dateRange: {
           start: query.startDate ?? null,
           end: query.endDate ?? null,
@@ -858,21 +1714,11 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
         goalTotals: null,
         accounts: [],
         timeline: [],
+        last_synced_at: null,
+        sync_status: "never_synced",
+        is_updating: false,
+        last_error_message: null,
       });
-    }
-
-    const metaAccess = await getMetaAccess(user.tenantId);
-    if (!metaAccess) {
-      return res.status(400).json({
-        message:
-          "Integracao com Meta nao esta conectada, token expirado ou app secret ausente.",
-      });
-    }
-
-    const settings = await storage.getAppSettings();
-    const metaAppSecret = resolveMetaAppSecret(settings);
-    if (!metaAppSecret) {
-      return res.status(500).json({ message: "Meta app secret nao configurado." });
     }
 
     const campaignFilterSet =
@@ -914,7 +1760,14 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
       return res.status(400).json({ message: "Periodo de metas invalido." });
     }
 
-    const client = new MetaGraphClient(metaAccess.accessToken, metaAppSecret);
+    await ensureHistoricalDashboardRangeForAccounts({
+      tenantId: user.tenantId,
+      userId: user.id,
+      accounts: selectedAccounts,
+      startDate: query.startDate,
+      endDate: query.endDate,
+    });
+
     const cacheKey = buildDashboardCacheKey("dashboard-metrics", {
       tenantId: user.tenantId,
       startDate: query.startDate ?? null,
@@ -930,9 +1783,9 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
       cacheKey,
       DASHBOARD_METRICS_CACHE_TTL_MS,
       async () => {
-        const metrics = await fetchMetaDashboardMetrics({
+        const metrics = await fetchDashboardMetricsFromCache({
+          tenantId: user.tenantId,
           accounts: selectedAccounts,
-          client,
           campaignFilterSet,
           campaignNameSearch: campaignNameSearch || undefined,
           objectiveFilterSet,
@@ -942,6 +1795,10 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
           previousStartDate: previousStart ?? undefined,
           previousEndDate: previousEnd ?? undefined,
         });
+        const syncSummary = await getDashboardSyncSummary(
+          user.tenantId,
+          selectedAccounts.map((account) => account.value),
+        );
         const goals =
           query.startDate && query.endDate
             ? await storage.getDashboardGoalsByPeriod(
@@ -981,7 +1838,7 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
           };
         });
 
-        return {
+        const response = {
           dateRange: {
             start: query.startDate ?? null,
             end: query.endDate ?? null,
@@ -1002,6 +1859,18 @@ metaRouter.get("/dashboard/metrics", async (req, res, next) => {
               : null,
           accounts: accountsWithGoals,
           timeline: metrics.timeline,
+          ...syncSummary,
+        };
+
+        return {
+          ...response,
+          data: {
+            totals: response.totals,
+            previousTotals: response.previousTotals,
+            goalTotals: response.goalTotals,
+            accounts: response.accounts,
+            timeline: response.timeline,
+          },
         };
       },
     );
@@ -1039,20 +1908,6 @@ metaRouter.get("/dashboard/top-creatives", async (req, res, next) => {
       return res.json({ accounts: [] });
     }
 
-    const metaAccess = await getMetaAccess(user.tenantId);
-    if (!metaAccess) {
-      return res.status(400).json({
-        message:
-          "Integracao com Meta nao esta conectada, token expirado ou app secret ausente.",
-      });
-    }
-
-    const settings = await storage.getAppSettings();
-    const metaAppSecret = resolveMetaAppSecret(settings);
-    if (!metaAppSecret) {
-      return res.status(500).json({ message: "Meta app secret nao configurado." });
-    }
-
     const campaignFilterSet =
       campaignIdParams && campaignIdParams.length > 0
         ? new Set(campaignIdParams.map(String))
@@ -1066,7 +1921,6 @@ metaRouter.get("/dashboard/top-creatives", async (req, res, next) => {
         ? new Set(statusParam.map((value) => value.toUpperCase()))
         : undefined;
 
-    const client = new MetaGraphClient(metaAccess.accessToken, metaAppSecret);
     const cacheKey = buildDashboardCacheKey("dashboard-top-creatives", {
       tenantId: user.tenantId,
       startDate: query.startDate ?? null,
@@ -1081,20 +1935,18 @@ metaRouter.get("/dashboard/top-creatives", async (req, res, next) => {
     const payload = await getOrCreateDashboardCache(
       cacheKey,
       DASHBOARD_TOP_CREATIVES_CACHE_TTL_MS,
-      async () => {
-        const accountsWithCreatives = await fetchMetaDashboardTopCreatives({
+      async () => ({
+        accounts: await fetchDashboardTopCreativesFromCache({
+          tenantId: user.tenantId,
           accounts: selectedAccounts,
-          client,
           campaignFilterSet,
           campaignNameSearch: campaignNameSearch || undefined,
           objectiveFilterSet,
           statusFilterSet,
           startDate: query.startDate ?? undefined,
           endDate: query.endDate ?? undefined,
-        });
-
-        return { accounts: accountsWithCreatives };
-      },
+        }),
+      }),
     );
 
     return res.json(payload);

@@ -285,6 +285,14 @@ export class MetaGraphClient implements MetaGraphApiClient {
     });
   }
 
+  async fetchAds(accountId: string): Promise<GraphAd[]> {
+    return this.fetchEdge<GraphAd>(`/${accountId}/ads`, {
+      fields:
+        "id,name,campaign_id,adset_id,status,effective_status,creative{id,name,thumbnail_url,image_url,object_story_spec{link_data{picture},video_data{image_url}},asset_feed_spec{images{url},videos{thumbnail_url}}}",
+      limit: "200",
+    });
+  }
+
   async fetchCampaignInsights(
     accountId: string,
     timeRange: TimeRange,
@@ -332,6 +340,33 @@ export class MetaGraphClient implements MetaGraphApiClient {
     }
 
     return this.fetchInsightsEdge<GraphAdsetInsightRow>(
+      `/${accountId}/insights`,
+      params,
+      timeRange,
+      options?.timeIncrement === 1 ? DAILY_INSIGHTS_CHUNK_DAYS : DEFAULT_INSIGHTS_CHUNK_DAYS,
+    );
+  }
+
+  async fetchAdInsights(
+    accountId: string,
+    timeRange: TimeRange,
+    options?: {
+      timeIncrement?: number;
+    },
+  ): Promise<GraphAdLevelInsightRow[]> {
+    const params: Record<string, string> = {
+      level: "ad",
+      fields:
+        "account_id,account_name,campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,date_start,date_stop,spend,impressions,reach,frequency,clicks,inline_link_clicks,actions,cost_per_action_type,ctr,cpc,cpm,cpp,video_play_actions,video_p25_watched_actions,video_p50_watched_actions,video_p75_watched_actions,video_p95_watched_actions,video_p100_watched_actions,video_thruplay_watched_actions",
+      limit: "200",
+      action_attribution_windows: JSON.stringify(DEFAULT_ATTRIBUTION_WINDOWS),
+    };
+
+    if (typeof options?.timeIncrement === "number" && options.timeIncrement > 0) {
+      params.time_increment = String(options.timeIncrement);
+    }
+
+    return this.fetchInsightsEdge<GraphAdLevelInsightRow>(
       `/${accountId}/insights`,
       params,
       timeRange,
@@ -509,10 +544,6 @@ export class MetaGraphClient implements MetaGraphApiClient {
       if (asset.permalink_url) return asset.permalink_url;
     }
 
-    if (meta.image_url) {
-      return meta.image_url;
-    }
-
     if (meta.asset_feed_spec?.images && meta.asset_feed_spec.images.length > 0) {
       const image = meta.asset_feed_spec.images[0];
       if (image.url) {
@@ -522,6 +553,10 @@ export class MetaGraphClient implements MetaGraphApiClient {
 
     if (meta.object_story_spec?.link_data?.picture) {
       return meta.object_story_spec.link_data.picture;
+    }
+
+    if (meta.image_url) {
+      return meta.image_url;
     }
 
     if (meta.object_story_spec?.video_data?.image_url) {
@@ -538,6 +573,50 @@ export class MetaGraphClient implements MetaGraphApiClient {
     if (meta.thumbnail_url) return meta.thumbnail_url;
 
     return null;
+  }
+
+  async fetchCreativePreviewSources(
+    accountId: string,
+    creativeIds: string[],
+  ): Promise<Map<string, {
+    name: string | null;
+    previewUrl: string | null;
+    thumbnailUrl: string | null;
+    rawJson: GraphAdCreative;
+  }>> {
+    const uniqueCreativeIds = Array.from(new Set(creativeIds.filter(Boolean)));
+    if (uniqueCreativeIds.length === 0) {
+      return new Map();
+    }
+
+    const creativeMetadataMap = await this.fetchCreativesMetadata(uniqueCreativeIds);
+    const creativeImageHashes = Array.from(
+      new Set(
+        uniqueCreativeIds.flatMap((creativeId) =>
+          this.getCreativeImageHashes(creativeMetadataMap.get(creativeId)),
+        ),
+      ),
+    );
+    const adImageAssets = await this.fetchAdImagesByHashes(accountId, creativeImageHashes);
+    const result = new Map<string, {
+      name: string | null;
+      previewUrl: string | null;
+      thumbnailUrl: string | null;
+      rawJson: GraphAdCreative;
+    }>();
+
+    for (const creativeId of uniqueCreativeIds) {
+      const metadata = creativeMetadataMap.get(creativeId);
+      if (!metadata) continue;
+      result.set(creativeId, {
+        name: metadata.name ?? metadata.id ?? null,
+        previewUrl: this.pickCreativeThumbnail(metadata, adImageAssets),
+        thumbnailUrl: metadata.thumbnail_url ?? null,
+        rawJson: metadata,
+      });
+    }
+
+    return result;
   }
 
   async fetchCampaignAdReports(

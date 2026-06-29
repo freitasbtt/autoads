@@ -19,8 +19,6 @@ import { cn } from "@/lib/utils";
 
 import type {
   DashboardAccountMetrics,
-  DashboardCampaignIndexEntry,
-  DashboardCampaignMetrics,
   DashboardMetricsResponse,
   DashboardTopCreativesAccountGroup,
 } from "../types";
@@ -50,11 +48,6 @@ type DashboardCampaignsViewProps = {
   accounts: DashboardAccountMetrics[];
   hasActiveFilters: boolean;
   onRetryMetrics: () => void;
-  onOpenCampaignCreatives: (
-    campaign: DashboardCampaignMetrics,
-    accountValue: string,
-  ) => void;
-  campaignIndex: Map<string, DashboardCampaignIndexEntry>;
   topCreativesByAccount: DashboardTopCreativesAccountGroup[];
   isTopCreativesLoading: boolean;
   isTopCreativesFetching: boolean;
@@ -74,8 +67,6 @@ export function DashboardCampaignsView({
   accounts,
   hasActiveFilters,
   onRetryMetrics,
-  onOpenCampaignCreatives,
-  campaignIndex,
   topCreativesByAccount,
   isTopCreativesLoading,
   isTopCreativesFetching,
@@ -404,19 +395,7 @@ export function DashboardCampaignsView({
                                 <td className="px-4 py-4 text-right font-mono align-top">
                                   {formatPercent(ctr)}
                                 </td>
-                                <td className="px-4 py-4 text-right align-top">
-                                  {!isSharedMode && (
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() =>
-                                        onOpenCampaignCreatives(campaign, account.value)
-                                      }
-                                    >
-                                      Ver criativos
-                                    </Button>
-                                  )}
-                                </td>
+                                <td className="px-4 py-4 text-right align-top" />
                               </tr>
                             );
                           })}
@@ -466,12 +445,7 @@ export function DashboardCampaignsView({
                     </div>
                   ) : (
                     <div className="grid gap-4 lg:grid-cols-5 print:grid-cols-2">
-                      {creativeGroup.creatives.map((creative) => {
-                        const indexed = campaignIndex.get(
-                          `${creative.accountValue}:${creative.campaignId}`,
-                        );
-
-                        return (
+                      {creativeGroup.creatives.map((creative) => (
                           <div
                             key={`${creative.campaignId}-${creative.ad_id}`}
                             className="relative flex h-full flex-col overflow-hidden rounded-[24px] border border-slate-200/80 bg-white/96 shadow-[0_18px_40px_-34px_rgba(15,23,42,0.32)] print:break-inside-avoid"
@@ -548,23 +522,9 @@ export function DashboardCampaignsView({
                                   </div>
                                 </div>
                               </div>
-
-                              {indexed && !isSharedMode && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="mt-auto"
-                                  onClick={() =>
-                                    onOpenCampaignCreatives(indexed.campaign, indexed.accountValue)
-                                  }
-                                >
-                                  Ver criativos da campanha
-                                </Button>
-                              )}
                             </div>
                           </div>
-                        );
-                      })}
+                      ))}
                     </div>
                   )}
                 </div>
