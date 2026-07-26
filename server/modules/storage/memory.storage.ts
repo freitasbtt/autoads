@@ -362,6 +362,7 @@ export class MemStorage implements IStorage {
         optimizationGoal: snapshot.optimizationGoal ?? null,
         billingEvent: snapshot.billingEvent ?? null,
         bidStrategy: snapshot.bidStrategy ?? null,
+        endTime: snapshot.endTime ?? null,
         updatedTime: snapshot.updatedTime ?? null,
         promotedObject: snapshot.promotedObject ?? null,
         syncedAt: snapshot.syncedAt ?? new Date(),

@@ -86,6 +86,7 @@ export type GraphPromotedObject = {
   leadgen_form_id?: string;
   lead_gen_form_id?: string;
   whatsapp_number?: string;
+  whatsapp_phone_number?: string;
   phone_number?: string;
   [key: string]: unknown;
 };

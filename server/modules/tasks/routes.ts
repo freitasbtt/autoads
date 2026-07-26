@@ -10,6 +10,7 @@ import type {
   StorageTask,
   StorageTaskDistributionAdsetRecord,
   StorageTaskDistributionCampaignRecord,
+  StorageTaskDistributionDestinationRecord,
   StorageTaskDistributionRecord,
   StorageTaskPairRecord,
   User,
@@ -57,6 +58,7 @@ const distributionAdsetSchema = z.object({
   optimizationGoal: z.string().nullable(),
   billingEvent: z.string().nullable(),
   bidStrategy: z.string().nullable(),
+  endTime: z.string().nullable().optional().default(null),
   destination: z.object({
     type: z.string().min(1),
     pageId: z.string().nullable(),
@@ -618,9 +620,13 @@ function sanitizeDistribution(
 
         return {
           ...destination,
-          selectedAdsetIds: destination.selectedAdsetIds.filter((adsetId) => adsetIds.has(adsetId)),
+          selectedAdsetIds: destination.selectedAdsetIds.filter((adsetId) => {
+            const adset = destination.adsets.find((item) => item.id === adsetId);
+            return Boolean(adset) && adsetIds.has(adsetId) && !isAdsetExpired(adset);
+          }),
           adsets: destination.adsets.map((adset) => ({
             ...adset,
+            endTime: (adset as { endTime?: string | null }).endTime ?? null,
             destination: {
               type:
                 (adset as { destination?: { type?: string } }).destination?.type ??
@@ -743,6 +749,7 @@ function mapAdsetSnapshot(adset: {
   optimization_goal?: string;
   billing_event?: string;
   bid_strategy?: string;
+  end_time?: string;
 }, defaults?: {
   type?: string | null;
   pageId?: string | null;
@@ -759,6 +766,7 @@ function mapAdsetSnapshot(adset: {
     optimizationGoal: adset.optimization_goal ?? null,
     billingEvent: adset.billing_event ?? null,
     bidStrategy: adset.bid_strategy ?? null,
+    endTime: adset.end_time ?? null,
     destination: {
       type: defaults?.type ?? "WEBSITE",
       pageId: defaults?.pageId ?? null,
@@ -809,6 +817,7 @@ function mapAdsetSnapshotRecord(
       optimization_goal: snapshot.optimizationGoal ?? undefined,
       billing_event: snapshot.billingEvent ?? undefined,
       bid_strategy: snapshot.bidStrategy ?? undefined,
+      end_time: snapshot.endTime ?? undefined,
     },
     defaults,
   );
@@ -825,6 +834,7 @@ function toRawAdsetFromSnapshot(snapshot: MetaAdsetSnapshot): RawMetaAdsetRecord
     optimization_goal: snapshot.optimizationGoal ?? undefined,
     billing_event: snapshot.billingEvent ?? undefined,
     bid_strategy: snapshot.bidStrategy ?? undefined,
+    end_time: snapshot.endTime ?? undefined,
     updated_time: snapshot.updatedTime ?? undefined,
     promoted_object: snapshot.promotedObject ?? undefined,
   };
@@ -971,6 +981,7 @@ async function syncMetaAccountStructure(input: {
           optimizationGoal: adset.optimization_goal ?? null,
           billingEvent: adset.billing_event ?? null,
           bidStrategy: adset.bid_strategy ?? null,
+          endTime: adset.end_time ?? null,
           updatedTime: adset.updated_time ?? null,
           promotedObject: asRecord(adset.promoted_object),
           syncedAt: now,
@@ -1053,6 +1064,89 @@ async function getMetaAccountStructure(input: {
   }
 }
 
+async function mapWithConcurrency<TItem, TResult>(
+  items: TItem[],
+  concurrency: number,
+  mapper: (item: TItem) => Promise<TResult>,
+) {
+  const results = new Array<TResult>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex++;
+        results[currentIndex] = await mapper(items[currentIndex]);
+      }
+    }),
+  );
+
+  return results;
+}
+
+async function revalidateDistributionAdsets(input: {
+  distribution: StorageTaskDistributionRecord;
+  tenantId: number;
+  forceRefresh: boolean;
+}) {
+  const client = await buildMetaClient(input.tenantId);
+  const resourceIds = Array.from(new Set(input.distribution.destinations.map((destination) => destination.resourceId)));
+  const verifiedEndTimesByResourceId = new Map<number, Map<string, string | null>>();
+
+  await mapWithConcurrency(resourceIds, 3, async (resourceId) => {
+    const account = await storage.getResource(resourceId);
+    if (!account || account.tenantId !== input.tenantId || account.type !== "account") {
+      return;
+    }
+
+    const structure = await getMetaAccountStructure({
+      tenantId: input.tenantId,
+      account,
+      client,
+      forceRefresh: input.forceRefresh,
+    });
+    if (!structure || (input.forceRefresh && structure.source === "db_stale")) {
+      return;
+    }
+
+    verifiedEndTimesByResourceId.set(
+      resourceId,
+      new Map(structure.adsets.map((adset) => [adset.adsetId, adset.endTime ?? null])),
+    );
+  });
+
+  let unverifiedSelectedAdsetCount = 0;
+  const destinations = input.distribution.destinations.map((destination) => {
+    const verifiedEndTimes = verifiedEndTimesByResourceId.get(destination.resourceId);
+    const selectedAdsets = destination.applyToAllAdsets
+      ? destination.adsets
+      : destination.adsets.filter((adset) => destination.selectedAdsetIds.includes(adset.id));
+    unverifiedSelectedAdsetCount += selectedAdsets.filter(
+      (adset) => !verifiedEndTimes?.has(adset.id),
+    ).length;
+
+    const adsets = destination.adsets.flatMap((adset) => {
+      if (!verifiedEndTimes?.has(adset.id)) {
+        return [];
+      }
+      return [{ ...adset, endTime: verifiedEndTimes.get(adset.id) ?? null }];
+    });
+    const verifiedAdsetIds = new Set(adsets.map((adset) => adset.id));
+
+    return {
+      ...destination,
+      adsets,
+      selectedAdsetIds: destination.selectedAdsetIds.filter((adsetId) => verifiedAdsetIds.has(adsetId)),
+    };
+  });
+
+  return {
+    distribution: { destinations } satisfies StorageTaskDistributionRecord,
+    unverifiedSelectedAdsetCount,
+  };
+}
+
 function slugifyClientId(value: string) {
   return value
     .normalize("NFD")
@@ -1108,7 +1202,7 @@ function inferDestinationType(objective: string | null) {
   if (upper.includes("LEAD")) {
     return "LEAD_FORM";
   }
-  if (upper.includes("WHATSAPP") || upper.includes("MESSAGE")) {
+  if (upper.includes("WHATSAPP") || upper.includes("MESSAGE") || upper === "OUTCOME_ENGAGEMENT") {
     return "WHATSAPP";
   }
   return "WEBSITE";
@@ -1144,6 +1238,7 @@ type RawMetaAdsetRecord = {
   optimization_goal?: string;
   billing_event?: string;
   bid_strategy?: string;
+  end_time?: string;
   updated_time?: string;
   promoted_object?: unknown;
 };
@@ -1272,6 +1367,29 @@ function normalizeWhatsappNumber(value: string | null | undefined) {
   return digits.length > 0 ? digits : null;
 }
 
+function isAdsetExpired(adset: { endTime?: string | null }) {
+  if (!adset.endTime) {
+    return false;
+  }
+
+  const endTimeMs = Date.parse(adset.endTime);
+  return Number.isFinite(endTimeMs) && endTimeMs <= Date.now();
+}
+
+function getSelectedDestinationAdsets(destination: StorageTaskDistributionDestinationRecord) {
+  return destination.applyToAllAdsets
+    ? destination.adsets
+    : destination.adsets.filter((adset) => destination.selectedAdsetIds.includes(adset.id));
+}
+
+function getEligibleDestinationAdsets(destination: StorageTaskDistributionDestinationRecord) {
+  return getSelectedDestinationAdsets(destination).filter((adset) => !isAdsetExpired(adset));
+}
+
+function getExpiredDestinationAdsets(destination: StorageTaskDistributionDestinationRecord) {
+  return getSelectedDestinationAdsets(destination).filter((adset) => isAdsetExpired(adset));
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
@@ -1292,6 +1410,7 @@ function extractCallToActionDefaults(value: unknown): Pick<
     whatsappNumber: normalizeWhatsappNumber(
       pickFirstNonEmpty(
         typeof payload?.whatsapp_number === "string" ? payload.whatsapp_number : null,
+        typeof payload?.whatsapp_phone_number === "string" ? payload.whatsapp_phone_number : null,
         typeof payload?.phone_number === "string" ? payload.phone_number : null,
       ),
     ),
@@ -1317,6 +1436,7 @@ function extractPromotedObjectDefaults(value: unknown): DestinationDefaults {
     whatsappNumber: normalizeWhatsappNumber(
       pickFirstNonEmpty(
         typeof promotedObject?.whatsapp_number === "string" ? promotedObject.whatsapp_number : null,
+        typeof promotedObject?.whatsapp_phone_number === "string" ? promotedObject.whatsapp_phone_number : null,
         typeof promotedObject?.phone_number === "string" ? promotedObject.phone_number : null,
       ),
     ),
@@ -1428,8 +1548,15 @@ async function resolveCampaignDestinationContext(input: {
 }) {
   const fallbackDefaults = await resolveTenantDestinationDefaults(input.tenantId);
   const campaignType = inferDestinationType(input.campaign.objective ?? null);
+  const requiresAdsetWhatsapp = input.campaign.objective?.trim().toUpperCase() === "OUTCOME_ENGAGEMENT";
+  const adsetFallbackDefaults = {
+    ...fallbackDefaults,
+    // Engagement campaigns must use the WhatsApp number configured on the ad set,
+    // never the tenant-wide default number.
+    whatsappNumber: requiresAdsetWhatsapp ? null : fallbackDefaults.whatsappNumber,
+  };
   const campaignAdsets = input.rawAdsets.filter((adset) => adset.campaign_id === input.campaign.id);
-  const cachedDefaultsByAdsetId = new Map<string, DestinationDefaults>();
+  const cachedSnapshotsByAdsetId = new Map<string, MetaDestinationSnapshot>();
 
   for (const adset of campaignAdsets) {
     const snapshot = await getFreshDestinationSnapshot(
@@ -1439,21 +1566,37 @@ async function resolveCampaignDestinationContext(input: {
       adset.id,
     );
     if (snapshot) {
-      cachedDefaultsByAdsetId.set(adset.id, snapshotToDestinationDefaults(snapshot));
+      cachedSnapshotsByAdsetId.set(adset.id, snapshot);
     }
   }
 
-  if (campaignAdsets.length > 0 && cachedDefaultsByAdsetId.size === campaignAdsets.length) {
-    return campaignAdsets.map((adset) =>
-      mapAdsetSnapshot(adset, {
+  const hasLegacyEngagementSnapshot = requiresAdsetWhatsapp &&
+    Array.from(cachedSnapshotsByAdsetId.values()).some(
+      (snapshot) => snapshot.source === "meta_adset_or_tenant_fallback",
+    );
+
+  if (
+    campaignAdsets.length > 0 &&
+    cachedSnapshotsByAdsetId.size === campaignAdsets.length &&
+    (!hasLegacyEngagementSnapshot || !input.client)
+  ) {
+    return campaignAdsets.map((adset) => {
+      const cachedSnapshot = cachedSnapshotsByAdsetId.get(adset.id);
+      const cachedDefaults = cachedSnapshot ? snapshotToDestinationDefaults(cachedSnapshot) : null;
+      const trustedCachedDefaults =
+        requiresAdsetWhatsapp && cachedSnapshot?.source === "meta_adset_or_tenant_fallback"
+          ? { ...(cachedDefaults ?? {}), whatsappNumber: null }
+          : cachedDefaults;
+
+      return mapAdsetSnapshot(adset, {
         type: campaignType,
         ...mergeDestinationDefaults(
-          cachedDefaultsByAdsetId.get(adset.id),
           extractPromotedObjectDefaults(adset.promoted_object),
-          fallbackDefaults,
+          trustedCachedDefaults,
+          adsetFallbackDefaults,
         ),
-      }),
-    );
+      });
+    });
   }
 
   let rawAds: Awaited<ReturnType<MetaGraphClient["fetchCampaignAdsWithDestination"]>> = [];
@@ -1477,9 +1620,9 @@ async function resolveCampaignDestinationContext(input: {
     adDefaultsByAdsetId.set(
       adsetId,
       mergeDestinationDefaults(
+        promotedObjectDefaults,
         adDefaultsByAdsetId.get(adsetId),
         creativeDefaults,
-        promotedObjectDefaults,
       ),
     );
   }
@@ -1487,9 +1630,9 @@ async function resolveCampaignDestinationContext(input: {
   const snapshots = await Promise.all(
     campaignAdsets.map(async (adset) => {
       const resolvedDefaults = mergeDestinationDefaults(
-        adDefaultsByAdsetId.get(adset.id),
         extractPromotedObjectDefaults(adset.promoted_object),
-        fallbackDefaults,
+        adDefaultsByAdsetId.get(adset.id),
+        adsetFallbackDefaults,
       );
       await saveDestinationSnapshot({
         tenantId: input.tenantId,
@@ -1498,7 +1641,7 @@ async function resolveCampaignDestinationContext(input: {
         adsetId: adset.id,
         destinationType: campaignType,
         defaults: resolvedDefaults,
-        source: adDefaultsByAdsetId.has(adset.id) ? "meta_ad_or_creative" : "meta_adset_or_tenant_fallback",
+        source: adDefaultsByAdsetId.has(adset.id) ? "meta_ad_or_creative" : "meta_adset",
       });
 
       return mapAdsetSnapshot(adset, {
@@ -1728,6 +1871,27 @@ tasksRouter.get("/tasks/:id/meta/accounts/:resourceId/campaigns", async (req, re
     );
     const campaignIds = new Set(campaigns.map((campaign) => campaign.campaignId));
     const campaignById = new Map(campaigns.map((campaign) => [campaign.campaignId, campaign]));
+    const rawAdsets = structure.adsets.map(toRawAdsetFromSnapshot);
+    const engagementAdsetsByCampaignId = new Map(
+      await mapWithConcurrency(
+        campaigns.filter((campaign) => campaign.objective?.trim().toUpperCase() === "OUTCOME_ENGAGEMENT"),
+        3,
+        async (campaign) =>
+          [
+            campaign.campaignId,
+            await resolveCampaignDestinationContext({
+              client,
+              tenantId: user.tenantId,
+              adAccountId: account.value,
+              campaign: {
+                id: campaign.campaignId,
+                objective: campaign.objective ?? null,
+              },
+              rawAdsets,
+            }),
+          ] as const,
+      ),
+    );
     const adsetsByCampaignId = new Map<string, StorageTaskDistributionAdsetRecord[]>();
 
     for (const adset of structure.adsets) {
@@ -1736,6 +1900,19 @@ tasksRouter.get("/tasks/:id/meta/accounts/:resourceId/campaigns", async (req, re
       }
       const group = adsetsByCampaignId.get(adset.campaignId) ?? [];
       const parentCampaign = campaignById.get(adset.campaignId);
+      const resolvedEngagementAdsets = engagementAdsetsByCampaignId.get(adset.campaignId);
+      if (parentCampaign?.objective?.trim().toUpperCase() === "OUTCOME_ENGAGEMENT") {
+        const resolvedAdset = resolvedEngagementAdsets?.find((item) => item.id === adset.adsetId);
+        group.push(
+          resolvedAdset ??
+            mapAdsetSnapshotRecord(adset, {
+              type: "WHATSAPP",
+              ...extractPromotedObjectDefaults(adset.promotedObject),
+            }),
+        );
+        adsetsByCampaignId.set(adset.campaignId, group);
+        continue;
+      }
       const cachedSnapshot = await getFreshDestinationSnapshot(
         user.tenantId,
         account.value,
@@ -1805,6 +1982,7 @@ tasksRouter.get("/tasks/:id/meta/accounts/:resourceId/campaigns/:campaignId/cont
       tenantId: user.tenantId,
       account,
       client,
+      forceRefresh: true,
     });
     if (!structure) {
       return res.status(400).json({ message: "Integracao com Meta nao esta conectada." });
@@ -1911,9 +2089,20 @@ tasksRouter.put("/tasks/:id/distribution", async (req, res, next) => {
       }
     }
 
+    const verification = await revalidateDistributionAdsets({
+      distribution: parsed,
+      tenantId: user.tenantId,
+      forceRefresh: false,
+    });
+    if (verification.unverifiedSelectedAdsetCount > 0) {
+      return res.status(409).json({
+        message: "Não foi possível validar todos os conjuntos de anúncios com os dados da Meta.",
+      });
+    }
+
     const activityTask = await touchTaskConfigurationActivity(context.task, user.tenantId);
     const updated = await storage.updateStorageTask(id, {
-      distributionJson: parsed,
+      distributionJson: verification.distribution,
       configurationElapsedSeconds: activityTask.configurationElapsedSeconds,
       lastActivityAt: activityTask.lastActivityAt,
       status: activityTask.status,
@@ -1951,7 +2140,18 @@ tasksRouter.get("/tasks/:id/distribution/payload", async (req, res, next) => {
       Array.isArray(context.task.pairsJson) ? context.task.pairsJson : [],
       context.uploads,
     );
-    const distribution = sanitizeDistribution(context.task.distributionJson, pairViews);
+    const storedDistribution = sanitizeDistribution(context.task.distributionJson, pairViews);
+    const verification = await revalidateDistributionAdsets({
+      distribution: storedDistribution,
+      tenantId: user.tenantId,
+      forceRefresh: true,
+    });
+    if (verification.unverifiedSelectedAdsetCount > 0) {
+      return res.status(409).json({
+        message: "Não foi possível validar todos os conjuntos de anúncios com os dados da Meta.",
+      });
+    }
+    const distribution = verification.distribution;
     const pairById = new Map(pairViews.map((pair) => [pair.pairId, pair]));
     const usedPairIds = Array.from(
       new Set(
@@ -2072,9 +2272,7 @@ tasksRouter.get("/tasks/:id/distribution/payload", async (req, res, next) => {
     distribution.destinations
       .filter((destination) => destination.pairIds.length > 0)
       .forEach((destination) => {
-        const adsets = destination.applyToAllAdsets
-          ? destination.adsets
-          : destination.adsets.filter((adset) => destination.selectedAdsetIds.includes(adset.id));
+        const adsets = getEligibleDestinationAdsets(destination);
         const accountKey = destination.adAccountId;
         const accountGroup =
           groupedAccounts.get(accountKey) ??
@@ -2137,9 +2335,7 @@ tasksRouter.get("/tasks/:id/distribution/payload", async (req, res, next) => {
               assignment,
             ]),
           );
-          const adsets = destination.applyToAllAdsets
-            ? destination.adsets
-            : destination.adsets.filter((adset) => destination.selectedAdsetIds.includes(adset.id));
+          const adsets = getEligibleDestinationAdsets(destination);
 
           return adsets.flatMap((adset) =>
             destination.pairIds
@@ -2206,7 +2402,7 @@ tasksRouter.post("/tasks/:id/distribution/send", async (req, res, next) => {
     if (!settings?.n8nWebhookUrl) {
       return res
         .status(400)
-        .json({ message: "Webhook n8n nao configurado. Configure em Admin > Configuracoes" });
+        .json({ message: "Automacao nao configurada. Entre em contato com o administrador." });
     }
 
     const context = await loadTaskContext(id, user.tenantId);
@@ -2219,7 +2415,22 @@ tasksRouter.post("/tasks/:id/distribution/send", async (req, res, next) => {
       Array.isArray(context.task.pairsJson) ? context.task.pairsJson : [],
       context.uploads,
     );
-    const distribution = sanitizeDistribution(context.task.distributionJson, pairViews);
+    const storedDistribution = sanitizeDistribution(context.task.distributionJson, pairViews);
+    const verification = await revalidateDistributionAdsets({
+      distribution: storedDistribution,
+      tenantId: user.tenantId,
+      forceRefresh: true,
+    });
+    if (verification.unverifiedSelectedAdsetCount > 0) {
+      return res.status(409).json({
+        message: "Não foi possível validar todos os conjuntos de anúncios com os dados da Meta.",
+      });
+    }
+    const distribution = verification.distribution;
+    const expiredSelectedAdsetCount = distribution.destinations.reduce(
+      (total, destination) => total + getExpiredDestinationAdsets(destination).length,
+      0,
+    );
     const pairById = new Map(pairViews.map((pair) => [pair.pairId, pair]));
     const usedPairIds = Array.from(
       new Set(
@@ -2308,9 +2519,7 @@ tasksRouter.post("/tasks/:id/distribution/send", async (req, res, next) => {
     distribution.destinations
       .filter((destination) => destination.pairIds.length > 0)
       .forEach((destination) => {
-        const adsets = destination.applyToAllAdsets
-          ? destination.adsets
-          : destination.adsets.filter((adset) => destination.selectedAdsetIds.includes(adset.id));
+        const adsets = getEligibleDestinationAdsets(destination);
         const accountKey = destination.adAccountId;
         const existing = groupedAccounts.get(accountKey) as
           | {
@@ -2381,9 +2590,7 @@ tasksRouter.post("/tasks/:id/distribution/send", async (req, res, next) => {
               assignment,
             ]),
           );
-          const adsets = destination.applyToAllAdsets
-            ? destination.adsets
-            : destination.adsets.filter((adset) => destination.selectedAdsetIds.includes(adset.id));
+          const adsets = getEligibleDestinationAdsets(destination);
 
           return adsets.flatMap((adset) =>
             destination.pairIds
@@ -2433,7 +2640,12 @@ tasksRouter.post("/tasks/:id/distribution/send", async (req, res, next) => {
     };
 
     if (payload.pair_assets.length === 0 || payload.creative_jobs.length === 0) {
-      return res.status(400).json({ message: "A distribuicao ainda nao possui contas, campanhas e pares suficientes." });
+      return res.status(400).json({
+        message:
+          expiredSelectedAdsetCount > 0
+            ? "Os conjuntos selecionados estão encerrados e foram removidos do envio. Escolha conjuntos ativos para publicar."
+            : "A distribuicao ainda nao possui contas, campanhas e pares suficientes.",
+      });
     }
 
     const webhookResponse = await fetch(settings.n8nWebhookUrl, {
@@ -2465,11 +2677,11 @@ tasksRouter.post("/tasks/:id/distribution/send", async (req, res, next) => {
         },
       });
 
-      let userMessage = "Erro ao enviar webhook para n8n";
+      let userMessage = "Nao foi possivel iniciar o processamento.";
       if (typeof parsedResponse === "object" && parsedResponse && "message" in parsedResponse) {
         const message = String((parsedResponse as { message?: unknown }).message ?? "");
         if (message.includes("not registered")) {
-          userMessage = "Webhook n8n nao esta ativo. No n8n, clique em 'Execute workflow' e tente novamente.";
+          userMessage = "A automacao nao esta disponivel no momento. Tente novamente mais tarde.";
         }
       }
 
@@ -2491,7 +2703,7 @@ tasksRouter.post("/tasks/:id/distribution/send", async (req, res, next) => {
     const updated = await startTaskPublishing(context.task, user.tenantId);
 
     res.json({
-      message: "Configuracao enviada para o n8n com sucesso",
+      message: "Configuracao enviada para processamento com sucesso",
       status: updated?.status ?? "publishing",
       updatedAt: updated?.updatedAt ?? new Date(),
       ...(updated ? getTaskElapsedSeconds(updated) : {}),

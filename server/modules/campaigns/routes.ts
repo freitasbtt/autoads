@@ -482,7 +482,7 @@ campaignsRouter.post("/:id/send-webhook", async (req, res, next) => {
     if (!settings?.n8nWebhookUrl) {
       return res
         .status(400)
-        .json({ message: "Webhook n8n nao configurado. Configure em Admin > Configuracoes" });
+        .json({ message: "Automacao nao configurada. Entre em contato com o administrador." });
     }
 
     const accountResult = await loadTenantResource(user.tenantId, campaign.accountId);
@@ -765,11 +765,11 @@ campaignsRouter.post("/:id/send-webhook", async (req, res, next) => {
       const errorText = await webhookResponse.text();
       console.error("Failed to send webhook to n8n:", errorText);
 
-      let userMessage = "Erro ao enviar webhook para n8n";
+      let userMessage = "Nao foi possivel iniciar o processamento.";
       try {
         const errorJson = JSON.parse(errorText);
         if (errorJson.code === 404 || errorJson.message?.includes("not registered")) {
-          userMessage = "Webhook n8n nao esta ativo. No n8n, clique em 'Execute workflow' e tente novamente.";
+          userMessage = "A automacao nao esta disponivel no momento. Tente novamente mais tarde.";
         }
       } catch {
         // ignore
@@ -780,7 +780,7 @@ campaignsRouter.post("/:id/send-webhook", async (req, res, next) => {
 
     await storage.updateCampaign(id, {
       status: "pending",
-      statusDetail: "Aguardando processamento do n8n (reenviado)",
+      statusDetail: "Aguardando processamento (reenviado)",
     }, user.tenantId);
 
     let cooldownUntil: string | null = null;
@@ -792,7 +792,7 @@ campaignsRouter.post("/:id/send-webhook", async (req, res, next) => {
     }
 
     res.json({
-      message: "Campanha enviada para n8n com sucesso",
+      message: "Campanha enviada para processamento com sucesso",
       ...(cooldownSeconds
         ? {
             cooldown_seconds: cooldownSeconds,
@@ -813,7 +813,7 @@ campaignWebhookRouter.post("/n8n", isAuthenticated, async (req, res, next) => {
     if (!settings?.n8nWebhookUrl) {
       return res
         .status(400)
-        .json({ message: "Webhook n8n nao configurado. Configure em Admin > Configuracoes" });
+        .json({ message: "Automacao nao configurada. Entre em contato com o administrador." });
     }
 
     const {
@@ -962,11 +962,11 @@ campaignWebhookRouter.post("/n8n", isAuthenticated, async (req, res, next) => {
       const errorText = await webhookResponse.text();
       console.error("Failed to send webhook to n8n:", errorText);
 
-      let userMessage = "Erro ao enviar webhook para n8n";
+      let userMessage = "Nao foi possivel iniciar o processamento.";
       try {
         const errorJson = JSON.parse(errorText);
         if (errorJson.code === 404 || errorJson.message?.includes("not registered")) {
-          userMessage = "Webhook n8n nao esta ativo. No n8n, clique em 'Execute workflow' e tente novamente.";
+          userMessage = "A automacao nao esta disponivel no momento. Tente novamente mais tarde.";
         }
       } catch {
         // ignore
@@ -980,7 +980,7 @@ campaignWebhookRouter.post("/n8n", isAuthenticated, async (req, res, next) => {
       setAdAccountCooldown(user.tenantId, cooldownAccountId);
     }
 
-    res.json({ message: "Dados enviados para n8n com sucesso" });
+    res.json({ message: "Dados enviados para processamento com sucesso" });
   } catch (err) {
     next(err);
   }

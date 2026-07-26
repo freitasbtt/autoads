@@ -166,7 +166,7 @@ export function CampaignsPage() {
       }
       toast({
         title: "Reprocessando",
-        description: data?.message ?? "Campanha reenviada para n8n.",
+        description: data?.message ?? "Campanha reenviada para processamento.",
       });
     },
     onError: (error: Error, variables) => {

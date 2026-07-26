@@ -400,6 +400,7 @@ export type StorageTaskDistributionAdsetRecord = {
   optimizationGoal: string | null;
   billingEvent: string | null;
   bidStrategy: string | null;
+  endTime: string | null;
   destination: {
     type: string;
     pageId: string | null;
@@ -576,6 +577,7 @@ export const metaAdsetSnapshots = pgTable(
     optimizationGoal: text("optimization_goal"),
     billingEvent: text("billing_event"),
     bidStrategy: text("bid_strategy"),
+    endTime: text("end_time"),
     updatedTime: text("updated_time"),
     promotedObject: jsonb("promoted_object").$type<Record<string, unknown> | null>(),
     syncedAt: timestamp("synced_at").defaultNow().notNull(),

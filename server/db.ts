@@ -239,6 +239,7 @@ export async function ensureGcsStorageSchema(): Promise<void> {
         optimization_goal text,
         billing_event text,
         bid_strategy text,
+        end_time text,
         updated_time text,
         promoted_object jsonb,
         synced_at timestamp NOT NULL DEFAULT now(),
@@ -251,6 +252,11 @@ export async function ensureGcsStorageSchema(): Promise<void> {
     await client.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS uniq_meta_adset_snapshots
       ON meta_adset_snapshots (tenant_id, ad_account_id, campaign_id, adset_id)
+    `);
+
+    await client.query(`
+      ALTER TABLE meta_adset_snapshots
+      ADD COLUMN IF NOT EXISTS end_time text
     `);
 
     await client.query(`

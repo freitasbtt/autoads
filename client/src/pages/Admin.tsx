@@ -162,7 +162,7 @@ export default function Admin() {
                 <CardHeader>
                   <div className="flex items-center gap-2">
                     <Webhook className="h-5 w-5 text-purple-600" />
-                    <CardTitle>n8n Webhook</CardTitle>
+                    <CardTitle>Webhook de automacao</CardTitle>
                   </div>
                   <CardDescription>Defina a URL do webhook utilizado nas automações.</CardDescription>
                 </CardHeader>
@@ -172,7 +172,7 @@ export default function Admin() {
                     <Input
                       id="n8n-webhook-url"
                       data-testid="input-n8n-webhook-url"
-                      placeholder="https://seu-n8n.com/webhook/..."
+                      placeholder="https://sua-automacao.com/webhook/..."
                       value={formData.n8nWebhookUrl}
                       onChange={(e) => setFormData({ ...formData, n8nWebhookUrl: e.target.value })}
                     />

@@ -77,6 +77,7 @@ type AdsetRecord = {
   optimizationGoal: string | null;
   billingEvent: string | null;
   bidStrategy: string | null;
+  endTime: string | null;
   destination: {
     type: string;
     pageId: string | null;
@@ -220,7 +221,7 @@ function buildDestination(account: AccountSearchItem, campaign: CampaignOption, 
     },
     adsets: campaign.adsets,
     applyToAllAdsets: true,
-    selectedAdsetIds: campaign.adsets.map((adset) => adset.id),
+    selectedAdsetIds: campaign.adsets.filter((adset) => !isAdsetExpired(adset)).map((adset) => adset.id),
     pairIds,
     campaignLeadgenFormId: null,
     campaignLeadgenFormName: null,
@@ -248,6 +249,10 @@ function syncPairAssignments(pairIds: string[], pairAssignments: PairAssignmentR
 function normalizeDestinationRecord(destination: DestinationRecord): DestinationRecord {
   return {
     ...destination,
+    selectedAdsetIds: destination.selectedAdsetIds.filter((adsetId) => {
+      const adset = destination.adsets.find((item) => item.id === adsetId);
+      return Boolean(adset) && !isAdsetExpired(adset);
+    }),
     pairAssignments: syncPairAssignments(destination.pairIds, destination.pairAssignments ?? []),
   };
 }
@@ -257,10 +262,50 @@ function normalizeCampaignStatus(status: string | null | undefined) {
   return normalized === "ACTIVE";
 }
 
+function hasCampaignObjective(objective: string | null | undefined, expected: string) {
+  return objective?.trim().toUpperCase() === expected;
+}
+
+function campaignUsesLeadforms(objective: string | null | undefined) {
+  return !hasCampaignObjective(objective, "OUTCOME_AWARENESS") &&
+    !hasCampaignObjective(objective, "OUTCOME_ENGAGEMENT");
+}
+
+function formatWhatsappNumber(value: string | null | undefined) {
+  const digits = value?.replace(/\D+/g, "") ?? "";
+  return digits ? `+${digits}` : "Não configurado";
+}
+
+function isAdsetExpired(adset: Pick<AdsetRecord, "endTime">) {
+  if (!adset.endTime) {
+    return false;
+  }
+
+  const endTimeMs = Date.parse(adset.endTime);
+  return Number.isFinite(endTimeMs) && endTimeMs <= Date.now();
+}
+
+function formatAdsetEndTime(value: string | null) {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "data de encerramento inválida";
+  }
+
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
+}
+
 function getDestinationActiveAdsets(destination: DestinationRecord) {
-  return destination.applyToAllAdsets
+  const selectedAdsets = destination.applyToAllAdsets
     ? destination.adsets
     : destination.adsets.filter((adset) => destination.selectedAdsetIds.includes(adset.id));
+  return selectedAdsets.filter((adset) => !isAdsetExpired(adset));
 }
 
 function getPairDisplayName(pair: PairView) {
@@ -280,7 +325,12 @@ function getDestinationPageIds(destination: DestinationRecord) {
 
 function getPageIdsFromAdsets(adsets: AdsetRecord[]) {
   return Array.from(
-    new Set(adsets.map((adset) => adset.destination.pageId).filter((pageId): pageId is string => Boolean(pageId))),
+    new Set(
+      adsets
+        .filter((adset) => !isAdsetExpired(adset))
+        .map((adset) => adset.destination.pageId)
+        .filter((pageId): pageId is string => Boolean(pageId)),
+    ),
   );
 }
 
@@ -726,9 +776,13 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
     const pageIds = Array.from(
       new Set(
         [
-          ...distributionDraft.destinations.flatMap((destination) => getDestinationPageIds(destination)),
+          ...distributionDraft.destinations
+            .filter((destination) => campaignUsesLeadforms(destination.campaign.objective))
+            .flatMap((destination) => getDestinationPageIds(destination)),
           ...Object.values(accountBlocks).flatMap((block) =>
-            block.campaigns.flatMap((campaign) => getPageIdsFromAdsets(campaign.adsets)),
+            block.campaigns
+              .filter((campaign) => campaignUsesLeadforms(campaign.objective))
+              .flatMap((campaign) => getPageIdsFromAdsets(campaign.adsets)),
           ),
         ].filter((pageId, index, all) => all.indexOf(pageId) === index),
       ),
@@ -955,13 +1009,22 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
       });
     }
 
+    if (!nextCampaign.adsets.some((adset) => !isAdsetExpired(adset))) {
+      toast({
+        title: "Conjuntos encerrados",
+        description: "Esta campanha não possui conjuntos de anúncios disponíveis para receber criativos.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     withDestination(account, nextCampaign, (destination) => ({
       ...buildDestination(account, nextCampaign, destination.pairIds),
       applyToAllAdsets: destination.applyToAllAdsets,
       selectedAdsetIds: destination.applyToAllAdsets
-        ? nextCampaign.adsets.map((adset) => adset.id)
+        ? nextCampaign.adsets.filter((adset) => !isAdsetExpired(adset)).map((adset) => adset.id)
         : destination.selectedAdsetIds.filter((adsetId) =>
-            nextCampaign.adsets.some((adset) => adset.id === adsetId),
+            nextCampaign.adsets.some((adset) => adset.id === adsetId && !isAdsetExpired(adset)),
           ),
       createAdsStatus: destination.createAdsStatus,
       pairIds: ensureUniquePairIds([...destination.pairIds, pairId]),
@@ -1321,7 +1384,14 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                               ? Boolean(leadformsLoadingByPageId[selectedPageId])
                               : false;
                             const leadformsError = selectedPageId ? leadformsErrorByPageId[selectedPageId] : null;
-                            const canDrop = campaign.adsetCount > 0 && account.connectionStatus === "connected";
+                            const isEngagementCampaign = hasCampaignObjective(
+                              campaign.objective,
+                              "OUTCOME_ENGAGEMENT",
+                            );
+                            const expiredAdsets = campaign.adsets.filter((adset) => isAdsetExpired(adset));
+                            const canDrop =
+                              campaign.adsets.some((adset) => !isAdsetExpired(adset)) &&
+                              account.connectionStatus === "connected";
 
                             return (
                               <AccordionItem key={campaign.id} value={campaignKey} className="border-b-0">
@@ -1348,7 +1418,8 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                                 </AccordionTrigger>
                                 <AccordionContent className="px-6 pb-6">
                                   <div className="space-y-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                                    <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4">
+                                    {campaignUsesLeadforms(campaign.objective) ? (
+                                      <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4">
                                       <div className="grid gap-3 md:grid-cols-1">
                                         <div className="hidden rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
                                           <div className="text-[11px] uppercase tracking-wide text-slate-500">Página</div>
@@ -1434,7 +1505,8 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                                           )}
                                         </div>
                                       </div>
-                                    </div>
+                                      </div>
+                                    ) : null}
 
                                     <div>
                                       <div className="text-sm font-medium text-slate-900">Área de distribuição</div>
@@ -1479,7 +1551,8 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                                                           )
                                                         }
                                                       />
-                                                      <div className="min-w-0 flex-1 basis-[260px] space-y-2">
+                                                      {campaignUsesLeadforms(campaign.objective) ? (
+                                                        <div className="min-w-0 flex-1 basis-[260px] space-y-2">
                                                         <label className="flex items-center gap-2 text-xs text-slate-600">
                                                           <Checkbox
                                                             checked={pairAssignment?.useCampaignDefault !== false}
@@ -1575,7 +1648,8 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                                                               "Usa o ultimo formulario da pagina"}
                                                           </div>
                                                         )}
-                                                      </div>
+                                                        </div>
+                                                      ) : null}
                                                     </div>
                                                   </div>
                                                 );
@@ -1588,6 +1662,12 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
 
                                     <div className="space-y-3">
                                       <div className="text-sm font-medium text-slate-900">Conjuntos de anuncios</div>
+                                      {expiredAdsets.length > 0 ? (
+                                        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                          {expiredAdsets.length} conjunto{expiredAdsets.length === 1 ? "" : "s"} encerrado
+                                          {expiredAdsets.length === 1 ? " foi ignorado." : "s foram ignorados."}
+                                        </div>
+                                      ) : null}
                                         <div className="flex flex-wrap gap-2">
                                           <Button
                                             type="button"
@@ -1598,7 +1678,9 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                                               withDestination(account, campaign, (current) => ({
                                                 ...current,
                                                 applyToAllAdsets: true,
-                                                selectedAdsetIds: current.adsets.map((adset) => adset.id),
+                                                selectedAdsetIds: current.adsets
+                                                  .filter((adset) => !isAdsetExpired(adset))
+                                                  .map((adset) => adset.id),
                                               }))
                                             }
                                           >
@@ -1616,7 +1698,9 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                                                 selectedAdsetIds:
                                                   current.selectedAdsetIds.length > 0
                                                     ? current.selectedAdsetIds
-                                                    : current.adsets.map((adset) => adset.id),
+                                                    : current.adsets
+                                                        .filter((adset) => !isAdsetExpired(adset))
+                                                        .map((adset) => adset.id),
                                               }))
                                             }
                                           >
@@ -1625,31 +1709,51 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                                         </div>
 
                                         <div className="grid gap-2">
-                                          {campaign.adsets.map((adset) => (
-                                            <div
-                                              key={adset.id}
-                                              className={cn(
-                                                "flex items-center justify-between rounded-xl border border-slate-200 px-3 py-3",
-                                                destination?.applyToAllAdsets === false ? "bg-white" : "bg-slate-50",
-                                              )}
-                                            >
-                                              <div className="flex min-w-0 items-center gap-2">
-                                                <Circle
-                                                  className={cn(
-                                                    "h-2.5 w-2.5 shrink-0",
-                                                    normalizeCampaignStatus(adset.status)
-                                                      ? "fill-emerald-500 text-emerald-500"
-                                                      : "fill-slate-300 text-slate-300",
-                                                  )}
+                                          {campaign.adsets.map((adset) => {
+                                            const isExpired = isAdsetExpired(adset);
+                                            const endTimeLabel = formatAdsetEndTime(adset.endTime);
+                                            return (
+                                              <div
+                                                key={adset.id}
+                                                className={cn(
+                                                  "flex items-center justify-between rounded-xl border border-slate-200 px-3 py-3",
+                                                  isExpired
+                                                    ? "border-amber-200 bg-amber-50"
+                                                    : destination?.applyToAllAdsets === false
+                                                      ? "bg-white"
+                                                      : "bg-slate-50",
+                                                )}
+                                              >
+                                              <div className="min-w-0">
+                                                <div className="flex min-w-0 items-center gap-2">
+                                                  <Circle
+                                                    className={cn(
+                                                      "h-2.5 w-2.5 shrink-0",
+                                                      normalizeCampaignStatus(adset.status)
+                                                        ? "fill-emerald-500 text-emerald-500"
+                                                        : "fill-slate-300 text-slate-300",
+                                                    )}
                                                 />
                                                 <div className="truncate text-sm text-slate-800">{adset.name ?? adset.id}</div>
                                               </div>
+                                              {isEngagementCampaign ? (
+                                                <div className="mt-1 pl-[18px] text-xs text-slate-500">
+                                                  WhatsApp: {formatWhatsappNumber(adset.destination.whatsappNumber)}
+                                                </div>
+                                              ) : null}
+                                              {isExpired ? (
+                                                <div className="mt-1 pl-[18px] text-xs text-amber-800">
+                                                  Encerrado em {endTimeLabel ?? "data não informada"}
+                                                </div>
+                                              ) : null}
+                                            </div>
                                               <Checkbox
                                                 checked={
-                                                  destination?.applyToAllAdsets !== false ||
-                                                  Boolean(destination?.selectedAdsetIds.includes(adset.id))
+                                                  !isExpired &&
+                                                  (destination?.applyToAllAdsets !== false ||
+                                                    Boolean(destination?.selectedAdsetIds.includes(adset.id)))
                                                 }
-                                                disabled={destination?.applyToAllAdsets !== false}
+                                                disabled={isExpired || destination?.applyToAllAdsets !== false}
                                                 onCheckedChange={(checked) =>
                                                   withDestination(account, campaign, (current) => ({
                                                     ...current,
@@ -1660,7 +1764,8 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                                                 }
                                               />
                                             </div>
-                                          ))}
+                                            );
+                                          })}
                                         </div>
                                     </div>
                                   </div>
@@ -1780,7 +1885,7 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
                 <CardHeader>
                   <CardTitle className="text-slate-900">Revisão final</CardTitle>
                   <CardDescription className="text-slate-600">
-                    Valide a tarefa completa antes de enviar ao n8n.
+                    Valide a tarefa completa antes de publicar.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-5">
@@ -1957,7 +2062,7 @@ export default function TaskDistributionPage({ taskId }: TaskDistributionProps) 
 
                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
                     <div className="text-sm text-slate-500">
-                      O envio usa o `n8nWebhookUrl` configurado em `Admin`. Os dados são montados no backend e enviados apenas ao publicar.
+                      Os dados são montados no backend e enviados apenas ao publicar.
                     </div>
                     <div className="flex items-center gap-2">
                       <Button variant="outline" onClick={() => setStage("distribution")}>

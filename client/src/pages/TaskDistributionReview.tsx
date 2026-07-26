@@ -23,6 +23,10 @@ type PairView = {
 type AdsetRecord = {
   id: string;
   name: string | null;
+  endTime: string | null;
+  destination: {
+    whatsappNumber: string | null;
+  };
 };
 
 type PairAssignmentRecord = {
@@ -83,14 +87,45 @@ function formatDateTime(value: string | null | undefined) {
 }
 
 function getSelectedAdsets(destination: DestinationRecord) {
-  return destination.applyToAllAdsets
+  const selectedAdsets = destination.applyToAllAdsets
     ? destination.adsets
     : destination.adsets.filter((adset) => destination.selectedAdsetIds.includes(adset.id));
+  return selectedAdsets.filter((adset) => !isAdsetExpired(adset));
+}
+
+function getExpiredSelectedAdsets(destination: DestinationRecord) {
+  const selectedAdsets = destination.applyToAllAdsets
+    ? destination.adsets
+    : destination.adsets.filter((adset) => destination.selectedAdsetIds.includes(adset.id));
+  return selectedAdsets.filter((adset) => isAdsetExpired(adset));
+}
+
+function isAdsetExpired(adset: Pick<AdsetRecord, "endTime">) {
+  if (!adset.endTime) {
+    return false;
+  }
+
+  const endTimeMs = Date.parse(adset.endTime);
+  return Number.isFinite(endTimeMs) && endTimeMs <= Date.now();
 }
 
 function getPairDisplayName(pair: PairView) {
   const customName = pair.name?.trim() ?? "";
   return customName.length > 0 ? customName : `Par ${pair.position + 1}`;
+}
+
+function hasCampaignObjective(objective: string | null | undefined, expected: string) {
+  return objective?.trim().toUpperCase() === expected;
+}
+
+function campaignUsesLeadforms(objective: string | null | undefined) {
+  return !hasCampaignObjective(objective, "OUTCOME_AWARENESS") &&
+    !hasCampaignObjective(objective, "OUTCOME_ENGAGEMENT");
+}
+
+function formatWhatsappNumber(value: string | null | undefined) {
+  const digits = value?.replace(/\D+/g, "") ?? "";
+  return digits ? `+${digits}` : "Não configurado";
 }
 
 function PairThumb({ pair }: { pair: PairView }) {
@@ -153,7 +188,7 @@ export default function TaskDistributionReviewPage({ taskId }: TaskDistributionR
       queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
       toast({
         title: "Envio iniciado",
-        description: "A configuracao foi enviada ao n8n com sucesso.",
+        description: "A configuracao foi enviada para processamento com sucesso.",
       });
       navigate("/tasks");
     },
@@ -182,11 +217,15 @@ export default function TaskDistributionReviewPage({ taskId }: TaskDistributionR
 
   const reviewDestinations = useMemo(() => {
     return (detail?.distribution.destinations ?? []).filter((destination) => {
-      const adsetCount = destination.applyToAllAdsets
-        ? destination.adsets.length
-        : destination.selectedAdsetIds.length;
-      return destination.pairIds.length > 0 && adsetCount > 0;
+      return destination.pairIds.length > 0 && getSelectedAdsets(destination).length > 0;
     });
+  }, [detail?.distribution.destinations]);
+
+  const expiredSelectedAdsetCount = useMemo(() => {
+    return (detail?.distribution.destinations ?? []).reduce(
+      (total, destination) => total + getExpiredSelectedAdsets(destination).length,
+      0,
+    );
   }, [detail?.distribution.destinations]);
 
   const accountGroups = useMemo(() => {
@@ -247,8 +286,16 @@ export default function TaskDistributionReviewPage({ taskId }: TaskDistributionR
       items.push("Nao ha jobs suficientes para publicar.");
     }
 
+    if (
+      (detail?.distribution.destinations ?? []).some(
+        (destination) => destination.pairIds.length > 0 && getSelectedAdsets(destination).length === 0,
+      )
+    ) {
+      items.push("Os conjuntos selecionados para uma ou mais campanhas estão encerrados.");
+    }
+
     return items;
-  }, [jobCount, reviewDestinations]);
+  }, [detail?.distribution.destinations, jobCount, reviewDestinations]);
 
   if (detailQuery.isLoading) {
     return (
@@ -282,7 +329,7 @@ export default function TaskDistributionReviewPage({ taskId }: TaskDistributionR
           <CardHeader className="space-y-2">
             <CardTitle className="text-slate-900">Revisao final</CardTitle>
             <CardDescription className="text-slate-600">
-              Valide a configuracao final antes de publicar no n8n.
+              Valide a configuracao final antes de publicar.
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 md:grid-cols-5">
@@ -317,6 +364,11 @@ export default function TaskDistributionReviewPage({ taskId }: TaskDistributionR
         </Card>
 
         <div className="space-y-5">
+          {expiredSelectedAdsetCount > 0 ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {expiredSelectedAdsetCount} conjunto{expiredSelectedAdsetCount === 1 ? " encerrado foi ignorado." : "s encerrados foram ignorados."}
+            </div>
+          ) : null}
           <Card className="border-slate-200 bg-white shadow-sm">
             <CardHeader className="pb-3">
               <CardTitle className="text-base text-slate-900">Contas, campanhas e pares</CardTitle>
@@ -345,6 +397,7 @@ export default function TaskDistributionReviewPage({ taskId }: TaskDistributionR
                         <div className="mt-4 space-y-3">
                           {accountGroup.campaigns.map((destination) => {
                             const selectedAdsets = getSelectedAdsets(destination);
+                            const expiredSelectedAdsets = getExpiredSelectedAdsets(destination);
                             const campaignKey = `${destination.resourceId}:${destination.campaign.id}`;
                             const showAllAdsets = expandedAdsetsByCampaign[campaignKey] === true;
                             const visibleAdsets = showAllAdsets ? selectedAdsets : selectedAdsets.slice(0, 3);
@@ -371,17 +424,29 @@ export default function TaskDistributionReviewPage({ taskId }: TaskDistributionR
                                   <Badge variant="outline">{destination.createAdsStatus}</Badge>
                                 </div>
 
+                                {expiredSelectedAdsets.length > 0 ? (
+                                  <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                    {expiredSelectedAdsets.length} conjunto
+                                    {expiredSelectedAdsets.length === 1 ? " encerrado foi ignorado." : "s encerrados foram ignorados."}
+                                  </div>
+                                ) : null}
+
                                 <div className="mt-3 space-y-3">
                                   <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                                     <div className="space-y-2">
-                                      {visibleAdsets.map((adset, index) => (
-                                        <div key={adset.id} className="flex items-center gap-2 text-sm text-slate-700">
-                                          <span className="inline-block h-1.5 w-1.5 rounded-full bg-slate-400" />
-                                          <span className="truncate">
-                                            {adset.name ?? `Conjunto ${index + 1}`}
-                                          </span>
-                                        </div>
-                                      ))}
+                                          {visibleAdsets.map((adset, index) => (
+                                            <div key={adset.id} className="flex items-start gap-2 text-sm text-slate-700">
+                                              <span className="mt-1.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
+                                              <div className="min-w-0">
+                                                <div className="truncate">{adset.name ?? `Conjunto ${index + 1}`}</div>
+                                                {hasCampaignObjective(destination.campaign.objective, "OUTCOME_ENGAGEMENT") ? (
+                                                  <div className="text-xs text-slate-500">
+                                                    WhatsApp: {formatWhatsappNumber(adset.destination.whatsappNumber)}
+                                                  </div>
+                                                ) : null}
+                                              </div>
+                                            </div>
+                                          ))}
 
                                       {hiddenAdsetCount > 0 ? (
                                         <button
@@ -428,15 +493,17 @@ export default function TaskDistributionReviewPage({ taskId }: TaskDistributionR
                                               <div className="text-[11px] text-slate-500">
                                                 Par {String(pair.position + 1).padStart(2, "0")}
                                               </div>
-                                              <div className="max-w-[220px] truncate text-[11px] text-slate-500">
-                                                {pairAssignment?.useCampaignDefault === false
-                                                  ? pairAssignment.leadgenFormName ??
-                                                    pairAssignment.leadgenFormId ??
-                                                    "Ultimo formulario da pagina"
-                                                  : destination.campaignLeadgenFormName ??
-                                                    destination.campaignLeadgenFormId ??
-                                                    "Ultimo formulario da pagina"}
-                                              </div>
+                                              {campaignUsesLeadforms(destination.campaign.objective) ? (
+                                                <div className="max-w-[220px] truncate text-[11px] text-slate-500">
+                                                  {pairAssignment?.useCampaignDefault === false
+                                                    ? pairAssignment.leadgenFormName ??
+                                                      pairAssignment.leadgenFormId ??
+                                                      "Ultimo formulario da pagina"
+                                                    : destination.campaignLeadgenFormName ??
+                                                      destination.campaignLeadgenFormId ??
+                                                      "Ultimo formulario da pagina"}
+                                                </div>
+                                              ) : null}
                                             </div>
                                           </div>
                                         );
