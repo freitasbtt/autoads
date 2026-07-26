@@ -553,8 +553,17 @@ function ensureShareUnlocked(req: Request, token: string): void {
 
 function resolvePublicDashboardDateRange(claims: DashboardShareClaims, query: Request["query"]) {
   const parsed = dashboardMetricsQuerySchema.parse(query);
-  const start = parsed.startDate ?? claims.startDate;
-  const end = parsed.endDate ?? claims.endDate;
+  if (
+    (parsed.startDate && parsed.startDate !== claims.startDate) ||
+    (parsed.endDate && parsed.endDate !== claims.endDate)
+  ) {
+    const error = new Error("O periodo deste dashboard compartilhado nao pode ser alterado.");
+    (error as Error & { status?: number }).status = 403;
+    throw error;
+  }
+
+  const start = claims.startDate;
+  const end = claims.endDate;
   const startDate = parseISO(start);
   const endDate = parseISO(end);
   if (!isValid(startDate) || !isValid(endDate) || startDate > endDate) {
@@ -955,7 +964,7 @@ metaRouter.post("/dashboard/sync-accounts/:adAccountId/add", async (req, res, ne
     const body = dashboardAddSyncAccountBodySchema.parse(req.body ?? {});
     let accountName = body.accountName?.trim() || "";
     let accountStatus: number | null = null;
-    let resource = await resolveTenantAdAccount(user, adAccountId);
+    let resource: Resource | null | undefined = await resolveTenantAdAccount(user, adAccountId);
 
     if (resource) {
       accountName = accountName || resource.name;
@@ -1074,7 +1083,7 @@ metaRouter.post("/dashboard/sync-accounts/:adAccountId/enable", async (req, res,
       })
       .returning();
 
-    let initialJob = null;
+    let initialJob: Awaited<ReturnType<typeof createManualDashboardSyncJob>> | null = null;
     if (!existing?.lastSuccessSyncAt) {
       const initialRange = buildInitialDashboardSyncRange();
       initialJob = await createManualDashboardSyncJob({

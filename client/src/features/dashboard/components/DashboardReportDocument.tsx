@@ -199,8 +199,6 @@ export function DashboardReportDocument({
           accounts={accounts}
           hasActiveFilters={hasActiveFilters}
           onRetryMetrics={() => {}}
-          onOpenCampaignCreatives={() => {}}
-          campaignIndex={campaignIndex}
           topCreativesByAccount={topCreativesByAccount}
           isTopCreativesLoading={isTopCreativesLoading}
           isTopCreativesFetching={isTopCreativesFetching}
