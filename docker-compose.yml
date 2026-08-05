@@ -51,8 +51,28 @@ services:
       - meta-ads-network
     restart: unless-stopped
 
+  grafana:
+    image: grafana/grafana:latest
+    container_name: meta-ads-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_DOMAIN: grafana.orygo.com.br
+      GF_SERVER_ROOT_URL: https://grafana.orygo.com.br
+      GF_SERVER_ENFORCE_DOMAIN: "true"
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - meta-ads-network
+    restart: unless-stopped
+
 volumes:
   postgres_data:
+  grafana_data:
 
 networks:
   meta-ads-network:
