@@ -364,7 +364,7 @@ export function DashboardFiltersCard({
                         : "text-red-600 dark:text-red-400",
                     )}
                   >
-                    {kpi.trend.positive ? (
+                    {kpi.trend.direction === "up" ? (
                       <TrendingUp className="h-3.5 w-3.5" />
                     ) : (
                       <TrendingDown className="h-3.5 w-3.5" />

@@ -139,7 +139,7 @@ export function labelFromRange(r: DateRange): string {
 export function calcTrend(
   current: number | null,
   previous: number | null,
-  invertGood = false,
+  lowerIsBetter = false,
 ) {
   if (
     current === null ||
@@ -154,7 +154,10 @@ export function calcTrend(
   if (!Number.isFinite(delta)) return undefined;
   return {
     value: `${Math.abs(delta).toFixed(1)}%`,
-    positive: invertGood ? delta <= 0 : delta >= 0,
+    // The colour represents performance, while direction always represents
+    // the actual movement of the metric. For CPL, a decrease is favourable.
+    positive: lowerIsBetter ? delta <= 0 : delta >= 0,
+    direction: delta >= 0 ? ("up" as const) : ("down" as const),
   };
 }
 

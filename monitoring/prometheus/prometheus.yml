@@ -1,0 +1,13 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: autoads
+    metrics_path: /internal/metrics
+    static_configs:
+      - targets: ["app:5000"]
+    http_headers:
+      X-Internal-Api-Secret:
+        files:
+          - /run/secrets/prometheus-internal-api-secret

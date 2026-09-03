@@ -592,6 +592,7 @@ function AccountKpiCard({
   trend?: {
     value: string;
     positive: boolean;
+    direction: "up" | "down";
   };
   icon: typeof Target;
 }) {
@@ -613,7 +614,7 @@ function AccountKpiCard({
             trend.positive ? "text-emerald-600" : "text-red-600",
           )}
         >
-          {trend.positive ? (
+          {trend.direction === "up" ? (
             <TrendingUp className="h-3.5 w-3.5" />
           ) : (
             <TrendingDown className="h-3.5 w-3.5" />

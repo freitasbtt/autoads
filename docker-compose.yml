@@ -42,6 +42,7 @@ services:
       GCS_SERVICE_ACCOUNT_FILE: /app/.local/secrets/gcs.json
       PUBLIC_STORAGE_UPLOAD_RATE_LIMIT: ${PUBLIC_STORAGE_UPLOAD_RATE_LIMIT:-100}
       FORCE_HTTPS: ${FORCE_HTTPS:-false}
+      LOG_IP_HASH_SECRET: ${LOG_IP_HASH_SECRET:-}
     volumes:
       - ./${GCS_SERVICE_ACCOUNT_FILE}:/app/.local/secrets/gcs.json:ro
     depends_on:
@@ -66,6 +67,45 @@ services:
       - "127.0.0.1:3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - meta-ads-network
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:latest
+    container_name: meta-ads-loki
+    command: -config.file=/etc/loki/config.yml
+    volumes:
+      - ./monitoring/loki/config.yml:/etc/loki/config.yml:ro
+      - loki_data:/loki
+    networks:
+      - meta-ads-network
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:latest
+    container_name: meta-ads-alloy
+    command: run --server.http.listen-addr=0.0.0.0:12345 --storage.path=/var/lib/alloy/data /etc/alloy/config.alloy
+    volumes:
+      - ./monitoring/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+    networks:
+      - meta-ads-network
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: meta-ads-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./.local/secrets/prometheus-internal-api-secret:/run/secrets/prometheus-internal-api-secret:ro
+      - prometheus_data:/prometheus
     networks:
       - meta-ads-network
     restart: unless-stopped
@@ -73,6 +113,9 @@ services:
 volumes:
   postgres_data:
   grafana_data:
+  loki_data:
+  alloy_data:
+  prometheus_data:
 
 networks:
   meta-ads-network:

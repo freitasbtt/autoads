@@ -214,6 +214,7 @@ export type DashboardKpi = {
   trend?: {
     value: string;
     positive: boolean;
+    direction: "up" | "down";
   };
 };
 

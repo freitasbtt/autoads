@@ -1,7 +1,8 @@
 import crypto from "node:crypto";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
-import { log } from "./logger";
+import { log, logJson } from "./logger";
+import { metricsRegistry, observeHttpRequest } from "./metrics";
 import { serveStatic } from "./serve-static";
 import type { ListenOptions } from "net";
 
@@ -41,18 +42,56 @@ app.use((req, res, next) => {
 
   res.on("finish", () => {
     const duration = Date.now() - start;
+
+    if (path !== "/internal/metrics") {
+      observeHttpRequest({
+        method: req.method,
+        path,
+        statusCode: res.statusCode,
+        durationMs: duration,
+      });
+    }
+
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms [request_id=${requestId}]`;
+      const ipHashSecret = process.env.LOG_IP_HASH_SECRET;
+      const ipHash = ipHashSecret
+        ? crypto.createHmac("sha256", ipHashSecret).update(req.ip).digest("hex").slice(0, 16)
+        : undefined;
 
-      if (logLine.length > 160) {
-        logLine = logLine.slice(0, 159) + "...";
-      }
-
-      log(logLine);
+      logJson({
+        event: "http_request",
+        request_id: requestId,
+        method: req.method,
+        route: path,
+        status: res.statusCode,
+        duration_ms: duration,
+        ...(ipHash ? { ip_hash: ipHash } : {}),
+        user_agent: (req.get("user-agent") || "").slice(0, 200),
+      });
     }
   });
 
   next();
+});
+
+app.get("/internal/metrics", async (req, res, next) => {
+  try {
+    const expectedSecret = process.env.INTERNAL_API_SECRET;
+    const providedSecret = req.get("x-internal-api-secret");
+    if (
+      !expectedSecret ||
+      !providedSecret ||
+      expectedSecret.length !== providedSecret.length ||
+      !crypto.timingSafeEqual(Buffer.from(expectedSecret), Buffer.from(providedSecret))
+    ) {
+      return res.sendStatus(404);
+    }
+
+    res.setHeader("Content-Type", metricsRegistry.contentType);
+    return res.end(await metricsRegistry.metrics());
+  } catch (error) {
+    return next(error);
+  }
 });
 
 (async () => {

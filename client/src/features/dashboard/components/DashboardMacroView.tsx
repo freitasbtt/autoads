@@ -60,9 +60,10 @@ function formatVariationPercent(current: number, previous: number) {
   return `${sign}${Math.abs(delta).toFixed(0)}%`;
 }
 
-function renderVariationChip(current: number, previous: number, invertGood = false) {
-  const trend = calcTrend(current, previous, invertGood);
+function renderVariationChip(current: number, previous: number, lowerIsBetter = false) {
+  const trend = calcTrend(current, previous, lowerIsBetter);
   const isPositive = trend?.positive ?? current >= previous;
+  const direction = trend?.direction ?? (current >= previous ? "up" : "down");
 
   return (
     <span
@@ -73,7 +74,7 @@ function renderVariationChip(current: number, previous: number, invertGood = fal
           : "bg-red-50 text-red-700",
       )}
     >
-      {isPositive ? (
+      {direction === "up" ? (
         <TrendingUp className="h-3.5 w-3.5" />
       ) : (
         <TrendingDown className="h-3.5 w-3.5" />
@@ -453,7 +454,7 @@ export function DashboardMacroView({
                             step.trend.positive ? "text-emerald-100" : "text-red-100",
                           )}
                         >
-                          {step.trend.positive ? (
+                          {step.trend.direction === "up" ? (
                             <TrendingUp className="h-3.5 w-3.5" />
                           ) : (
                             <TrendingDown className="h-3.5 w-3.5" />
@@ -498,7 +499,7 @@ export function DashboardMacroView({
                   </span>
                 </div>
                 <div className="overflow-hidden rounded-[18px] border border-slate-200 bg-white/90">
-                  <Table className="min-w-[920px]">
+                  <Table className="min-w-[1060px]">
                     <TableHeader className="bg-slate-50/90">
                       <TableRow className="hover:bg-slate-50/90">
                         <TableHead className="min-w-[220px]">Conta</TableHead>
@@ -510,6 +511,7 @@ export function DashboardMacroView({
                         <TableHead className="text-right">Var. invest.</TableHead>
                         <TableHead className="text-right">CPL atual</TableHead>
                         <TableHead className="text-right">CPL anterior</TableHead>
+                        <TableHead className="text-right">Var. CPL</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -540,6 +542,15 @@ export function DashboardMacroView({
                           <TableCell className="text-right text-slate-600">
                             {entry.previousCostPerLead !== null
                               ? formatCurrency(entry.previousCostPerLead)
+                              : "—"}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {entry.costPerLead !== null && entry.previousCostPerLead !== null
+                              ? renderVariationChip(
+                                  entry.costPerLead,
+                                  entry.previousCostPerLead,
+                                  true,
+                                )
                               : "—"}
                           </TableCell>
                         </TableRow>
